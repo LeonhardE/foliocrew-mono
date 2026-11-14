@@ -1,5 +1,6 @@
 """Bootstrap-only MCP v3; financial APIs remain current Agent PoP endpoints."""
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -18,6 +19,8 @@ from folioview_shared.encrypted.jsonutil import strict_json_loads
 from .mcp_transport import failure, protocol_response
 from .native_transport import SCOPE
 from .native_transport_routes import get_native_transport as get_native_service
+
+BODY_READ_TIMEOUT_SECONDS = 5
 
 
 def enabled():
@@ -300,16 +303,24 @@ class NativeMCPBoundary:
             await reject("malformed_request", 400)
             return
         body = bytearray()
-        while True:
-            message = await receive()
-            if message["type"] != "http.request":
-                return
-            body.extend(message.get("body", b""))
-            if len(body) > MAX_HTTP_WRITE_BYTES:
-                await reject("payload_too_large", 413)
-                return
-            if not message.get("more_body", False):
-                break
+        try:
+            async with asyncio.timeout(BODY_READ_TIMEOUT_SECONDS):
+                while True:
+                    message = await receive()
+                    if message["type"] != "http.request":
+                        return
+                    chunk = message.get("body", b"")
+                    if len(chunk) > MAX_HTTP_WRITE_BYTES - len(body):
+                        raise ContractError("payload_too_large")
+                    body.extend(chunk)
+                    if not message.get("more_body", False):
+                        break
+        except TimeoutError:
+            await reject("malformed_request", 400)
+            return
+        except ContractError:
+            await reject("payload_too_large", 413)
+            return
         declared = headers.get(b"content-length")
         if declared is not None and (
             len(declared[0]) > 8

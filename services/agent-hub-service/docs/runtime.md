@@ -15,6 +15,13 @@ permits only account `pending`/`approve`; it never stores Agent credentials. The
 account-consent page URL is a narrow alias for finishing an already-issued window.
 All browser Agent runtime/config/setup URLs remain absent.
 
+The bootstrap-only `/mcp/v3` request body has a five-second total read deadline,
+including time between streamed chunks. The original byte budget is checked before
+extending the buffer. Timeout and overflow return fixed, non-cacheable transport
+errors before the SDK handles the request; disconnect and external cancellation stop
+without forwarding partial content. This body deadline does not shorten SDK processing
+or replace its original token, Owner, origin and permission checks.
+
 ## First pairing
 
 Only explicit user connection or reauthorization creates a ten-minute setup. The
