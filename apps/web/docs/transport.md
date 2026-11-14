@@ -144,3 +144,50 @@ fixed failure code before dropping timeout cleanup. Non-JSON or oversized Messag
 and settle the channel, rather than throwing out of the message handler. A normal rejected request
 can be retried explicitly on the same still-branded port. Opener origin/source/nonce binding, the
 account-link-only authority, exact commands and credential transport remain unchanged.
+
+## Public Firebase configuration and staged key rotation
+
+The browser's `NEXT_PUBLIC_FIREBASE_*` settings are public build-time configuration.
+Firebase's API key identifies the project for Authentication requests; it does not replace
+Firebase user-token verification, owner checks or the backend's authorization boundaries.
+The fixed same-origin transport and server runtime identity remain separate from this key.
+See [Firebase API key guidance](https://firebase.google.com/docs/projects/api-keys).
+
+### Recorded restriction change
+
+On 2026-11-14 the existing deployed browser key's API allowlist was narrowed to
+`identitytoolkit.googleapis.com` and `securetoken.googleapis.com`. The public Authentication
+configuration check returned HTTP 200 before and after the change. The key string,
+browser/referrer restrictions and production build-trigger value were unchanged, and the
+existing key was not revoked. This preserved the current browser configuration and session
+while reducing the APIs that the public key can select.
+
+A separate candidate with the same two Authentication APIs was created and its public
+Authentication configuration returned HTTP 200 for the same Firebase project. It has not
+been activated in the production build trigger or browser bundle. The existing key remains
+active. This is a staged rotation, not a completed key replacement. The configuration check
+proves that endpoint/project mapping; it does not certify a fresh Google sign-in, redirect
+return, token refresh or all existing sessions.
+
+These operational records intentionally contain no key value, fingerprint or cloud resource
+identifier. Keep detailed operator evidence in the repository's ignored local validation
+records rather than copying credentials or resource identifiers into tracked documentation.
+
+### A later activation window
+
+1. Verify the candidate's project, required Authentication APIs and authorized domains
+   against the intended public Firebase configuration. Do not infer application access from
+   an API key or from a public configuration HTTP 200 response.
+2. Update only the existing Web build's public key setting in the approved window, then
+   build and release the immutable Web image. Changing a runtime environment value alone
+   does not replace a key already compiled into browser JavaScript.
+3. Verify the selected image/revision and 100% traffic, then perform authorized fresh sign-in,
+   redirect and token-refresh checks, including the still-open client behavior. Do not force
+   a user logout, vault unlock or browser refresh merely to rotate this public setting.
+4. Retain the prior key/configuration for the agreed rollback window. If activation fails,
+   restore the known public configuration and verified image without changing service
+   identities, owner authorization or private keys. Revoke the prior key only in a separate
+   approved step after the required client/session checks; deploying the candidate does not
+   prove that every open client has stopped using the prior compiled value.
+
+The documentation change itself performs no key, trigger, service, IAM or resource operation.
