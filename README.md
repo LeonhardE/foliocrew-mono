@@ -121,7 +121,13 @@ npm run check
 ```
 
 It runs the pinned secret scanner, types, lint, browser behavior, shared browser contracts, isolated
-backend suites, infrastructure/CI guard tests and formatting checks. Useful focused commands include:
+backend suites, infrastructure/CI guard tests and formatting checks.
+
+The scanner permits the legacy public Firebase assignment only in two audited historical commits,
+at its exact path and assignment. New commits, staged files and current source must not reintroduce
+inline key values. A clean source scan does not establish cloud-side credential revocation.
+
+Useful focused commands include:
 
 ```bash
 npm run test:web

@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tarfile
@@ -254,10 +255,10 @@ class ScannerIntegrationTests(unittest.TestCase):
         file.parent.mkdir(parents=True, exist_ok=True)
         file.write_text(value)
 
-    def scan(self):
+    def scan(self, policy=None):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            result = SCAN.scan(self.executable, self.root)
+            result = SCAN.scan(self.executable, self.root, policy=policy)
         value = output.getvalue()
         self.assertNotIn(self.secret, value)
         self.assertNotIn('"Secret"', value)
@@ -351,7 +352,7 @@ class ScannerIntegrationTests(unittest.TestCase):
         self.write("untracked.txt", self.secret + " # gitleaks:allow\n")
         self.assertEqual(self.scan()[0], 1)
 
-    def test_firebase_assignment_exception_does_not_exempt_other_keys_or_private_material(self):
+    def test_historical_firebase_exception_never_exempts_current_assignments(self):
         path = "infra/gcp/terraform/bootstrap/web.tf"
         key = (
             "AIza"
@@ -361,7 +362,7 @@ class ScannerIntegrationTests(unittest.TestCase):
         )
         public = '_FIREBASE_API_KEY = "' + key + '"\n'
         self.write(path, public)
-        self.assertEqual(self.scan()[0], 0)
+        self.assertEqual(self.scan()[0], 1)
         private = (
             "-----BEGIN " + "PRIVATE KEY-----\n" + "A" * 128 + "\n-----END " + "PRIVATE KEY-----\n"
         )
@@ -372,6 +373,69 @@ class ScannerIntegrationTests(unittest.TestCase):
         self.write(path, "")
         self.write("another.tf", public)
         self.assertEqual(self.scan()[0], 1)
+
+    def historical_firebase_policy(self, path, revision):
+        policy, count = re.subn(
+            r"commits = \[[^\]]*\]",
+            'commits = ["' + revision + '"]',
+            (ROOT / ".gitleaks.toml").read_text(),
+        )
+        self.assertEqual(count, 2)
+        path.write_text(policy)
+        return path
+
+    def test_known_firebase_history_does_not_exempt_later_reintroduction(self):
+        path = "infra/gcp/terraform/bootstrap/web.tf"
+        key = (
+            "AIza"
+            + base64.urlsafe_b64encode(hashlib.sha256(b"history only").digest()).decode()[:35]
+        )
+        value = '_FIREBASE_API_KEY = "' + key + '"\n'
+        self.write(path, value)
+        commit(self.root)
+        first = command(self.root, "rev-parse", "HEAD")
+        self.write(path, "")
+        commit(self.root)
+        with tempfile.TemporaryDirectory() as name:
+            policy = self.historical_firebase_policy(Path(name) / "policy.toml", first)
+            self.assertEqual(self.scan(policy)[0], 0)
+            self.write(path, value)
+            commit(self.root)
+            self.write(path, "")
+            commit(self.root)
+            status, output = self.scan(policy)
+            self.assertEqual(status, 1)
+            self.assertIn(path, output)
+            self.assertNotIn(key, output)
+
+    def test_historical_commit_exception_still_requires_exact_path_and_assignment(self):
+        path = "infra/gcp/terraform/bootstrap/web.tf"
+        key = (
+            "AIza"
+            + base64.urlsafe_b64encode(hashlib.sha256(b"path and line").digest()).decode()[:35]
+        )
+        value = '_FIREBASE_API_KEY = "' + key + '"\n'
+        self.write(path, value + 'backend_key = "' + key + '"\n')
+        self.write("another.tf", value)
+        commit(self.root)
+        first = command(self.root, "rev-parse", "HEAD")
+        self.write(path, "")
+        self.write("another.tf", "")
+        commit(self.root)
+        with tempfile.TemporaryDirectory() as name:
+            policy = self.historical_firebase_policy(Path(name) / "policy.toml", first)
+            status, output = self.scan(policy)
+            self.assertEqual(status, 1)
+            locations = {
+                (item["path"], item["line"])
+                for line in output.splitlines()
+                if line.startswith("{")
+                for item in [json.loads(line)]
+            }
+            self.assertIn((path, 2), locations)
+            self.assertIn(("another.tf", 1), locations)
+            self.assertNotIn((path, 1), locations)
+            self.assertNotIn(key, output)
 
     def test_exact_public_payload_fragments_do_not_exempt_unknown_keys(self):
         fixture = (ROOT / "services/common/tests/fixtures/encrypted_v2_node.json").read_text()

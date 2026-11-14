@@ -4,12 +4,18 @@ title = "FolioView secret scanning policy"
 useDefault = true
 
 # Firebase Web config is public browser configuration, not GCP IAM authority.
-# This exception is limited to one rule, exact file and named assignment line.
+# Only the audited immutable history below is exempt at this path/assignment.
+# New history, index and current source must not reintroduce inline key values.
+# Historical scan exceptions do not establish provider-side key revocation.
 [[rules]]
 id = "gcp-api-key"
 [[rules.allowlists]]
 description = "Public Firebase Web configuration assignment"
 condition = "AND"
+commits = [
+  "808cbc5ff81bdb045e71956ee16582b24ccc8ab6",
+  "d11265d92c7b938b387f73423872b985ba484656",
+]
 paths = ['''^infra/gcp/terraform/bootstrap/web\.tf$''']
 regexTarget = "line"
 regexes = ['''^\r?\n?[ \t]*_FIREBASE_API_KEY[ \t]*=[ \t]*"AIza[A-Za-z0-9_-]{35}"[ \t]*\r?\n?$''']
@@ -22,6 +28,10 @@ id = "generic-api-key"
 [[rules.allowlists]]
 description = "Public Firebase Web configuration assignment (generic detector)"
 condition = "AND"
+commits = [
+  "808cbc5ff81bdb045e71956ee16582b24ccc8ab6",
+  "d11265d92c7b938b387f73423872b985ba484656",
+]
 paths = ['''^infra/gcp/terraform/bootstrap/web\.tf$''']
 regexTarget = "line"
 regexes = ['''^\r?\n?[ \t]*_FIREBASE_API_KEY[ \t]*=[ \t]*"AIza[A-Za-z0-9_-]{35}"[ \t]*\r?\n?$''']
