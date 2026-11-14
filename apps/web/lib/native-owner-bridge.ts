@@ -52,24 +52,31 @@ export class NativeOwnerBridge {
   ) {
     port.onmessage = ({ data }: MessageEvent) => {
       if (this.closed) return;
-      if (
-        !data ||
-        typeof data !== "object" ||
-        typeof data.id !== "string" ||
-        typeof data.ok !== "boolean" ||
-        !exact(data, data.ok ? ["id", "ok", "value"] : ["id", "ok", "error"]) ||
-        new TextEncoder().encode(JSON.stringify(data)).byteLength > 32768
-      ) {
+      let bounded = false;
+      try {
+        bounded =
+          data &&
+          typeof data === "object" &&
+          typeof data.id === "string" &&
+          typeof data.ok === "boolean" &&
+          exact(data, data.ok ? ["id", "ok", "value"] : ["id", "ok", "error"]) &&
+          new TextEncoder().encode(JSON.stringify(data)).byteLength <= 32768;
+      } catch {
+        // Structured-cloneable cycles/BigInts are not valid protocol JSON.
+      }
+      if (!bounded) {
         this.close();
         return;
       }
       const p = this.pending;
       if (!p || p.id !== data.id) return;
-      p.cleanup();
-      this.pending = null;
       const v = data.value;
       const valid =
-        p.op === "approve"
+        data.ok &&
+        v !== null &&
+        typeof v === "object" &&
+        !Array.isArray(v) &&
+        (p.op === "approve"
           ? exact(v, ["state", "authority"]) &&
             v.state === "connected" &&
             v.authority === "account_link_only"
@@ -89,14 +96,17 @@ export class NativeOwnerBridge {
             v.profile === "folioview.persistent-account.v1" &&
             v.requestId === this.requestId &&
             identifier(v.clientId) &&
-            (!Object.hasOwn(v, "provider") || ["muse", "chatgpt"].includes(String(v.provider))) &&
+            (!Object.hasOwn(v, "provider") || v.provider === "muse" || v.provider === "chatgpt") &&
             v.scope === "runtime:connect" &&
             ["pending", "authorized", "approved"].includes(v.status) &&
             Number.isSafeInteger(v.expiresAt) &&
             v.expiresAt > 0 &&
             (v.vaultId === null || identifier(v.vaultId)) &&
-            v.authority === "account_link_only";
-      if (data.ok && valid) p.resolve(v);
+            v.authority === "account_link_only");
+      // Validate first, then settle the original request and remove its fallback timer together.
+      p.cleanup();
+      this.pending = null;
+      if (valid) p.resolve(v);
       else p.reject(new ConnectionError("request_failed"));
     };
     port.onmessageerror = () => this.close();
