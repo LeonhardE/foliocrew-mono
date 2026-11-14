@@ -662,7 +662,10 @@ Owner Worker must authenticate original issuance before returning the name.
 The source anchor is selected from the current Owner vault, not a caller-provided
 catalogue. Its current deletion fence is read in the same write transaction.
 Name state and original-operation receipt commit atomically in two small existing-
-database documents. Exact original replay returns its original receipt even after
+database documents. Every transaction attempt samples the current bounded server
+clock again, including read retries using static history verification. An uncommitted
+new write must still satisfy current certificate validity and signed-control age after
+a conflict retry or database wait. Exact original replay returns its original receipt even after
 later renaming or signer expiry; it never reinstalls an old alias. Owner history
 can inspect the original receipt after source deletion, while normal reads/listing
 hide deleted sources and new writes are refused. A new incarnation cannot inherit

@@ -5,7 +5,7 @@ import time
 from collections import OrderedDict
 
 from folioview_shared.encrypted.budgets import check_read_response
-from folioview_shared.encrypted.constants import CONTRACT_VERSION
+from folioview_shared.encrypted.constants import CONTRACT_VERSION, MAX_SAFE_INTEGER
 from folioview_shared.encrypted.crypto import _signed_parts, signing_input_fingerprint
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.private_display_names import (
@@ -99,6 +99,12 @@ class PrivateDisplayNameService:
         self.registry_cache = OrderedDict()
         self.cache_lock = threading.Lock()
 
+    def now(self):
+        value = self.clock()
+        if type(value) not in {int, float} or not 0 <= value <= MAX_SAFE_INTEGER:
+            raise StoreUnavailable
+        return int(value)
+
     def _current(self, unit, owner, vault, now):
         identifier(vault)
         row = unit.get(document_path("hub_vaults", owner))
@@ -131,9 +137,9 @@ class PrivateDisplayNameService:
 
     def listing(self, uid, vault):
         owner = owner_key(uid)
-        now = int(self.clock())
 
         def read(unit):
+            now = self.now()
             row, _ = self._current(unit, owner, vault, now)
             refs = [s["resourceRef"] for s in row["sources"]]
             paths = [
@@ -161,9 +167,9 @@ class PrivateDisplayNameService:
 
     def read(self, uid, vault, source, operation=None):
         owner = owner_key(uid)
-        now = int(self.clock())
 
         def read(unit):
+            now = self.now()
             row, _ = self._current(unit, owner, vault, now)
             ref = self._source(row, source)
             if operation is None:
@@ -184,7 +190,6 @@ class PrivateDisplayNameService:
 
     def write(self, uid, vault, source, signed, operation):
         owner = owner_key(uid)
-        now = int(self.clock())
         validate_schema("OperationIdentifier", operation)
         _, p = _signed_parts(signed)
         p = validate_display_name_schema("DisplayNameControl", p)
@@ -192,6 +197,7 @@ class PrivateDisplayNameService:
             raise ContractError("idempotency_conflict")
 
         def write(unit):
+            now = self.now()
             row, registry = self._current(unit, owner, vault, now)
             ref = self._source(row, source)
             path = name_path(owner, vault, row["rootKeyId"], ref)
