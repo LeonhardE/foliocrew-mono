@@ -130,3 +130,17 @@ browser/network stages and process startup before handler entry. Neither these h
 mocks/build sizes establish production API or UI latency. Later authorized acceptance must measure
 cold/warm, full response, cache hit/miss/refresh and tails end to end. API500ms/UI2s are upper bounds;
 all paths should be as fast as safely possible without artificial waits or weakened authorization.
+
+## Browser response policy and native-account failures
+
+Every Web route applies `frame-ancestors 'none'`, `object-src 'none'` and `base-uri 'self'`, plus
+`X-Frame-Options: DENY` and `X-Content-Type-Options: nosniff`. These restrict framing, plugin objects
+and base-URL changes; they are not a complete script/XSS Content Security Policy. No script,
+connection, Worker or popup restriction is introduced. The Agent handoff page retains `no-referrer`;
+other routes use `strict-origin-when-cross-origin`, preserving origin referrers for browser API keys.
+
+The native-account bridge settles a matching error or malformed pending response with its original
+fixed failure code before dropping timeout cleanup. Non-JSON or oversized MessagePort replies close
+and settle the channel, rather than throwing out of the message handler. A normal rejected request
+can be retried explicitly on the same still-branded port. Opener origin/source/nonce binding, the
+account-link-only authority, exact commands and credential transport remain unchanged.
