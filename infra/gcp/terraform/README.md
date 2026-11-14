@@ -198,3 +198,85 @@ require authenticated evidence from the corresponding administrator workflow.
 - [Saved Terraform plans and sensitive content](https://developer.hashicorp.com/terraform/cli/commands/plan)
 - [Cloud Build output source provenance](https://docs.cloud.google.com/build/docs/api/reference/rest/v1/projects.builds#SourceProvenance)
 - [State persistence failure and recovery](https://developer.hashicorp.com/terraform/language/state/backends)
+
+## Shared legacy image-build identity migration
+
+The existing image-build identity shared by Market, User, Config and Web has one foundation-owned
+set of grants in `bootstrap/shared-build.tf`. It reuses the existing build-metadata role
+(`cloudbuild.builds.get`), project Logs Writer, and Artifact Registry Writer on only the image
+repositories explicitly selected by those four deployment projections. It creates no identity,
+bucket, service, trigger, database, secret, source connection or service-specific deployment grant.
+The existing per-service Run and runtime `actAs` bindings retain their current owners.
+
+This is an administrator migration, separate from normal target execution and image publication.
+Merging the source does not apply IAM. The old project-level `roles/cloudbuild.builds.builder`
+binding must be inventoried in every candidate state before planning. A project grant applies to
+state and plan buckets too; adding narrower bucket grants cannot subtract that access. Current
+image builds use exact Git-source provenance and `CLOUD_LOGGING_ONLY`, without a source/log bucket.
+No Storage grant or source-token role is added. A later pipeline that needs one must separately
+justify the exact resource and permission; state/plan buckets must remain inaccessible to this
+publisher.
+
+`shared_image_build_legacy_binding` has three explicit administrator modes:
+
+| Mode               | Result                                                                                                                                              |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `adopt`            | Import the already-existing exact project/role/shared-principal tuple and prepare the three narrow grants. A missing legacy tuple must fail import. |
+| `remove` (default) | Preserve the narrow grants and delete the legacy tuple only if it is already owned in this backend.                                                 |
+| `rollback`         | Explicitly restore only that same legacy tuple while keeping the narrow grants. This is never selected automatically.                               |
+
+A default `remove` plan against a state that never adopted the old tuple cannot revoke an unmanaged
+grant. It must not be reported as a completed fix. Do not import a tuple already owned by another
+state, replace a project IAM binding/policy, or use a targeted plan to conceal unrelated changes.
+
+In the existing administrator checkout, select its verified remote backend and unchanged private
+instance inputs, including all applied Portfolio/Hub stages. Capture a private state backup, serial,
+lineage, complete project/repository/source-connection policies and six-service release snapshot.
+Then review full plans in order:
+
+```bash
+terraform -chdir=infra/gcp/terraform/bootstrap plan \
+  -var-file=/absolute/private/bootstrap-inputs.active.json \
+  -var=shared_image_build_legacy_binding=adopt \
+  -out=/absolute/private/shared-builder-adopt.tfplan
+# A separately authorized administrator applies only the reviewed saved plan.
+# Re-read actual state/policies after adoption; create a NEW full plan:
+terraform -chdir=infra/gcp/terraform/bootstrap plan \
+  -var-file=/absolute/private/bootstrap-inputs.active.json \
+  -var=shared_image_build_legacy_binding=remove \
+  -out=/absolute/private/shared-builder-remove.tfplan
+```
+
+For the current single-repository deployment, adoption must contain one import and three grant
+creations, with no replacement/deletion or unrelated update. The actual removal plan, produced
+from the newly adopted remote serial, must contain exactly one deletion: the legacy shared-member
+`roles/cloudbuild.builds.builder` tuple. All existing eight Run/`actAs` grants, triggers, buckets,
+service configuration, identities and other policy members must remain unchanged. A synthetic
+state/plan regression is evidence of intended behavior, not an applicable production removal plan.
+
+Review effective permissions as well as role names. Relative to the old Builder role, the standard
+Logs Writer adds `logging.logEntries.route`; the remaining replacement permission names were
+already present, and artifact access is narrowed to the selected repository. Removal eliminates
+all old Storage permissions, build submission/update, project-wide artifact access and other
+unneeded legacy grants. Keep a dated live permission comparison: predefined roles can change.
+The narrow image-repository Writer remains a trusted publisher to that shared repository.
+
+After the authorized removal, verify the old project grant is absent and no other policy restores
+Storage access. Validate actual existing image triggers on exact protected-main source as the shared
+build identity: source fetch, logging, Docker build/push, metadata provenance and deployment must
+succeed. Web's current build always publishes to its existing service; `_DEPLOY_SERVICE=false`
+does not disable Web publication. Schedule that validation accordingly. Market/User/Config support
+their existing build-only switch, but a build-only run alone does not verify deployment permissions.
+Check output image digests, unchanged runtime identity/capacity and Ready/traffic for each actual
+publication; do not use user-session writes or business prewarming as build validation.
+
+Before legacy removal, stopping after adoption preserves the old effective grant. After removal,
+an authorized emergency rollback must use a newly reviewed full `rollback` saved plan that adds
+only the original tuple and preserves the narrow grants. Confirm the failure and policy delta;
+never roll state backward or restore a whole project policy. After recovery, diagnose the missing
+specific permission, remove the temporary broad tuple again through the managed `remove` mode,
+and repeat the affected exact build checks. Keep the exception time-bounded in operator evidence.
+
+See the official [user-managed build-account guidance](https://docs.cloud.google.com/build/docs/securing-builds/configure-user-specified-service-accounts),
+[Artifact Registry build permissions](https://docs.cloud.google.com/artifact-registry/docs/configure-cloud-build),
+and [configuration-driven imports](https://developer.hashicorp.com/terraform/language/import/single-resource).

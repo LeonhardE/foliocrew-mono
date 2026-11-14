@@ -9,6 +9,14 @@ mock_provider "google" {
   }
 }
 
+override_resource {
+  target          = google_project_iam_custom_role.build_metadata
+  override_during = plan
+  values = {
+    name = "projects/demo-folio-alpha/roles/folioviewTerraformBuildMetadata"
+  }
+}
+
 # Terraform mocks cannot resolve declarative imports. Override only these
 # existing objects so the real bootstrap configuration can still be planned.
 override_resource {
@@ -861,4 +869,114 @@ run "web_rejects_mixed_build_region" {
     })
   }
   expect_failures = [google_cloudbuild_trigger.web_image_release]
+}
+
+run "shared_image_builder_defaults_to_scoped_grants_without_legacy_restore" {
+  command = plan
+
+  assert {
+    condition = (
+      var.shared_image_build_legacy_binding == "remove" &&
+      length(google_project_iam_member.shared_image_build_legacy) == 0 &&
+      google_project_iam_member.shared_image_build_metadata.project == var.project_id &&
+      google_project_iam_member.shared_image_build_metadata.role == google_project_iam_custom_role.build_metadata.name &&
+      google_project_iam_member.shared_image_build_metadata.member == "serviceAccount:fa-build@demo-folio-alpha.iam.gserviceaccount.com" &&
+      google_project_iam_member.shared_image_build_logging.project == var.project_id &&
+      google_project_iam_member.shared_image_build_logging.role == "roles/logging.logWriter" &&
+      google_project_iam_member.shared_image_build_logging.member == google_project_iam_member.shared_image_build_metadata.member
+    )
+    error_message = "The shared publisher defaults to legacy removal and only provenance/logging project grants; never restore the broad builder role implicitly."
+  }
+
+  assert {
+    condition = (
+      toset(keys(google_artifact_registry_repository_iam_member.shared_image_build_images)) == toset(["financial-analysis"]) &&
+      alltrue([for grant in google_artifact_registry_repository_iam_member.shared_image_build_images : (
+        grant.project == var.project_id && grant.location == var.region &&
+        grant.repository == "financial-analysis" && grant.role == "roles/artifactregistry.writer" &&
+        grant.member == google_project_iam_member.shared_image_build_metadata.member
+      )])
+    )
+    error_message = "Artifact writes belong only to each explicitly selected existing image repository, never to a project-wide role or a state/plan bucket."
+  }
+}
+
+run "shared_image_builder_rejects_implicit_migration_modes" {
+  command = plan
+  variables {
+    shared_image_build_legacy_binding = "automatic"
+  }
+  expect_failures = [var.shared_image_build_legacy_binding]
+}
+
+# The import is overridden only in this offline plan. Live adoption must read
+# the existing exact tuple and fail if absent; no cloud credentials/API here.
+run "adopt_existing_shared_image_builder_tuple" {
+  command = plan
+  variables {
+    shared_image_build_legacy_binding = "adopt"
+  }
+  override_resource {
+    target = google_project_iam_member.shared_image_build_legacy[0]
+    values = {
+      id = "demo-folio-alpha/roles/cloudbuild.builds.builder/serviceAccount:fa-build@demo-folio-alpha.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition = (
+      length(google_project_iam_member.shared_image_build_legacy) == 1 &&
+      google_project_iam_member.shared_image_build_legacy[0].project == var.project_id &&
+      google_project_iam_member.shared_image_build_legacy[0].role == "roles/cloudbuild.builds.builder" &&
+      google_project_iam_member.shared_image_build_legacy[0].member == google_project_iam_member.shared_image_build_metadata.member
+    )
+    error_message = "Adoption may manage only the one existing shared builder tuple; it cannot replace any other project role or principal."
+  }
+}
+
+run "shared_image_builder_removal_preserves_target_deployment_grants" {
+  command = plan
+  variables {
+    shared_image_build_legacy_binding = "remove"
+  }
+
+  assert {
+    condition = (
+      length(google_project_iam_member.shared_image_build_legacy) == 0 &&
+      google_project_iam_member.shared_image_build_logging.role == "roles/logging.logWriter" &&
+      length(google_artifact_registry_repository_iam_member.shared_image_build_images) == 1 &&
+      alltrue([for grant in [
+        google_cloud_run_v2_service_iam_member.market_image_deployer,
+        google_cloud_run_v2_service_iam_member.user_image_deployer,
+        google_cloud_run_v2_service_iam_member.config_image_deployer,
+        google_cloud_run_v2_service_iam_member.web_image_deployer,
+      ] : grant.role == "roles/run.developer" && grant.member == local.shared_image_build_member]) &&
+      alltrue([for grant in [
+        google_service_account_iam_member.market_runtime_deployer["image"],
+        google_service_account_iam_member.user_runtime_deployer["image"],
+        google_service_account_iam_member.config_runtime_deployer["image"],
+        google_service_account_iam_member.web_runtime_deployer["image"],
+      ] : grant.role == "roles/iam.serviceAccountUser" && grant.member == local.shared_image_build_member])
+    )
+    error_message = "Retirement must remove only the adopted legacy tuple while preserving prepared narrow grants."
+  }
+}
+
+run "explicit_shared_image_builder_rollback_retains_narrow_grants" {
+  command = plan
+  variables {
+    shared_image_build_legacy_binding = "rollback"
+  }
+
+  assert {
+    condition = (
+      length(google_project_iam_member.shared_image_build_legacy) == 1 &&
+      google_project_iam_member.shared_image_build_legacy[0].project == var.project_id &&
+      google_project_iam_member.shared_image_build_legacy[0].role == "roles/cloudbuild.builds.builder" &&
+      google_project_iam_member.shared_image_build_legacy[0].member == "serviceAccount:fa-build@demo-folio-alpha.iam.gserviceaccount.com" &&
+      google_project_iam_member.shared_image_build_logging.role == "roles/logging.logWriter" &&
+      length(google_artifact_registry_repository_iam_member.shared_image_build_images) == 1
+    )
+    error_message = "An explicit administrator rollback may restore only the original tuple and must keep the narrow grants."
+  }
 }

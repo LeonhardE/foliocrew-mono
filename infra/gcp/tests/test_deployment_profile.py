@@ -134,14 +134,16 @@ class ProfileTests(unittest.TestCase):
             import re
 
             variables.update(re.findall(r'^variable "([^"]+)"', file.read_text(), re.M))
-        # Target-specific administrator overrides stay outside the ordinary closed
+        # Administrator overrides stay outside the ordinary closed
         # compiler: it cannot silently activate Hub public IAM, change its
-        # runtime, or enable Portfolio/Hub image deployment before target review.
+        # runtime, enable Portfolio/Hub image deployment, or select shared-builder
+        # IAM adoption/rollback before separate administrator review.
         target_admin_overrides = {
             "agent_hub_runtime_account_id",
             "agent_hub_public_connector_enabled",
             "portfolio_image_deployment_enabled",
             "agent_hub_image_deployment_enabled",
+            "shared_image_build_legacy_binding",
         }
         self.assertEqual(set(bootstrap), variables - target_admin_overrides)
         self.assertTrue(target_admin_overrides.isdisjoint(bootstrap))
