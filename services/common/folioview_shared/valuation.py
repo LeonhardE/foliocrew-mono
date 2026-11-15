@@ -5,6 +5,7 @@ Frozen encrypted schemas and existing consumers are deliberately unchanged.
 """
 
 import copy
+import hashlib
 import json
 import re
 from datetime import date, datetime
@@ -33,6 +34,9 @@ DEFAULT_PREFERENCES = MappingProxyType(
     }
 )
 _FORMATS = FormatChecker()
+_PACKAGED_VALUATION_SCHEMA_SHA256 = (
+    "d7844500991a4ad3362b160bc21d83424531034b202aa5f09a5a97aba4804163"
+)
 _DECIMAL = re.compile(r"^(0|[1-9][0-9]{0,19})(\.[0-9]{1,18})?$")
 
 
@@ -78,9 +82,14 @@ def _date(value):
 
 @lru_cache(maxsize=1)
 def _document():
-    value = json.loads(files(__package__).joinpath("valuation_schemas.json").read_text())
-    Draft202012Validator.check_schema(value)
-    return value
+    try:
+        raw = files(__package__).joinpath("valuation_schemas.json").read_bytes()
+    except OSError:
+        raise ValuationError from None
+    # Mandatory common tests validate the complete packaged definition against
+    # its meta-schema independently. Runtime accepts only those exact bytes.
+    _need(hashlib.sha256(raw).hexdigest() == _PACKAGED_VALUATION_SCHEMA_SHA256)
+    return json.loads(raw.decode("utf-8"))
 
 
 def load_valuation_schema(name):
