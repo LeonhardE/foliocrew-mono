@@ -16,6 +16,11 @@ from folioview_shared.encrypted.reference_history import (
     decode_reference_history,
     encode_reference_history,
 )
+from folioview_shared.encrypted.reference_history_v2 import (
+    MAX_EXPANDED_HISTORY_BYTES,
+    STORAGE_HISTORY_V2_FORMAT,
+    decode_storage_history_v2,
+)
 
 from .registry_reads import RegistryPrefixCache
 
@@ -126,13 +131,15 @@ def document_path(collection: str, *parts: str) -> str:
 # A frozen Run also contains its independently bounded manifest and other fields.
 _HISTORY_COLLECTIONS = frozenset({"hub_vaults", "hub_persistent_runs"})
 _MAX_EXPANDED_RUN_BYTES = MAX_STORED_DOCUMENT_BYTES + MAX_READ_BYTES
+_MAX_EXPANDED_V2_ROW_BYTES = MAX_STORED_DOCUMENT_BYTES + MAX_EXPANDED_HISTORY_BYTES
 
 
 def _read_document(value: dict, *, path: str) -> dict:
     """Restore bounded untrusted history before the original authority checks.
 
     Only Vaults and frozen Runs recognize reference history. Reads never write
-    or migrate a row; current writers still require legacy logical JSON <=768KiB.
+    or migrate a row. Current writers retain storage.v1 and its original logical
+    ceilings; only an explicit storage.v2 value opts into larger local reads.
     """
     try:
         if type(value) is not dict:
@@ -156,6 +163,19 @@ def _read_document(value: dict, *, path: str) -> dict:
         )
         if len(other) - 2 + physical_history_bytes > MAX_STORED_DOCUMENT_BYTES:
             raise StoreUnavailable
+        if type(history) is bytes:
+            # Inspect only the private, strict canonical snapshot. Native dicts
+            # must not make this round trip: it would normalize float references.
+            parsed = strict_json_loads(history, max_bytes=MAX_STORED_DOCUMENT_BYTES)
+            if canonical_json(parsed) != history:
+                raise StoreUnavailable
+            history = parsed
+        if type(history) is dict and history.get("format") == STORAGE_HISTORY_V2_FORMAT:
+            remaining = min(MAX_EXPANDED_HISTORY_BYTES, _MAX_EXPANDED_V2_ROW_BYTES - len(other) + 2)
+            value["registryHistory"] = decode_storage_history_v2(
+                history, max_expanded_bytes=remaining
+            )
+            return value
         maximum = MAX_READ_BYTES if collection == "hub_vaults" else _MAX_EXPANDED_RUN_BYTES
         remaining = min(MAX_READ_BYTES, maximum - len(other) + 2)
         value["registryHistory"] = decode_reference_history(history, max_expanded_bytes=remaining)
