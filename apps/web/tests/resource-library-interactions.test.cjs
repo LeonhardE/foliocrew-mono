@@ -5,7 +5,16 @@ const assert = require("node:assert/strict"),
   vm = require("node:vm"),
   { transformSync } = require("next/dist/build/swc");
 const { hooks, jsx, all } = require("./resource-ui-harness.cjs"),
-  { compile, catalogue, channels, stocks, contracts } = require("./resource-library-helpers.cjs");
+  {
+    compile,
+    catalogue,
+    channels,
+    stocks,
+    contracts,
+    response,
+    settle,
+    deferred,
+  } = require("./resource-library-helpers.cjs");
 const css = { __esModule: true, default: new Proxy({}, { get: (_, k) => k }) };
 const translations = () => {
   const t = (key) => key;
@@ -29,6 +38,9 @@ test("reopening the same snapshot does not restart catalogue reads during the pr
     "react/jsx-runtime": runtime,
     "next-intl": { useTranslations: translations, useLocale: () => "en" },
     "./useResourceLibrary": { useResourceLibrary: () => model },
+    "./AuthProvider": {
+      useAuth: () => ({ status: "authenticated", sessionKey: model.owner, profile: {} }),
+    },
     "@/lib/resource-library": contracts,
     "./ResourceLibrary.module.css": css,
   }).default;
@@ -44,6 +56,122 @@ test("reopening the same snapshot does not restart catalogue reads during the pr
   render("snapshot_2");
   assert.deepEqual(calls, ["catalogue"]);
   h.close();
+});
+
+test("actual ResourceLibrary category selection drives real hook demand without blocking ready holdings or inventing channel data", async () => {
+  const h = hooks(),
+    calls = [],
+    gate = deferred(),
+    events = new Map();
+  let owner = "owner_A:1",
+    held = true,
+    model;
+  const auth = {
+    useAuth: () => ({
+      status: "authenticated",
+      sessionKey: owner,
+      profile: { uid: owner },
+      agentHubConfigured: true,
+      requestPrivate,
+    }),
+  };
+  async function requestPrivate(service, route, key, options) {
+    calls.push({ service, route, key, options });
+    if (route.includes("catalogue")) return response(catalogue());
+    if (route.endsWith("channel-follows")) return held ? gate.promise : response(channels());
+    throw Error("Shared watchlist must not be fetched again");
+  }
+  const globals = {
+    document: {
+      visibilityState: "visible",
+      addEventListener: (k, v) => events.set(k, v),
+      removeEventListener: (k) => events.delete(k),
+    },
+    window: { setTimeout, clearTimeout },
+  };
+  const hook = compile(
+    "../components/useResourceLibrary.ts",
+    { react: h.react, "@/components/AuthProvider": auth, "@/lib/resource-library": contracts },
+    globals,
+  );
+  const library = compile("../components/ResourceLibrary.tsx", {
+    react: h.react,
+    "react/jsx-runtime": runtime,
+    "next-intl": { useTranslations: translations },
+    "./useResourceLibrary": hook,
+    "./AuthProvider": auth,
+    "@/lib/resource-library": contracts,
+    "./ResourceLibrary.module.css": css,
+  });
+  const props = {
+    active: true,
+    workspaceScope: "vault_A:1",
+    watchlist: {
+      sessionKey: "owner_A:1",
+      items: stocks().items,
+      limit: 50,
+      loading: false,
+      busy: false,
+    },
+    children: (m) =>
+      jsx("p", {
+        children:
+          m.catalogue.data && !m.catalogue.loading && !m.catalogue.error && !m.catalogue.stale
+            ? "HOLDINGS_READY"
+            : "HOLDINGS_LOADING",
+      }),
+  };
+  const render = () =>
+    h.render(() => {
+      const view = library.default(props);
+      model = view.props.model;
+      return library.ResourceLibraryView(view.props);
+    });
+  try {
+    let tree = render();
+    await settle();
+    tree = render();
+    assert.equal(
+      all(tree, (n) => n.type === "p" && n.props.children === "HOLDINGS_READY").length,
+      1,
+    );
+    assert.equal(model.follows.data, null);
+    assert.equal(model.follows.loading, false);
+    assert.equal(calls.filter((c) => c.route.endsWith("channel-follows")).length, 0);
+    button(tree, "kinds.channel_follows").props.onClick();
+    tree = render();
+    assert.equal(model.follows.loading, true);
+    assert.equal(model.follows.data, null);
+    assert.equal(calls.filter((c) => c.route.endsWith("channel-follows")).length, 1);
+    gate.resolve(response(channels()));
+    await settle();
+    tree = render();
+    assert.equal(model.follows.data.items[0].name, "Synthetic Creator");
+    button(tree, "kinds.holdings").props.onClick();
+    tree = render();
+    button(tree, "kinds.channel_follows").props.onClick();
+    tree = render();
+    await settle();
+    assert.equal(calls.filter((c) => c.route.endsWith("channel-follows")).length, 1);
+    owner = "owner_B:2";
+    held = false;
+    tree = render();
+    await settle();
+    tree = render();
+    assert.equal(
+      all(tree, (n) => n.type === "button" && n.props.children === "kinds.holdings")[0].props[
+        "aria-pressed"
+      ],
+      true,
+    );
+    assert.equal(model.follows.data, null);
+    assert.equal(
+      calls.filter((c) => c.key === owner && c.route.endsWith("channel-follows")).length,
+      0,
+    );
+  } finally {
+    h.close();
+  }
 });
 test("real category tabs reveal operative watchlist and follows, with shared-owner list identity", async () => {
   const h = hooks(),
@@ -62,6 +190,9 @@ test("real category tabs reveal operative watchlist and follows, with shared-own
     "react/jsx-runtime": runtime,
     "next-intl": { useTranslations: translations, useLocale: () => "en" },
     "./useResourceLibrary": {},
+    "./AuthProvider": {
+      useAuth: () => ({ status: "authenticated", sessionKey: "A", profile: {} }),
+    },
     "@/lib/resource-library": contracts,
     "./ResourceLibrary.module.css": css,
   });

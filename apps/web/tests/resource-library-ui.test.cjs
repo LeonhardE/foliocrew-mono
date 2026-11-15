@@ -39,6 +39,9 @@ function render(value, { locale = "en", onCreateTask, filter = "holdings" } = {}
       useTranslations: (namespace) => createTranslator({ locale, messages, namespace }),
     },
     "./useResourceLibrary": {},
+    "./AuthProvider": {
+      useAuth: () => ({ status: "authenticated", sessionKey: value.owner, profile: {} }),
+    },
     "@/lib/resource-library": contracts,
     "./ResourceLibrary.module.css": {
       __esModule: true,
@@ -145,4 +148,18 @@ test("cached resource rows remain visible during refresh failure and stale task 
     assert.match(watchlist, /disabled=""/);
     assert.doesNotMatch(follows, /No creators yet/);
   }
+});
+
+test("an unrequested or first-loading channel list is unknown rather than an invented empty list", () => {
+  for (const loading of [false, true]) {
+    const html = render(model({ follows: { data: null, loading, error: "", stale: false } }), {
+      filter: "channel_follows",
+    });
+    assert.doesNotMatch(html, /No creators yet|Synthetic Creator/);
+    assert.doesNotMatch(html, /<form|Add creator/);
+  }
+  const holdings = render(
+    model({ follows: { data: null, loading: false, error: "", stale: false } }),
+  );
+  assert.doesNotMatch(holdings, /No creators yet|Could not load|aria-busy="true"/);
 });
