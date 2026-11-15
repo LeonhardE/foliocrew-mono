@@ -2,6 +2,7 @@
 import * as jose from "jose";
 import canonicalize from "canonicalize";
 import validators from "./validators.cjs";
+import { markdownDestinations } from "./markdown-links.mjs";
 const encoder = new TextEncoder(),
   decoder = new TextDecoder("utf-8", { fatal: true });
 const MAX_CARRIER = 524288;
@@ -317,11 +318,7 @@ function markdown(value) {
   }
   if (/<\s*(?:\/?[A-Za-z][A-Za-z0-9-]*(?:\s|\/?>)|!|\?)/.test(text) || /!\s*\[/.test(text))
     deny("private_schema_invalid");
-  const destinations = [
-    ...[...text.matchAll(/\]\(\s*(<[^>]+>|[^\s)]+)/g)].map((m) => m[1]),
-    ...[...text.matchAll(/^\s*\[[^\]]+\]:\s*(\S+)/gm)].map((m) => m[1]),
-    ...[...text.matchAll(/<([^<>\s]+:[^<>\s]*)>/g)].map((m) => m[1]),
-  ];
+  const destinations = markdownDestinations(text);
   if (destinations.some((x) => !safeUrl(x.replace(/^<|>$/g, "")))) deny("private_schema_invalid");
 }
 function resultContent(content, outputSpec) {

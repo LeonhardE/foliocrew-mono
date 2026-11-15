@@ -3,3 +3,4 @@ export * from "./registry.mjs";
 export * from "./consents.mjs";
 export * from "./authority.mjs";
 export * from "./leases.mjs";
+export { markdownDestinations } from "./markdown-links.mjs";
