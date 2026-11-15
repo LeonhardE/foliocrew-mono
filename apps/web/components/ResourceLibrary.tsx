@@ -455,7 +455,7 @@ export function ResourceLibraryView({
 }
 export default function ResourceLibrary({
   active = true,
-  holdingsVersion = "",
+  holdingsVersion,
   watchlist,
   workspaceScope,
   ...props
@@ -475,6 +475,10 @@ export default function ResourceLibrary({
   });
   const previousVersion = useRef(holdingsVersion);
   useEffect(() => {
+    // Opening a snapshot temporarily clears decrypted content. That gap does not
+    // change the resource; Owner, vault and source epochs already reset its scope.
+    // Invalidate only when a different verified snapshot has been published.
+    if (holdingsVersion === undefined) return;
     if (previousVersion.current !== holdingsVersion) {
       previousVersion.current = holdingsVersion;
       if (active && model.authenticated && model.configured) void model.reload("catalogue");
