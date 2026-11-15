@@ -209,7 +209,11 @@ request may still complete. It does not cancel a server operation; the next rena
 current-state CAS. A fresh current read follows recovery so
 an older original receipt cannot relabel a newer name. Display names live only in memory, scoped
 to Owner/vault/Root/unlock generation/visibility, bounded to ten sources; 30-second display reuse
-avoids reloading names on every navigation. Authority used for writes is freshly checked.
+avoids reloading names on every navigation. Leaving the resource page cancels its automatic
+capability/listing read lane and stops subsequent Worker or local-packet reads. Late results cannot
+publish or extend freshness; returning reuses only a completed, fresh same-scope read. Vault-version
+or source-epoch changes invalidate that read. Explicit rename/recovery and their original pending
+packets keep their separate write lifecycle. Authority used for writes is freshly checked.
 
 ## Import and privacy behavior
 
@@ -542,6 +546,12 @@ No timer prewarms these services. Explicit retry always reads again. Follow writ
 catalogue before dispatch, and uncertain writes cannot be repeated by leaving and returning; their
 original state must be read back first. Watchlist and holdings updates still invalidate discovery.
 Account or vault scope changes mask old rows during render and fence delayed callbacks.
+
+The channel-follows list is requested when its category is selected, using the same bounded read,
+30-second freshness, explicit retry and revision-based writes. The default holdings category does
+not wait for that unused list. Until requested, channels remain unknown rather than an empty list;
+selecting the category shows its real loading, failure or saved rows. Changing categories cancels
+only an unfinished channel read, preserving catalogue reads and explicit follow-list writes.
 
 An unlocked holdings error retries the selected source through the existing `readStored` path,
 including current vault/authority/metadata checks. It no longer takes the read-only unlock path

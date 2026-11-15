@@ -58,8 +58,14 @@ const selectionKey = (item: ResourceItem) => {
 export function useResourceLibrary({
   active = true,
   externalWatchlist = false,
+  followsNeeded = true,
   workspaceScope = null,
-}: { active?: boolean; externalWatchlist?: boolean; workspaceScope?: string | null } = {}) {
+}: {
+  active?: boolean;
+  externalWatchlist?: boolean;
+  followsNeeded?: boolean;
+  workspaceScope?: string | null;
+} = {}) {
   const auth = useAuth();
   const owner = auth.status === "authenticated" && auth.profile ? auth.sessionKey : null;
   const configured = auth.agentHubConfigured;
@@ -415,13 +421,25 @@ export function useResourceLibrary({
     );
     if (owner && active && visible) {
       if (!externalWatchlist) void reload("watchlist", false);
-      void reload("follows", false);
       if (configured) void reload("catalogue", false);
     }
     return () => {
       for (const controller of jobs.current.values()) controller.abort();
     };
   }, [owner, scope, active, visible, configured, reload, externalWatchlist]);
+  useEffect(() => {
+    if (owner && active && visible && followsNeeded) void reload("follows", false);
+    return () => {
+      jobs.current.get("follows")?.abort();
+      ++serials.current.follows;
+      if (live.current.scope === scope)
+        setState((previous) =>
+          previous.scope === scope
+            ? { ...previous, follows: { ...previous.follows, loading: false } }
+            : previous,
+        );
+    };
+  }, [owner, scope, active, visible, followsNeeded, reload]);
 
   const useForTask = useCallback(
     (item: ResourceItem, callback?: (selection: ResourceSelection) => void) => {
@@ -462,7 +480,16 @@ export function useResourceLibrary({
   return {
     ...masked,
     watchlist: display("watchlist", masked.watchlist),
-    follows: display("follows", masked.follows),
+    follows: {
+      ...display("follows", masked.follows),
+      loading: Boolean(
+        owner &&
+        active &&
+        visible &&
+        followsNeeded &&
+        (masked.follows.loading || (!masked.follows.data && !masked.follows.error)),
+      ),
+    },
     owner,
     authenticated: Boolean(owner),
     configured,

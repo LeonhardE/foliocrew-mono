@@ -11,6 +11,7 @@ function harness(transport) {
     events = new Map(),
     packets = new Map();
   let owner = "A",
+    now = 100000,
     active = true,
     configured = true,
     visible = true,
@@ -18,6 +19,7 @@ function harness(transport) {
     names = [{ state: { ref: ref("holdings", "source_synthetic") }, name: "FIRST" }],
     head = { name: "LATEST" };
   const r = ref("holdings", "source_synthetic");
+  const overrides = {};
   const workspace = () => ({
     owner,
     phase: locked ? "locked" : "unlocked",
@@ -52,6 +54,7 @@ function harness(transport) {
       assert.equal(value.item.state.stableOperationId, "op");
       packets.delete(owner);
     },
+    ...overrides,
   });
   const { useDisplayNames } = compile(
     "../components/useDisplayNames.ts",
@@ -91,7 +94,11 @@ function harness(transport) {
       clearTimeout,
       Object,
       JSON,
-      Date,
+      Date: class extends Date {
+        static now() {
+          return now;
+        }
+      },
     },
   );
   const render = () => h.render(() => useDisplayNames(workspace(), active));
@@ -110,6 +117,8 @@ function harness(transport) {
       events.get("visibilitychange")?.();
     },
     head: (v) => (head = v),
+    workspace: (patch) => Object.assign(overrides, patch),
+    advance: (ms) => (now += ms),
     async ready() {
       render();
       for (let i = 0; i < 8; i++) {
@@ -142,6 +151,257 @@ test("names load once across navigation, remain scoped to unlocked visible Owner
     h.lock(true);
     assert.equal(h.render().name(h.r), null);
     assert.equal(h.calls.filter((c) => c.options?.method === "POST").length, 0);
+  } finally {
+    h.close();
+  }
+});
+
+test("leaving during capabilities aborts only the automatic name read and cannot start listing after a late reply", async () => {
+  const gate = deferred();
+  let held = true;
+  const h = harness((call) =>
+    held && call.path.endsWith("capabilities") ? gate.promise : undefined,
+  );
+  try {
+    h.render();
+    await settle();
+    const first = h.calls[0];
+    h.active(false);
+    h.render();
+    assert.equal(first.options.signal.aborted, true);
+    gate.resolve(response(wrap({ enabled: true, maxSources: 10, maxNameLength: 80 })));
+    await settle();
+    assert.equal(h.calls.filter((c) => c.path?.endsWith("/holdings")).length, 0);
+    assert.equal(h.render().loading, false);
+    assert.equal(h.render().error, "");
+    held = false;
+    h.active(true);
+    assert.equal((await h.ready()).name(h.r), "FIRST");
+    const reads = h.calls.length;
+    h.active(false);
+    h.render();
+    h.active(true);
+    await h.ready();
+    assert.equal(h.calls.length, reads, "Completed same-scope names retain their30s freshness");
+    h.active(false);
+    h.render();
+    h.advance(30000);
+    h.active(true);
+    await h.ready();
+    assert.equal(h.calls.length, reads + 2);
+  } finally {
+    h.close();
+  }
+});
+
+test("leaving during listing stops Worker dispatch even when transport ignores its abort", async () => {
+  const gate = deferred();
+  let opened = 0;
+  const h = harness((call) => (call.path.endsWith("/holdings") ? gate.promise : undefined));
+  h.workspace({
+    async openDisplayNames() {
+      opened++;
+      return [];
+    },
+  });
+  try {
+    h.render();
+    await settle();
+    const listing = h.calls.find((c) => c.path?.endsWith("/holdings"));
+    assert.ok(listing);
+    h.active(false);
+    h.render();
+    assert.equal(listing.options.signal.aborted, true);
+    gate.resolve(response(wrap({ items: [] })));
+    await settle();
+    assert.equal(opened, 0);
+    assert.equal(h.render().ready, false);
+  } finally {
+    h.close();
+  }
+});
+
+test("a late Worker name result cannot publish or begin local pending reads after leaving", async () => {
+  const gate = deferred();
+  let pendingReads = 0,
+    opened = 0;
+  const h = harness();
+  h.workspace({
+    async openDisplayNames(refs, items) {
+      opened++;
+      await gate.promise;
+      return items.map((i) => ({ ref: i.state.ref, name: i.name, state: i.state }));
+    },
+    async loadDisplayNamePending() {
+      pendingReads++;
+      return null;
+    },
+  });
+  try {
+    h.render();
+    await settle();
+    assert.equal(opened, 1);
+    h.active(false);
+    h.render();
+    gate.resolve();
+    await settle();
+    assert.equal(pendingReads, 0);
+    assert.equal(h.render().name(h.r), null);
+    assert.equal(h.render().ready, false);
+    assert.equal(h.render().error, "");
+  } finally {
+    h.close();
+  }
+});
+
+test("leaving between local pending reads stops the next source without discarding its original packet", async () => {
+  const gate = deferred(),
+    h = harness(),
+    seen = [];
+  const other = ref("holdings", "source_second");
+  const original = { operationId: "original", body: { CIPHERTEXT: true } };
+  h.packets.set("A", original);
+  h.workspace({
+    sources: [
+      { resourceRef: h.r, sourceEpoch: 1 },
+      { resourceRef: other, sourceEpoch: 1 },
+    ],
+    async loadDisplayNamePending(r) {
+      seen.push(r.resourceId);
+      await gate.promise;
+      return original;
+    },
+  });
+  try {
+    h.render();
+    await settle();
+    assert.deepEqual(seen, [h.r.resourceId]);
+    h.active(false);
+    h.render();
+    gate.resolve();
+    await settle();
+    assert.deepEqual(seen, [h.r.resourceId]);
+    assert.equal(h.packets.get("A"), original);
+  } finally {
+    h.close();
+  }
+});
+
+test("automatic-read navigation cancellation does not abort an explicit rename or replace an unknown-ACK packet", async () => {
+  const ack = deferred();
+  const h = harness((call) => (call.path.endsWith("commands") ? ack.promise : undefined));
+  try {
+    await h.ready();
+    const write = h.render().rename(h.r, "NEW");
+    await settle();
+    const command = h.calls.find((c) => c.path?.endsWith("commands"));
+    assert.ok(command);
+    const original = h.packets.get("A");
+    h.active(false);
+    h.render();
+    assert.equal(command.options.signal.aborted, false);
+    ack.resolve(response({}, 503));
+    assert.equal(await write, false);
+    assert.equal(h.packets.get("A"), original);
+    assert.equal(h.calls.filter((c) => c.options?.method === "POST").length, 1);
+  } finally {
+    h.close();
+  }
+});
+
+test("rapid leave and return cannot let the old read clear the new loading state or extend its cache", async () => {
+  const first = deferred(),
+    second = deferred();
+  let count = 0;
+  const h = harness((call) =>
+    call.path.endsWith("capabilities")
+      ? ++count === 1
+        ? first.promise
+        : count === 2
+          ? second.promise
+          : undefined
+      : undefined,
+  );
+  try {
+    h.render();
+    await settle();
+    h.active(false);
+    h.render();
+    h.active(true);
+    h.render();
+    await settle();
+    assert.equal(count, 2);
+    assert.equal(h.render().loading, true);
+    first.resolve(response(wrap({ enabled: true, maxSources: 10, maxNameLength: 80 })));
+    await settle();
+    assert.equal(h.render().loading, true);
+    assert.equal(h.render().ready, false);
+    second.resolve(response(wrap({ enabled: true, maxSources: 10, maxNameLength: 80 })));
+    assert.equal((await h.ready()).name(h.r), "FIRST");
+    h.active(false);
+    h.render();
+    h.advance(30000);
+    h.active(true);
+    await h.ready();
+    assert.equal(count, 3);
+  } finally {
+    h.close();
+  }
+});
+test("leaving during an explicit fresh Root read aborts its read lane before capabilities without touching pending packets", async () => {
+  const gate = deferred(),
+    h = harness();
+  let signal;
+  try {
+    await h.ready();
+    const original = { operationId: "original", body: { CIPHERTEXT: true } };
+    h.packets.set("A", original);
+    h.workspace({
+      async refreshVault(s) {
+        signal = s;
+        await gate.promise;
+      },
+    });
+    const before = h.calls.length,
+      read = h.render().reload();
+    await settle();
+    assert.ok(signal);
+    h.active(false);
+    h.render();
+    assert.equal(signal.aborted, true);
+    gate.resolve();
+    await read;
+    await settle();
+    assert.equal(h.calls.length, before);
+    assert.equal(h.packets.get("A"), original);
+    assert.equal(h.render().error, "");
+  } finally {
+    h.close();
+  }
+});
+test("changed vault versions and source epochs cancel the old read and start a fresh bounded name read", async () => {
+  const old = deferred();
+  let caps = 0;
+  const h = harness((call) =>
+    call.path.endsWith("capabilities") && ++caps === 1 ? old.promise : undefined,
+  );
+  h.workspace({ vault: { vaultId: "vault", rootKeyId: "root", version: 1 } });
+  try {
+    h.render();
+    await settle();
+    const first = h.calls[0];
+    h.workspace({ vault: { vaultId: "vault", rootKeyId: "root", version: 2 } });
+    h.render();
+    await settle();
+    assert.equal(first.options.signal.aborted, true);
+    assert.equal((await h.ready()).name(h.r), "FIRST");
+    assert.equal(caps, 2);
+    old.resolve(response(wrap({ enabled: true, maxSources: 10, maxNameLength: 80 })));
+    await settle();
+    h.workspace({ sources: [{ resourceRef: h.r, sourceEpoch: 2 }] });
+    await h.ready();
+    assert.equal(caps, 3);
+    assert.equal(h.calls.filter((c) => c.path?.endsWith("/holdings")).length, 2);
   } finally {
     h.close();
   }

@@ -13,6 +13,7 @@ import {
 import styles from "./ResourceLibrary.module.css";
 import type { WatchlistModel } from "./useWatchlist";
 import { LoadingIndicator, InlineError } from "./WorkspaceFeedback";
+import { useAuth } from "./AuthProvider";
 
 const kinds: ResourceKind[] = ["holdings", "watchlist", "channel_follows"];
 const blank: ChannelInput = { name: "", handleOrUrl: "", note: "" };
@@ -283,15 +284,24 @@ export function ResourceLibraryView({
   onOpenWatchlist,
   onCreateTask,
   watchlist: sharedWatchlist,
+  filter: selectedFilter,
+  onFilterChange,
 }: {
   model: ResourceLibraryModel;
   watchlist?: WatchlistModel;
   children: ReactNode | ((model: ResourceLibraryModel) => ReactNode);
   onOpenWatchlist?: () => void;
   onCreateTask?: (selection: ResourceSelection) => void;
+  filter?: ResourceKind;
+  onFilterChange?: (kind: ResourceKind) => void;
 }) {
   const t = useTranslations("resourceLibrary");
-  const [filter, setFilter] = useState<ResourceKind>("holdings");
+  const [localFilter, setLocalFilter] = useState<ResourceKind>("holdings");
+  const filter = selectedFilter ?? localFilter;
+  const setFilter = (kind: ResourceKind) => {
+    if (selectedFilter === undefined) setLocalFilter(kind);
+    onFilterChange?.(kind);
+  };
   const [symbol, setSymbol] = useState("");
   const shared = sharedWatchlist?.sessionKey === model.owner ? sharedWatchlist : null;
   const watchlist = sharedWatchlist
@@ -468,10 +478,21 @@ export default function ResourceLibrary({
   onOpenWatchlist?: () => void;
   onCreateTask?: (selection: ResourceSelection) => void;
 }) {
+  const auth = useAuth();
+  const owner = auth.status === "authenticated" && auth.profile ? auth.sessionKey : null;
+  const [selection, setSelection] = useState<{ owner: string | null; kind: ResourceKind }>({
+    owner,
+    kind: "holdings",
+  });
+  const filter = selection.owner === owner ? selection.kind : "holdings";
+  useEffect(() => {
+    if (selection.owner !== owner) setSelection({ owner, kind: "holdings" });
+  }, [owner, selection.owner]);
   const model = useResourceLibrary({
     active,
     workspaceScope,
     externalWatchlist: Boolean(watchlist),
+    followsNeeded: filter === "channel_follows",
   });
   const previousVersion = useRef(holdingsVersion);
   useEffect(() => {
@@ -488,6 +509,8 @@ export default function ResourceLibrary({
     <ResourceLibraryView
       key={model.owner ?? "guest"}
       model={model}
+      filter={filter}
+      onFilterChange={(kind) => setSelection({ owner, kind })}
       watchlist={watchlist}
       {...props}
     />

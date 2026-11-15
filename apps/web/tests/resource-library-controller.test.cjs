@@ -10,7 +10,13 @@ const {
   settle,
   deferred,
 } = require("./resource-library-helpers.cjs");
-function harness({ transport, active = true, configured = true, externalWatchlist = false } = {}) {
+function harness({
+  transport,
+  active = true,
+  configured = true,
+  externalWatchlist = false,
+  followsNeeded = true,
+} = {}) {
   let owner = "owner_A:1",
     workspaceScope = "vault_A:1",
     now = 100000,
@@ -115,7 +121,7 @@ function harness({ transport, active = true, configured = true, externalWatchlis
     do {
       index = 0;
       dirty = false;
-      result = useResourceLibrary({ active, externalWatchlist, workspaceScope });
+      result = useResourceLibrary({ active, externalWatchlist, workspaceScope, followsNeeded });
       if (flush)
         for (const entry of effects.splice(0)) {
           cells[entry.slot]?.cleanup?.();
@@ -134,6 +140,7 @@ function harness({ transport, active = true, configured = true, externalWatchlis
     advance: (ms) => (now += ms),
     capability: (next) => (configured = next),
     active: (next) => (active = next),
+    followsNeeded: (next) => (followsNeeded = next),
     visibility(next) {
       visible = next;
       events.get("visibilitychange")?.();
@@ -160,6 +167,134 @@ test("catalogue failure does not erase existing User lists or pretend they are e
   assert.equal(view.watchlist.data.items[0].symbol, "SYNTH");
   assert.equal(view.follows.data.items[0].name, "CREATOR_A");
   h.unmount();
+});
+
+test("holdings demand leaves channels unknown while catalogue is ready, and entering channels starts its first read", async () => {
+  const h = harness({ externalWatchlist: true, followsNeeded: false });
+  try {
+    const model = await h.ready();
+    assert.ok(model.catalogue.data);
+    assert.equal(model.catalogue.loading, false);
+    assert.equal(model.follows.data, null);
+    assert.equal(model.follows.loading, false);
+    assert.equal(h.calls.filter((c) => c.route.endsWith("channel-follows")).length, 0);
+    const catalogueReads = h.calls.filter((c) => c.route.includes("catalogue")).length;
+    h.followsNeeded(true);
+    const opening = h.render();
+    assert.equal(opening.follows.loading, true);
+    const loaded = await h.ready();
+    assert.equal(loaded.follows.data.items[0].name, "CREATOR_A");
+    assert.equal(h.calls.filter((c) => c.route.endsWith("channel-follows")).length, 1);
+    assert.equal(
+      h.calls.filter((c) => c.route.includes("catalogue")).length,
+      catalogueReads,
+      "Category demand does not restart catalogue",
+    );
+    h.followsNeeded(false);
+    h.render();
+    h.followsNeeded(true);
+    await h.ready();
+    assert.equal(h.calls.filter((c) => c.route.endsWith("channel-follows")).length, 1);
+    h.followsNeeded(false);
+    h.render();
+    h.advance(30000);
+    h.followsNeeded(true);
+    await h.ready();
+    assert.equal(h.calls.filter((c) => c.route.endsWith("channel-follows")).length, 2);
+  } finally {
+    h.unmount();
+  }
+});
+
+test("changing channel demand does not cancel catalogue, and cancels only a hidden channel read", async () => {
+  const discovery = deferred(),
+    list = deferred();
+  let hold = true;
+  const h = harness({
+    externalWatchlist: true,
+    followsNeeded: false,
+    transport: ({ route }) =>
+      route.includes("catalogue")
+        ? discovery.promise
+        : hold && route.endsWith("channel-follows")
+          ? list.promise
+          : undefined,
+  });
+  try {
+    h.render();
+    const catalogueCall = h.calls[0];
+    h.followsNeeded(true);
+    h.render();
+    await settle();
+    assert.equal(catalogueCall.options.signal.aborted, false);
+    const follows = h.calls.find((c) => c.route.endsWith("channel-follows"));
+    assert.ok(follows);
+    h.followsNeeded(false);
+    h.render();
+    assert.equal(follows.options.signal.aborted, true);
+    assert.equal(catalogueCall.options.signal.aborted, false);
+    discovery.resolve(response(catalogue()));
+    list.resolve(response(channels("LATE")));
+    await settle();
+    assert.equal(h.render().follows.data, null);
+    assert.equal(h.render().follows.loading, false);
+    hold = false;
+    h.followsNeeded(true);
+    await h.ready();
+    assert.equal(h.render().follows.data.items[0].name, "CREATOR_A");
+  } finally {
+    h.unmount();
+  }
+});
+
+test("channel demand preserves failed-read unknown state and Owner/CAS fences without restarting an explicit write", async () => {
+  const ack = deferred();
+  let fail = true;
+  const h = harness({
+    followsNeeded: false,
+    transport: ({ route, options }) =>
+      options.method === "PUT"
+        ? ack.promise
+        : fail && route.endsWith("channel-follows")
+          ? response({}, 503)
+          : undefined,
+  });
+  try {
+    await h.ready();
+    h.followsNeeded(true);
+    await h.ready();
+    assert.equal(h.render().follows.data, null);
+    assert.equal(h.render().follows.error, "unavailable");
+    assert.equal(await h.render().saveFollows([]), false);
+    fail = false;
+    await h.render().reload("follows");
+    const before = h.render();
+    const write = before.saveFollows([]);
+    await settle();
+    const put = h.calls.find((c) => c.options.method === "PUT");
+    assert.equal(put.options.json.expectedRevision, 1);
+    h.followsNeeded(false);
+    h.render();
+    assert.equal(put.options.signal.aborted, false);
+    ack.resolve(response(channels("SAVED", 2)));
+    assert.equal(await write, true);
+    await settle();
+    assert.equal(h.calls.filter((c) => c.options.method === "PUT").length, 1);
+    assert.equal(h.render().follows.data.revision, 2);
+    h.owner("owner_B:2");
+    assert.equal(h.render().follows.data, null);
+    await h.ready();
+    assert.equal(
+      h.calls.filter((c) => c.key === "owner_B:2" && c.route.endsWith("channel-follows")).length,
+      0,
+    );
+    h.followsNeeded(true);
+    await h.ready();
+    assert.equal(h.render().follows.data.items[0].name, "CREATOR_B");
+    assert.equal(await before.saveFollows([]), false);
+  } finally {
+    h.unmount();
+  }
 });
 
 test("User resource lists work without Portfolio or Hub and reuse fresh data when returning from Market", async () => {

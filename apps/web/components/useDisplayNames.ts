@@ -4,6 +4,7 @@ import { useAuth } from "./AuthProvider";
 import type { HoldingsWorkspace } from "./useHoldingsWorkspace";
 import { untilSignal } from "@/lib/workspace-cache";
 type J = Record<string, any>;
+type ReadGuard = { signal: AbortSignal; assert: () => void };
 const C = "folioview.agent-workspace.v2.0",
   P = "folioview.private-display-name.v1";
 export const displayRefKey = (r: J) =>
@@ -63,18 +64,36 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
     fresh = useRef(0),
     readSerial = useRef(0),
     readBusy = useRef(false),
+    readLane = useRef<AbortController | null>(null),
     writing = useRef<object | null>(null),
     pending = useRef(new Map<string, J>());
   const update = useCallback((patch: Partial<typeof state>, expected: string | null) => {
     if (expected && live.current.scope === expected)
       setState((s) => (live.current.scope === expected ? { ...s, ...patch, scope: expected } : s));
   }, []);
+  const cancelRead = useCallback(() => {
+    if (!readLane.current) return;
+    readLane.current.abort();
+    readLane.current = null;
+    ++readSerial.current;
+    readBusy.current = false;
+    update({ loading: false }, live.current.scope);
+  }, [update]);
   const api = useCallback(
-    async (path: string, options: any = {}, expected = live.current.scope): Promise<J | null> => {
+    async (
+      path: string,
+      options: any = {},
+      expected = live.current.scope,
+      read?: ReadGuard,
+    ): Promise<J | null> => {
       const start = live.current;
       if (!expected || start.scope !== expected) throw Error("cancelled");
+      read?.assert();
       const abort = new AbortController();
       jobs.current.add(abort);
+      const cancelReadRequest = () => abort.abort();
+      read?.signal.addEventListener("abort", cancelReadRequest, { once: true });
+      if (read?.signal.aborted) abort.abort();
       let timedOut = false;
       const timer = setTimeout(() => {
         timedOut = true;
@@ -83,6 +102,7 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
       const check = () => {
         if (abort.signal.aborted || live.current.scope !== expected)
           throw Error(timedOut ? "timeout" : "cancelled");
+        read?.assert();
       };
       try {
         check();
@@ -175,6 +195,7 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
         check();
         throw error;
       } finally {
+        read?.signal.removeEventListener("abort", cancelReadRequest);
         clearTimeout(timer);
         jobs.current.delete(abort);
       }
@@ -197,33 +218,61 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
       )
         return;
       const serial = ++readSerial.current;
+      const controller = new AbortController();
+      readLane.current = controller;
+      jobs.current.add(controller);
+      const context = (w: HoldingsWorkspace) =>
+        JSON.stringify([
+          w.vault?.version,
+          w.sources.map((s) => [displayRefKey(s.resourceRef), s.sourceEpoch]).sort(),
+        ]);
+      const version = context(start.workspace);
+      const current = () =>
+        !controller.signal.aborted &&
+        readLane.current === controller &&
+        serial === readSerial.current &&
+        live.current.scope === expected &&
+        live.current.active &&
+        context(live.current.workspace) === version;
+      const read: ReadGuard = {
+        signal: controller.signal,
+        assert() {
+          if (!current()) throw Error("cancelled");
+        },
+      };
       readBusy.current = true;
       update({ loading: true, error: "" }, expected);
       try {
+        read.assert();
         if (refreshRoot) {
           const a = new AbortController();
           jobs.current.add(a);
+          const cancel = () => a.abort();
+          controller.signal.addEventListener("abort", cancel, { once: true });
           const timer = setTimeout(() => a.abort(), 14000);
           try {
             await start.workspace.refreshVault(a.signal);
           } finally {
+            controller.signal.removeEventListener("abort", cancel);
             clearTimeout(timer);
             jobs.current.delete(a);
           }
         }
+        read.assert();
         const caps = await api(
           "/api/v3/private-display-names/capabilities",
           { missing: true },
           expected,
+          read,
         );
-        if (serial !== readSerial.current || live.current.scope !== expected)
-          throw Error("cancelled");
+        read.assert();
         if (!caps || caps.enabled !== true) {
           update({ enabled: false, ready: true, loading: false }, expected);
           return;
         }
         if (caps.maxNameLength !== 80 || caps.maxSources !== 10) throw Error("invalid_response");
-        const data = await api(base(start.workspace.vault!.vaultId), {}, expected);
+        const data = await api(base(start.workspace.vault!.vaultId), {}, expected, read);
+        read.assert();
         if (!data || !Array.isArray(data.items) || data.items.length > 10)
           throw Error("invalid_response");
         const refs = start.workspace.sources.map((s) => s.resourceRef);
@@ -231,25 +280,26 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
           refs,
           data.items.filter((v: J) => refs.some((r) => same(r, v.state?.ref ?? {}))),
         );
-        if (live.current.scope !== expected || serial !== readSerial.current)
-          throw Error("cancelled");
+        read.assert();
         const names = Object.fromEntries(
           opened.map((v: J) => [displayRefKey(v.ref), { name: v.name, state: v.state }]),
         );
-        fresh.current = Date.now();
         update({ names, enabled: true, ready: true, loading: false, error: "" }, expected);
         // Recover original local packets without submitting any automatic write.
         for (const ref of refs) {
+          read.assert();
           const packet = await start.workspace.loadDisplayNamePending(ref);
-          if (live.current.scope !== expected || serial !== readSerial.current)
-            throw Error("cancelled");
+          read.assert();
           if (packet) pending.current.set(displayRefKey(ref), packet);
           else pending.current.delete(displayRefKey(ref));
           update({ pending: Object.fromEntries(pending.current) }, expected);
         }
+        fresh.current = Date.now();
       } catch (e) {
-        if (serial === readSerial.current) update({ loading: false, error: code(e) }, expected);
+        if (current()) update({ loading: false, error: code(e) }, expected);
       } finally {
+        jobs.current.delete(controller);
+        if (readLane.current === controller) readLane.current = null;
         if (serial === readSerial.current) readBusy.current = false;
       }
     },
@@ -326,6 +376,8 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
         return false;
       const token = {};
       writing.current = token;
+      readLane.current?.abort();
+      readLane.current = null;
       ++readSerial.current;
       readBusy.current = false;
       update({ busy: true, loading: false, error: "" }, expected);
@@ -380,6 +432,8 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
       if (!expected || start.scope !== expected || writing.current) return false;
       const token = {};
       writing.current = token;
+      readLane.current?.abort();
+      readLane.current = null;
       ++readSerial.current;
       readBusy.current = false;
       update({ busy: true, loading: false, error: "" }, expected);
@@ -439,6 +493,7 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
   }, []);
   useEffect(() => {
     for (const j of jobs.current) j.abort();
+    readLane.current = null;
     ++readSerial.current;
     readBusy.current = false;
     writing.current = null;
@@ -463,14 +518,16 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
     .sort()
     .join("|");
   useEffect(() => {
+    cancelRead();
     fresh.current = 0;
     if (scope && active) {
       void load(true);
     }
-  }, [scope, refsVersion]);
+  }, [scope, refsVersion, workspace.vault?.version, cancelRead]);
   useEffect(() => {
     if (scope && active) void load();
-  }, [scope, active, load]);
+    else cancelRead();
+  }, [scope, active, load, cancelRead]);
   const current =
     scope && state.scope === scope
       ? state
