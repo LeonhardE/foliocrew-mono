@@ -96,10 +96,17 @@ one `authority.RegistryCertificateMemo` and pass it as
 `verify_registry(..., signature_memo=memo)`. Successful static certificate signature,
 closed schema and complete public P-256 key/thumbprint checks share one entry,
 keyed by the exact Root public key, type, expected key ID and complete signed bytes.
-Key derivation and verification use the same private deep-copied Root/JWS inputs,
-including when another thread changes the original dictionaries during crypto.
-Hits return independent copies of immutable private payloads. At most 128 entries
-and 1 MiB of encoded keys, payloads and static metadata are retained; beyond either
+Each bundle uses one private Root snapshot for its checkpoint and certificates.
+Certificate lookups bind that complete Root context to the exact three immutable
+JWS strings, without serializing the same Root and JWS again on each static hit.
+Verification uses the same private inputs, including when another thread changes
+the original dictionaries during crypto. Successful evidence owns its frozen
+certificate payload, canonical bytes and digest. Consecutive registries may share
+that private immutable value, so only identical internal proof identity can skip
+repeated prior-payload serialization; other values retain the full comparison.
+Public `cert()`, `_verify` and `_certificate` results remain detached copies.
+At most 128 entries and 1 MiB of encoded keys, payloads, canonical bytes and static
+metadata are retained; beyond either
 limit full validation continues without adding evidence. Concurrent successes cannot
 exceed either bound. Pending work and failed static validation are not retained.
 Every checkpoint signature/schema and every entry's identity, role/capabilities,

@@ -39,6 +39,10 @@ _UNSET = object()
 
 
 def _freeze(value: Any) -> Any:
+    if type(value) is _CertificatePayload:
+        # This type owns a deeply frozen, successfully verified certificate.
+        # Retaining it preserves static proof identity, never a registry decision.
+        return value
     if isinstance(value, Mapping):
         return MappingProxyType({key: _freeze(item) for key, item in value.items()})
     if isinstance(value, (list, tuple)):
@@ -61,6 +65,47 @@ class _CertificateMemoEntry:
     size: int
 
 
+class _CertificatePayload(Mapping[str, Any]):
+    """Internally owned static certificate evidence, with no public constructor."""
+
+    __slots__ = ("__canonical", "__digest", "__value")
+
+    def __new__(cls):
+        raise TypeError("Certificate evidence is created only by successful verification.")
+
+    def __setattr__(self, name, value):
+        raise AttributeError("Certificate evidence is immutable.")
+
+    def __delattr__(self, name):
+        raise AttributeError("Certificate evidence is immutable.")
+
+    def __getitem__(self, key: str) -> Any:
+        return self.__value[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.__value)
+
+    def __len__(self) -> int:
+        return len(self.__value)
+
+    @property
+    def canonical(self) -> bytes:
+        return self.__canonical
+
+    @property
+    def digest(self) -> str:
+        return self.__digest
+
+
+def _certificate_payload(payload: dict, raw: bytes) -> _CertificatePayload:
+    # Called only after JWS, certificate schema and public-key checks succeed.
+    value = object.__new__(_CertificatePayload)
+    object.__setattr__(value, "_CertificatePayload__value", _freeze(payload))
+    object.__setattr__(value, "_CertificatePayload__canonical", raw)
+    object.__setattr__(value, "_CertificatePayload__digest", hashlib.sha256(raw).hexdigest())
+    return value
+
+
 class RegistryCertificateMemo:
     """Bounded, operation-local reuse of successful certificate static checks.
 
@@ -69,10 +114,12 @@ class RegistryCertificateMemo:
     can reuse a result. This stores no registry, time or authorization decision.
     """
 
-    __slots__ = ("__entries", "__size", "__lock")
+    __slots__ = ("__entries", "__lock", "__size")
 
     def __init__(self) -> None:
-        self.__entries: dict[tuple[bytes, str, str | None, bytes], _CertificateMemoEntry] = {}
+        self.__entries: dict[
+            tuple[bytes, str, str | None, str, str, str], _CertificateMemoEntry
+        ] = {}
         self.__size = 0
         self.__lock = Lock()
 
@@ -80,40 +127,68 @@ class RegistryCertificateMemo:
         self, signed: dict, public_jwk: dict, *, typ: str, expected_kid: str | None
     ) -> dict:
         # Generic signature-only seam; registry callers always use _certificate.
-        return self.__checked(signed, public_jwk, typ=typ, expected_kid=expected_kid)[0]
+        root = deepcopy(public_jwk)
+        entry = self.__checked(
+            signed, root, canonical_json(root), typ=typ, expected_kid=expected_kid
+        )
+        return _thaw(entry.payload)
 
     def _certificate(
         self, signed: dict, public_jwk: dict, *, expected_kid: str
     ) -> tuple[dict, str]:
-        payload, public_key_id = self.__checked(
-            signed,
-            public_jwk,
-            typ=_CONTROL_TYP,
-            expected_kid=expected_kid,
-            certificate=True,
-        )
-        assert public_key_id is not None
-        return payload, public_key_id
+        entry = self._registry_certificates(public_jwk, expected_kid=expected_kid)(signed)
+        assert entry.public_key_id is not None
+        return _thaw(entry.payload), entry.public_key_id
+
+    def _registry_certificates(self, public_jwk: dict, *, expected_kid: str):
+        # One private Root context for a bundle's certificate checks. The full
+        # root, including fields outside its thumbprint, remains in every key.
+        root = deepcopy(public_jwk)
+        root_bytes = canonical_json(root)
+
+        def certificate(signed):
+            return self.__checked(
+                signed,
+                root,
+                root_bytes,
+                typ=_CONTROL_TYP,
+                expected_kid=expected_kid,
+                certificate=True,
+            )
+
+        return certificate
 
     def __checked(
         self,
         signed: dict,
-        public_jwk: dict,
+        root: dict,
+        root_bytes: bytes,
         *,
         typ: str,
         expected_kid: str | None,
         certificate: bool = False,
-    ) -> tuple[dict, str | None]:
-        # Key derivation and verification must use the same private snapshots.
-        # In particular, a caller mutating its dict while crypto releases the GIL
-        # cannot install a different payload under an earlier signed-input key.
-        root, signed = deepcopy(public_jwk), deepcopy(signed)
-        root_bytes, signed_bytes = canonical_json(root), canonical_json(signed)
-        key = (root_bytes, typ, expected_kid, signed_bytes)
+    ) -> _CertificateMemoEntry:
+        # SignedObject is a closed three-string mapping. The immutable strings
+        # are both the complete key and the private input used by verification;
+        # no caller mutation can install other bytes under this key. Malformed
+        # inputs still take the original strict JSON/signature failure path.
+        if type(signed) is not dict:
+            canonical_json(signed)
+            verify_jws(signed, root, typ=typ, expected_kid=expected_kid)
+            raise ContractError("invalid_signature")
+        signed = deepcopy(signed)
+        if set(signed) != {"protected", "payload", "signature"} or any(
+            type(signed[field]) is not str for field in signed
+        ):
+            canonical_json(signed)
+            verify_jws(signed, root, typ=typ, expected_kid=expected_kid)
+            raise ContractError("invalid_signature")
+        parts = (signed["protected"], signed["payload"], signed["signature"])
+        key = (root_bytes, typ, expected_kid, *parts)
         with self.__lock:
             cached = self.__entries.get(key)
         if cached is not None and (not certificate or cached.public_key_id is not None):
-            return _thaw(cached.payload), cached.public_key_id
+            return cached
         payload = (
             _thaw(cached.payload)
             if cached is not None
@@ -123,6 +198,8 @@ class RegistryCertificateMemo:
         if certificate:
             validate_schema("KeyCertificatePayload", payload)
             public_key_id = jwk_thumbprint(payload["publicJwk"])
+        raw = canonical_json(payload)
+        owned = _certificate_payload(payload, raw) if certificate else _freeze(payload)
         # Static evidence shares the existing complete-input entry; there is no
         # second payload-canonical key or permission/clock result to go stale.
         base_size = (
@@ -130,31 +207,35 @@ class RegistryCertificateMemo:
             if cached is not None
             else (
                 len(root_bytes)
-                + len(signed_bytes)
+                + len(canonical_json(signed))
                 + len(typ.encode("utf-8"))
                 + len((expected_kid or "").encode("utf-8"))
-                + len(canonical_json(payload))
+                + len(raw)
             )
         )
-        size = base_size + (
-            len(canonical_json({"publicKeyId": public_key_id})) if public_key_id is not None else 0
-        )
+        size = base_size
+        if certificate:
+            # Account for the additional retained canonical bytes and digest,
+            # as well as the existing private frozen payload and key metadata.
+            size += len(raw) + len(
+                canonical_json({"publicKeyId": public_key_id, "payloadDigest": owned.digest})
+            )
+        entry = _CertificateMemoEntry(owned, public_key_id, size)
         with self.__lock:
             current = self.__entries.get(key)
             if current is None:
                 if len(self.__entries) < 128 and self.__size + size <= 1_048_576:
-                    self.__entries[key] = _CertificateMemoEntry(
-                        _freeze(payload), public_key_id, size
-                    )
+                    self.__entries[key] = entry
                     self.__size += size
             elif certificate and current.public_key_id is None:
                 delta = size - current.size
                 if self.__size + delta <= 1_048_576:
-                    self.__entries[key] = _CertificateMemoEntry(
-                        current.payload, public_key_id, size
-                    )
+                    self.__entries[key] = entry
                     self.__size += delta
-        return payload, public_key_id
+            elif current.public_key_id is not None:
+                # Racing successes share only the same immutable static proof.
+                return current
+        return entry
 
 
 def _digest(value: Any) -> str:
@@ -279,6 +360,7 @@ def verify_registry(
     """
     if signature_memo is not None and type(signature_memo) is not RegistryCertificateMemo:
         raise ContractError("malformed_request")
+    root_jwk = deepcopy(root_jwk)
     _integer(now)
     root_epoch = root_epoch if root_epoch is not None else (previous.root_epoch if previous else 1)
     _integer(root_epoch, 1)
@@ -330,11 +412,15 @@ def verify_registry(
     revoked = set(cp["revokedKeyIds"])
     local_epochs = dict(previous.local_key_epochs) if previous is not None else {}
     local_generations: dict[tuple[str, str, str | None, int], str] = {}
+    certificate_check = (
+        signature_memo._registry_certificates(root_jwk, expected_kid=pinned_root_key_id)
+        if signature_memo is not None
+        else None
+    )
     for entry in bundle["entries"]:
         if signature_memo is not None:
-            cert, public_key_id = signature_memo._certificate(
-                entry["certificate"], root_jwk, expected_kid=pinned_root_key_id
-            )
+            evidence = certificate_check(entry["certificate"])
+            cert, public_key_id = evidence.payload, evidence.public_key_id
         else:
             cert = verify_jws(
                 entry["certificate"],
@@ -368,8 +454,12 @@ def verify_registry(
         local_generations[generation] = kid
         if previous is not None:
             old = previous.certificates.get(kid)
-            if old is not None and canonical_json(_thaw(old)) != canonical_json(cert):
-                raise ContractError("registry_conflict")
+            if old is not None and not (type(cert) is _CertificatePayload and old is cert):
+                current_bytes = (
+                    cert.canonical if type(cert) is _CertificatePayload else canonical_json(cert)
+                )
+                if canonical_json(_thaw(old)) != current_bytes:
+                    raise ContractError("registry_conflict")
             if old is None and cert["keyEpoch"] <= previous.local_key_epochs.get(local_identity, 0):
                 raise ContractError("stale_key_epoch")
         local_epochs[local_identity] = max(local_epochs.get(local_identity, 0), cert["keyEpoch"])
@@ -380,7 +470,9 @@ def verify_registry(
         descriptions.append(
             {
                 "certificateId": cert["certificateId"],
-                "payloadDigest": _digest(cert),
+                "payloadDigest": cert.digest
+                if type(cert) is _CertificatePayload
+                else _digest(cert),
                 "active": entry["active"],
             }
         )
