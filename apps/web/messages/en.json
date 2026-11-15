@@ -1495,6 +1495,7 @@
   "taskCenter": {
     "title": "Task center",
     "taskList": "Tasks",
+    "noTasks": "No tasks yet.",
     "refresh": "Refresh",
     "trash": "Trash",
     "new": "New task",

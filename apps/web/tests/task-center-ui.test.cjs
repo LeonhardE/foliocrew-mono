@@ -5,6 +5,7 @@ const { renderToStaticMarkup } = require("react-dom/server"),
   { createTranslator } = require("next-intl");
 const { compile } = require("./resource-library-helpers.cjs");
 function render({
+  locale = "en",
   running = false,
   name = true,
   count = 0,
@@ -13,9 +14,10 @@ function render({
   resultPatch = {},
   workspacePatch = {},
   navigating = false,
+  unreadPartial = false,
   centerPatch = {},
 } = {}) {
-  const messages = require("../messages/en.json"),
+  const messages = require(`../messages/${locale}.json`),
     metadata = { taskId: "task_PRIVATE_ID", status: "active", taskVersion: 1 };
   const mod = compile(
     "../components/TaskCenterPanel.tsx",
@@ -23,8 +25,16 @@ function render({
       react: React,
       "react/jsx-runtime": require("react/jsx-runtime"),
       "next-intl": {
-        useLocale: () => "en",
-        useTranslations: (ns) => createTranslator({ locale: "en", messages, namespace: ns }),
+        useLocale: () => locale,
+        useTranslations: (ns) =>
+          createTranslator({
+            locale,
+            messages,
+            namespace: ns,
+            onError(error) {
+              throw error;
+            },
+          }),
       },
       "@/lib/task-forms": { defaultTask: () => ({}) },
       "@/lib/task-center-schedule": { nextCenterOccurrence: () => null },
@@ -101,8 +111,48 @@ function render({
         ...resultPatch,
       },
       unreadCounts: { task_PRIVATE_ID: count },
+      unreadPartial,
     }),
   );
+}
+for (const locale of ["en", "zh", "zh-Hant"]) {
+  test(`the actual ${locale} task-list empty state resolves its message without translation fallback`, () => {
+    const html = render({ locale, home: true, modelPatch: { items: [], taskNames: {} } });
+    const messages = require(`../messages/${locale}.json`).taskCenter;
+    assert.ok(html.includes(messages.noTasks));
+    assert.ok(html.includes(messages.selectTaskHint));
+    assert.doesNotMatch(html, /MISSING_MESSAGE|taskCenter\.|_PRIVATE/);
+  });
+  test(`the actual ${locale} task view localizes unavailable names, original-save notices, drafts and unknown-error fallback`, () => {
+    const messages = require(`../messages/${locale}.json`).taskCenter;
+    const html = render({
+      locale,
+      home: true,
+      name: false,
+      count: 2,
+      unreadPartial: true,
+      modelPatch: {
+        nameErrors: { task_PRIVATE_ID: "verification_failed" },
+        error: "unknown_remote_PRIVATE",
+        drafts: [{ slot: "new" }, { slot: "saved", taskId: "draft_PRIVATE_ID" }],
+      },
+      centerPatch: { pending: { taskId: "pending_PRIVATE_ID" } },
+    });
+    for (const label of [
+      messages.nameUnavailable,
+      messages.errors.request_failed,
+      messages.unknownSave,
+      messages.checkSave,
+      messages.retryOriginal,
+      messages.abandonSave,
+      messages.newDraft,
+      messages.savedDraft.replace("{number}", "2"),
+      messages.unreadAtLeast.replace("{count}", "2"),
+    ])
+      assert.ok(html.includes(label), `${locale}: ${label}`);
+    assert.doesNotMatch(html, /MISSING_MESSAGE|taskCenter\.|_PRIVATE/);
+    assert.ok(render({ locale, name: false }).includes(messages.loadingName));
+  });
 }
 test("task actions live inside the task and technical IDs never replace verified names", () => {
   const html = render();
