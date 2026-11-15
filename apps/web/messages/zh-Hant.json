@@ -1495,6 +1495,7 @@
   "taskCenter": {
     "title": "任務中心",
     "taskList": "任務",
+    "noTasks": "暫無任務。",
     "refresh": "重新整理",
     "trash": "回收站",
     "new": "新建任務",
