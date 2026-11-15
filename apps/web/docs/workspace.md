@@ -547,6 +547,16 @@ catalogue before dispatch, and uncertain writes cannot be repeated by leaving an
 original state must be read back first. Watchlist and holdings updates still invalidate discovery.
 Account or vault scope changes mask old rows during render and fence delayed callbacks.
 
+The default holdings category waits for the existing verified workspace scope before requesting
+its catalogue. This is the same Owner/vault/unlock prerequisite used by private display names;
+it does not wait for name capabilities, feature availability, Portfolio data or an idle workspace.
+During initialization the catalogue remains unknown. Becoming eligible starts the required read,
+with the existing 30-second same-scope receipt reuse and all Owner, vault, generation and source
+fences. Losing this prerequisite cancels only pending catalogue discovery and hides its selection
+context; it does not cancel User list reads or follow-list writes. Watchlist and channel categories
+retain their original catalogue and Google-only list behavior. Explicit retry and task selection
+also require the current catalogue demand. Legacy library callers retain their default discovery.
+
 The first verified holdings snapshot can reuse a fresh catalogue or wait for its current read.
 Reuse requires the same Auth session and workspace scope, all four source-reference fields,
 source epoch and snapshot ID to match the fully validated catalogue. This comparison retains the

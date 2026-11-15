@@ -470,12 +470,14 @@ export default function ResourceLibrary({
   watchlist,
   workspaceScope,
   holdingsPublication,
+  holdingsCatalogueNeeded = true,
   ...props
 }: {
   active?: boolean;
   workspaceScope?: string | null;
   holdingsVersion?: string;
   holdingsPublication?: HoldingsPublication | null;
+  holdingsCatalogueNeeded?: boolean;
   watchlist?: WatchlistModel;
   children: ReactNode | ((model: ResourceLibraryModel) => ReactNode);
   onOpenWatchlist?: () => void;
@@ -496,6 +498,7 @@ export default function ResourceLibrary({
     workspaceScope,
     externalWatchlist: Boolean(watchlist),
     followsNeeded: filter === "channel_follows",
+    catalogueNeeded: filter !== "holdings" || holdingsCatalogueNeeded,
     holdingsPublication,
   });
   const previousVersion = useRef(holdingsVersion);
