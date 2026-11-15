@@ -6,6 +6,30 @@ fetches no market data and changes no existing consumer. Installations include
 `valuation_schemas.json`; `load_valuation_schema(name)` returns a detached Draft2020-12 document.
 Use the semantic validators, not schema acceptance alone, for cross-field relationships.
 
+## Packaged schema validation
+
+The Python loader checks the exact raw `valuation_schemas.json` bytes against the fixed SHA256
+in `valuation.py` before parsing the definition or creating a validator. Changed or unreadable
+packaged resources raise the existing `ValuationError`. Complete Draft2020-12 meta-schema
+validation runs independently in the mandatory common suite, including an isolated installed
+package resource check. It is not deferred to the first FX request. Every runtime input still
+receives its original size, schema, format and semantic checks; returned schemas and checked
+values remain detached copies with the same root references.
+
+This removes repeated meta-schema work in each new process, including when the User service
+loads an FX schema to construct its OpenAPI metadata. It does not remove authentication, data
+validation or service startup requirements. Local fresh-process measurements describe this
+small initialization cost only and do not establish a production cold-start or UI latency bound.
+No schema bytes, browser distribution, integrity manifest, preference format or consumer API
+changes are part of this optimization.
+
+For an approved schema change, validate the complete candidate definition directly with
+`Draft202012Validator.check_schema`, compute SHA256 over its raw bytes, and update the private
+Python pin alongside the existing schema/distribution compatibility records. Keep the direct
+mandatory meta-schema tests and the installed-resource check independent of the runtime loader;
+using the loader itself as their validity proof would make the check circular. A schema pass
+and a package fingerprint are not authentication or authorization.
+
 ## Compatible private holdings facts
 
 `HoldingsFactsContent` keeps the existing resource-content envelope fields (`state`, `coverage`,
