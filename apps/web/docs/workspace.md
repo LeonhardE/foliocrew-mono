@@ -547,6 +547,15 @@ catalogue before dispatch, and uncertain writes cannot be repeated by leaving an
 original state must be read back first. Watchlist and holdings updates still invalidate discovery.
 Account or vault scope changes mask old rows during render and fence delayed callbacks.
 
+The first verified holdings snapshot can reuse a fresh catalogue or wait for its current read.
+Reuse requires the same Auth session and workspace scope, all four source-reference fields,
+source epoch and snapshot ID to match the fully validated catalogue. This comparison retains the
+original receipt time. A successful mismatch needs a fresh read; a further mismatch stays stale
+with explicit retry, and a failed or cancelled read is not retried automatically. Actual snapshot
+changes still invalidate discovery immediately. Owner, scope, source and read-serial changes fence
+the old observer; a superseding read cannot mark an unconfirmed published head fresh. Legacy callers
+without the bound snapshot context retain their existing version invalidation.
+
 The channel-follows list is requested when its category is selected, using the same bounded read,
 30-second freshness, explicit retry and revision-based writes. The default holdings category does
 not wait for that unused list. Until requested, channels remain unknown rather than an empty list;

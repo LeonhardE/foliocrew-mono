@@ -19,8 +19,23 @@ import {
   type ResourceSelection,
 } from "@/lib/resource-library";
 import type { WatchlistResponse } from "@/lib/watchlist";
+import {
+  bindHoldingsPublication,
+  catalogueHasPublishedHoldings,
+  sameHoldingsPublication,
+  type HoldingsPublication,
+} from "@/lib/holdings-publication";
 
 type Source = "catalogue" | "watchlist" | "follows";
+type CatalogueOutcome = { scope: string | null; serial: number } & (
+  { status: "loaded"; data: ResourceCatalogue; at: number } | { status: "failed" | "cancelled" }
+);
+type Publication = {
+  scope: string | null;
+  value: HoldingsPublication;
+  confirmed: boolean;
+  force: boolean;
+};
 type State = {
   owner: string | null;
   scope: string | null;
@@ -60,11 +75,13 @@ export function useResourceLibrary({
   externalWatchlist = false,
   followsNeeded = true,
   workspaceScope = null,
+  holdingsPublication = null,
 }: {
   active?: boolean;
   externalWatchlist?: boolean;
   followsNeeded?: boolean;
   workspaceScope?: string | null;
+  holdingsPublication?: HoldingsPublication | null;
 } = {}) {
   const auth = useAuth();
   const owner = auth.status === "authenticated" && auth.profile ? auth.sessionKey : null;
@@ -85,6 +102,39 @@ export function useResourceLibrary({
     scope,
     at: {},
   });
+  const catalogueRead = useRef<{
+    scope: string | null;
+    serial: number;
+    pending: boolean;
+    promise: Promise<CatalogueOutcome>;
+    outcome?: CatalogueOutcome;
+  } | null>(null);
+  const catalogueSnapshot = useRef<Extract<CatalogueOutcome, { status: "loaded" }> | null>(null);
+  const publication = useRef<Publication | null>(null);
+  const previousPublication = useRef<{ scope: string | null; value: HoldingsPublication | null }>({
+    scope,
+    value: null,
+  });
+  if (previousPublication.current.scope !== scope)
+    previousPublication.current = { scope, value: null };
+  const bound = bindHoldingsPublication(holdingsPublication, owner, workspaceScope);
+  if (!bound) publication.current = null;
+  else if (
+    publication.current?.scope !== scope ||
+    !sameHoldingsPublication(publication.current.value, bound)
+  ) {
+    publication.current = {
+      scope,
+      value: bound,
+      confirmed: false,
+      force: Boolean(
+        previousPublication.current.value &&
+        !sameHoldingsPublication(previousPublication.current.value, bound),
+      ),
+    };
+    previousPublication.current.value = bound;
+  }
+  const currentPublication = publication.current;
   const isFresh = (source: Source) => {
     const at = freshness.current.scope === scope ? freshness.current.at[source] : undefined;
     const age = at === undefined ? Infinity : Date.now() - at;
@@ -245,6 +295,14 @@ export function useResourceLibrary({
       )
         return;
       const serial = ++serials.current[source];
+      let finishCatalogue: ((outcome: CatalogueOutcome) => void) | undefined;
+      let outcome: CatalogueOutcome = { scope, serial, status: "cancelled" };
+      if (source === "catalogue") {
+        const promise = new Promise<CatalogueOutcome>((resolve) => {
+          finishCatalogue = resolve;
+        });
+        catalogueRead.current = { scope, serial, pending: true, promise };
+      }
       const current = () =>
         live.current.owner === owner &&
         live.current.scope === scope &&
@@ -264,14 +322,47 @@ export function useResourceLibrary({
           api(source, signal, assert),
         );
         if (current()) {
-          freshness.current.at[source] = Date.now();
+          const at = Date.now(),
+            required = source === "catalogue" ? publication.current : null;
+          // A replacement read must also confirm the still-pending publication,
+          // even if the observer waiting on its cancelled predecessor has exited.
+          const matches =
+            !required ||
+            required.scope !== scope ||
+            required.confirmed ||
+            catalogueHasPublishedHoldings(data as ResourceCatalogue, required.value);
+          if (matches) {
+            freshness.current.at[source] = at;
+            if (required?.scope === scope) required.confirmed = true;
+          } else delete freshness.current.at.catalogue;
+          if (source === "catalogue") {
+            // Keep the verified DTO receipt private from mutable view-model consumers.
+            outcome = {
+              scope,
+              serial,
+              status: "loaded",
+              data: structuredClone(data as ResourceCatalogue),
+              at,
+            };
+            catalogueSnapshot.current = outcome;
+          }
           setState((previous) => ({
             ...previous,
-            [source]: { data, loading: false, error: "", stale: false },
+            [source]: {
+              data,
+              loading: false,
+              error: matches ? "" : "reload_required",
+              stale: !matches,
+            },
             ...(source === "follows" ? { writeError: "" } : {}),
           }));
         }
       } catch (error) {
+        outcome = {
+          scope,
+          serial,
+          status: errorCode(error) === "cancelled" ? "cancelled" : "failed",
+        };
         if (current() && errorCode(error) !== "cancelled") {
           delete freshness.current.at[source];
           setState((previous) => ({
@@ -284,6 +375,16 @@ export function useResourceLibrary({
             },
           }));
         }
+      } finally {
+        if (
+          source === "catalogue" &&
+          catalogueRead.current?.serial === serial &&
+          catalogueRead.current.scope === scope
+        ) {
+          catalogueRead.current.pending = false;
+          catalogueRead.current.outcome = outcome;
+        }
+        finishCatalogue?.(outcome);
       }
     },
     [owner, scope, configured, operation, api],
@@ -382,7 +483,11 @@ export function useResourceLibrary({
     jobs.current.clear();
     const uncertainWrite = Boolean(writing.current);
     writing.current = null;
-    if (freshness.current.scope !== scope) freshness.current = { scope, at: {} };
+    if (freshness.current.scope !== scope) {
+      freshness.current = { scope, at: {} };
+      catalogueRead.current = null;
+      catalogueSnapshot.current = null;
+    }
     if (!configured) delete freshness.current.at.catalogue;
     if (uncertainWrite) {
       delete freshness.current.at.follows;
@@ -441,6 +546,59 @@ export function useResourceLibrary({
     };
   }, [owner, scope, active, visible, followsNeeded, reload]);
 
+  useEffect(() => {
+    const required = currentPublication;
+    if (!required || !owner || !active || !visible || !configured || writing.current) return;
+    let stopped = false;
+    const current = () =>
+      !stopped &&
+      publication.current === required &&
+      live.current.owner === owner &&
+      live.current.scope === scope &&
+      live.current.active &&
+      live.current.visible &&
+      live.current.configured;
+    const confirm = async () => {
+      if (!current() || required.confirmed) return;
+      if (required.force) {
+        required.force = false;
+        void reload("catalogue");
+        return;
+      }
+      const snapshot = catalogueSnapshot.current;
+      if (
+        snapshot?.scope === scope &&
+        snapshot.serial === serials.current.catalogue &&
+        isFresh("catalogue") &&
+        catalogueHasPublishedHoldings(snapshot.data, required.value)
+      ) {
+        required.confirmed = true;
+        setState((previous) => ({ ...previous }));
+        return;
+      }
+      const read = catalogueRead.current;
+      // Completed failures keep their existing explicit retry; they are not hints.
+      if (
+        read?.scope === scope &&
+        read.serial === serials.current.catalogue &&
+        !read.pending &&
+        read.outcome?.status !== "loaded"
+      )
+        return;
+      if (!read?.pending || read.scope !== scope || read.serial !== serials.current.catalogue) {
+        void reload("catalogue");
+        return;
+      }
+      const result = await read.promise;
+      if (!current() || result.serial !== serials.current.catalogue) return;
+      if (result.status === "loaded" && !required.confirmed) void reload("catalogue");
+    };
+    void confirm();
+    return () => {
+      stopped = true;
+    };
+  }, [owner, scope, active, visible, configured, currentPublication, reload]);
+
   const useForTask = useCallback(
     (item: ResourceItem, callback?: (selection: ResourceSelection) => void) => {
       const current = stateRef.current;
@@ -455,6 +613,7 @@ export function useResourceLibrary({
         current.scope !== scope ||
         live.current.scope !== scope ||
         !isFresh("catalogue") ||
+        (publication.current?.scope === scope && !publication.current.confirmed) ||
         current.catalogue.stale ||
         current.catalogue.loading ||
         current.catalogue.error ||
@@ -493,7 +652,15 @@ export function useResourceLibrary({
     owner,
     authenticated: Boolean(owner),
     configured,
-    catalogue: configured ? display("catalogue", masked.catalogue) : empty<ResourceCatalogue>(),
+    publicationBound: Boolean(currentPublication),
+    catalogue: configured
+      ? {
+          ...display("catalogue", masked.catalogue),
+          stale:
+            display("catalogue", masked.catalogue).stale ||
+            Boolean(masked.catalogue.data && currentPublication && !currentPublication.confirmed),
+        }
+      : empty<ResourceCatalogue>(),
     reload,
     saveFollows,
     useForTask,

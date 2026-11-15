@@ -8,6 +8,7 @@ const jsxRuntime = require("react/jsx-runtime");
 const { renderToStaticMarkup } = require("react-dom/server");
 const { createTranslator } = require("next-intl");
 const { transformSync } = require("next/dist/build/swc");
+const resourceTest = require("./resource-library-helpers.cjs");
 const { code } = transformSync(
   readFileSync(path.join(__dirname, "../components/ResourcesPanel.tsx"), "utf8"),
   {
@@ -24,6 +25,9 @@ function render(model, locale = "en", managementOnly = false) {
   model = { sources: [], ...model };
   const messages = require(`../messages/${locale}.json`);
   const imports = {
+    "@/lib/holdings-publication": resourceTest.compile("../lib/holdings-publication.ts", {
+      "./resource-library": resourceTest.contracts,
+    }),
     "@/lib/holdings-facts": require("./resource-library-helpers.cjs").compile(
       "../lib/holdings-facts.ts",
     ),
