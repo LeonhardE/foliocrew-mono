@@ -10,14 +10,6 @@ import { useCurrencyPreferences } from "./CurrencyPreferencesProvider";
 import { PORTFOLIO_CURRENCIES, type PortfolioCurrency } from "@/lib/currency-preferences";
 import styles from "./SettingsPanel.module.css";
 
-function SelectChevron() {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false">
-      <path d="m4 6 4 4 4-4" stroke="currentColor" strokeWidth="1.5" />
-    </svg>
-  );
-}
-
 export default function SettingsPanel({ workspace }: { workspace?: HoldingsWorkspace } = {}) {
   const t = useTranslations("settings");
   const { preferences, authenticated, loading, saving, status, error, updatePreferences, retry } =
@@ -106,7 +98,6 @@ export default function SettingsPanel({ workspace }: { workspace?: HoldingsWorks
                 繁體中文
               </option>
             </select>
-            <SelectChevron />
           </div>
         </fieldset>
         <fieldset className={styles.row} disabled={disabled} aria-labelledby="chart-range-title">
@@ -138,7 +129,6 @@ export default function SettingsPanel({ workspace }: { workspace?: HoldingsWorks
                 </option>
               ))}
             </select>
-            <SelectChevron />
           </div>
         </fieldset>
         <fieldset
@@ -173,7 +163,6 @@ export default function SettingsPanel({ workspace }: { workspace?: HoldingsWorks
                   </option>
                 ))}
               </select>
-              <SelectChevron />
             </div>
             {currency.saving && (
               <span className={styles.fieldStatus} role="status">
