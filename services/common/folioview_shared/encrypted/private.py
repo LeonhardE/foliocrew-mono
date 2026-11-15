@@ -10,6 +10,7 @@ import re
 from .constants import PRIVATE_BYTE_LIMITS
 from .errors import ContractError
 from .jsonutil import canonical_json
+from .markdown_links import markdown_destinations
 from .schema import safe_https_url, validate_schema
 
 _RESOURCE_KINDS = {
@@ -34,10 +35,7 @@ def _markdown(value: str) -> None:
     text = html.unescape(value)
     _require(re.search(r"<\s*(?:/?[A-Za-z][A-Za-z0-9-]*(?:\s|/?>)|!|\?)", text) is None)
     _require(re.search(r"!\s*\[", text) is None)
-    destinations = re.findall(r"\]\(\s*(<[^>]+>|[^\s)]+)", text)
-    destinations += re.findall(r"(?m)^\s*\[[^\]]+\]:\s*(\S+)", text)
-    destinations += re.findall(r"<([^<>\s]+:[^<>\s]*)>", text)
-    for destination in destinations:
+    for destination in markdown_destinations(text):
         _require(safe_https_url(destination.strip("<>")))
 
 
