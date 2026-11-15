@@ -6,18 +6,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request
 from starlette.concurrency import run_in_threadpool
 
-from folioview_shared.encrypted.constants import CONTRACT_VERSION
-from folioview_shared.encrypted.private_display_names import (
-    DISPLAY_NAME_PROFILE,
-    MAX_DISPLAY_HTTP_BYTES,
-)
+from folioview_shared.encrypted.private_display_names import MAX_DISPLAY_HTTP_BYTES
 from folioview_shared.http import PrivateRoute
 
 from .api import Owner, _invoke, _lifecycle_read, body
 from .persistent_routes import control_transport
-from .private_display_names import PrivateDisplayNameService
+from .private_display_names import PrivateDisplayNameService, display_name_capabilities
 from .store import get_store
-from .vaults import MAX_SOURCES
 
 router = APIRouter(prefix="/api/v3/private-display-names", route_class=PrivateRoute)
 
@@ -38,13 +33,7 @@ async def read_transport(request):
 @router.get("/capabilities")
 async def capabilities(request: Request, user: Owner):
     await read_transport(request)
-    return {
-        "contractVersion": CONTRACT_VERSION,
-        "profile": DISPLAY_NAME_PROFILE,
-        "enabled": True,
-        "maxSources": MAX_SOURCES,
-        "maxNameLength": 80,
-    }
+    return display_name_capabilities()
 
 
 @router.get("/{vault}/holdings")

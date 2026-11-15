@@ -551,17 +551,87 @@ def validate_portfolio(value, ref, *, states):
     return current
 
 
+def _scope(owner, row, registry):
+    return {
+        "ownerSubject": owner,
+        "vaultId": row["vaultId"],
+        "rootKeyId": row["rootKeyId"],
+        "version": row["version"],
+        "registrySequence": registry.registry_sequence,
+        "checkpointDigest": registry.checkpoint_digest,
+        "keyEpoch": registry.key_epoch,
+    }
+
+
+def _context(row, registry, owner, fences):
+    class Snapshot:
+        def get(self, path):
+            return fences[path]
+
+    snapshot = Snapshot()
+    return {
+        "vault": {
+            "id": row["vaultId"],
+            "version": row["version"],
+            "checkpoint": registry.checkpoint_digest,
+            "keyEpoch": registry.key_epoch,
+        },
+        "sources": [
+            {"ref": source["resourceRef"], "fence": _state(snapshot, owner, source["resourceRef"])}
+            for source in row["sources"]
+        ],
+    }
+
+
+def _response(result, now):
+    holdings = result["portfolio"]
+    states = {row["state"] for row in holdings}
+    status = (
+        "uninitialized"
+        if not holdings
+        else "unavailable"
+        if states == {"unavailable"}
+        else "partial"
+        if "unavailable" in states
+        else "available"
+    )
+    groups = [
+        {"kind": "holdings", "sourceService": "portfolio", "status": status, "items": holdings}
+    ]
+    for kind in _USER_KINDS:
+        row = result["user"][kind]
+        groups.append(
+            {
+                "kind": kind,
+                "sourceService": "user",
+                "status": "unavailable" if row["state"] == "unavailable" else "available",
+                "items": [row],
+            }
+        )
+    value = {
+        "contractVersion": CONTRACT_VERSION,
+        "profile": PROFILE,
+        "readAt": datetime.fromtimestamp(now, UTC).isoformat().replace("+00:00", "Z"),
+        "groups": groups,
+    }
+    check_read_response(value)
+    return value
+
+
 class CatalogueService:
     def __init__(self, vaults, sources):
         self.vaults, self.sources = vaults, sources
 
     def context(self, uid, *, registry_cache=None):
+        return self._snapshot(uid, registry_cache=registry_cache)[0]
+
+    def _snapshot(self, uid, *, registry_cache=None):
         owner = owner_key(uid)
 
         def read(unit):
             row = unit.get(document_path("hub_vaults", owner))
             if row is None:
-                return {"vault": None, "sources": []}
+                return {"vault": None, "sources": []}, None, False
             registry = _verify_row(
                 row, owner, self.vaults.now(), unit=unit, registry_cache=registry_cache
             )
@@ -569,27 +639,11 @@ class CatalogueService:
                 [fence_path(owner, source["resourceRef"]) for source in row["sources"]]
             )
 
-            class Snapshot:
-                def get(self, path):
-                    return fences[path]
-
-            snapshot = Snapshot()
-            sources = [
-                {
-                    "ref": source["resourceRef"],
-                    "fence": _state(snapshot, owner, source["resourceRef"]),
-                }
-                for source in row["sources"]
-            ]
-            return {
-                "vault": {
-                    "id": row["vaultId"],
-                    "version": row["version"],
-                    "checkpoint": registry.checkpoint_digest,
-                    "keyEpoch": registry.key_epoch,
-                },
-                "sources": sources,
-            }
+            return (
+                _context(row, registry, owner, fences),
+                _scope(owner, row, registry),
+                row["archive"] is not None,
+            )
 
         return self.vaults.store.transact(read)
 
@@ -627,44 +681,7 @@ class CatalogueService:
             remaining(deadline, clock)
             if canonical_json(after) != canonical_json(before):
                 raise ContractError("version_conflict")
-            holdings = result["portfolio"]
-            states = {row["state"] for row in holdings}
-            status = (
-                "uninitialized"
-                if not holdings
-                else "unavailable"
-                if states == {"unavailable"}
-                else "partial"
-                if "unavailable" in states
-                else "available"
-            )
-            groups = [
-                {
-                    "kind": "holdings",
-                    "sourceService": "portfolio",
-                    "status": status,
-                    "items": holdings,
-                }
-            ]
-            for kind in _USER_KINDS:
-                row = result["user"][kind]
-                groups.append(
-                    {
-                        "kind": kind,
-                        "sourceService": "user",
-                        "status": "unavailable" if row["state"] == "unavailable" else "available",
-                        "items": [row],
-                    }
-                )
-            value = {
-                "contractVersion": CONTRACT_VERSION,
-                "profile": PROFILE,
-                "readAt": datetime.fromtimestamp(self.vaults.now(), UTC)
-                .isoformat()
-                .replace("+00:00", "Z"),
-                "groups": groups,
-            }
-            check_read_response(value)
+            value = _response(result, self.vaults.now())
             remaining(deadline, clock)
             complete = True
             return value

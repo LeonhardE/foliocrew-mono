@@ -23,6 +23,7 @@ from .persistent_result_routes import owner_router as persistent_result_owner_ro
 from .persistent_routes import router as persistent_owner_router
 from .private_display_name_routes import router as private_display_name_router
 from .provider_connection_routes import router as provider_connection_router
+from .resource_display import router as resource_display_router
 from .task_center_routes import agent_router as task_center_agent_router
 from .task_center_routes import owner_router as task_center_owner_router
 from .task_overview import router as task_overview_router
@@ -47,6 +48,7 @@ app.include_router(owner_router)
 app.include_router(internal_router)
 app.include_router(public_router)
 app.include_router(catalogue_router)
+app.include_router(resource_display_router)
 app.include_router(tasks_router)
 app.include_router(persistent_owner_router)
 app.include_router(agent_credential_router)
