@@ -17,6 +17,7 @@ from folioview_shared.encrypted.constants import MAX_SAFE_INTEGER
 from folioview_shared.encrypted.crypto import _signed_parts
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import canonical_json, strict_json_loads
+from folioview_shared.encrypted.reference_history import decode_reference_history
 
 
 class TaskRegistryPrefixTests(unittest.TestCase):
@@ -245,6 +246,11 @@ class TaskRegistryPrefixTests(unittest.TestCase):
             with self.subTest(mode=mode):
                 changed = self.rpc.documents[name]
                 if mode == "suffix":
+                    # Corrupt only the final logical JWS, preserving the valid
+                    # prefix even when physical storage deduplicates certificates.
+                    changed["registryHistory"] = decode_reference_history(
+                        changed["registryHistory"]
+                    )
                     changed["registryHistory"][-1]["entries"][0]["certificate"]["signature"] = (
                         "A" * 86
                     )

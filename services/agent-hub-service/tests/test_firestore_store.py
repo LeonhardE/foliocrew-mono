@@ -24,7 +24,8 @@ from app.store import FirestoreHubStore, StoreUnavailable, document_path, get_st
 from app.vaults import VaultService
 from folioview_shared.encrypted.constants import MAX_STORED_DOCUMENT_BYTES
 from folioview_shared.encrypted.errors import ContractError
-from folioview_shared.encrypted.jsonutil import b64url_encode, canonical_json, strict_json_loads
+from folioview_shared.encrypted.jsonutil import b64url_encode, canonical_json
+from folioview_shared.encrypted.reference_history import decode_reference_history
 
 
 class MemoryRpc:
@@ -150,7 +151,7 @@ class FirestoreHubTests(unittest.TestCase):
         )
         self.assertIsInstance(row["registryHistory"], bytes)
         original = row["registryHistory"]
-        row["registryHistory"] = strict_json_loads(original)
+        row["registryHistory"] = decode_reference_history(original)
         self.assertEqual(self.service.current(UID), expected)
         row["registryHistory"] = original
         self.assertEqual(self.service.current(UID), expected)
@@ -191,7 +192,7 @@ class FirestoreHubTests(unittest.TestCase):
         name, row = next(
             (name, row) for name, row in self.rpc.documents.items() if "/hub_vaults/" in name
         )
-        altered = strict_json_loads(row["registryHistory"])
+        altered = decode_reference_history(row["registryHistory"])
         altered[0]["checkpoint"]["signature"] = "A" * 86
         row["registryHistory"] = canonical_json(altered)
         with self.assertRaises((StoreUnavailable, ContractError)):

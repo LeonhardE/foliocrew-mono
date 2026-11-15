@@ -22,7 +22,6 @@ from app.persistent_results import (
 from app.store import FirestoreHubStore, SQLiteHubStore, StoreUnavailable, document_path
 from app.task_lifecycle import lifecycle_path
 from folioview_shared.encrypted.errors import ContractError
-from folioview_shared.encrypted.jsonutil import strict_json_loads
 from folioview_shared.encrypted.persistent_content import digest
 
 
@@ -37,12 +36,12 @@ class PersistentResultBatchTests(unittest.TestCase):
             cls.owner, cls.vault, cls.now = fixture.f.owner, fixture.f.vault, fixture.fx.now
             connection = fixture.fx.store.connect()
             try:
-                cls.documents = {
-                    path: strict_json_loads(body)
-                    for path, body in connection.execute("SELECT path, body FROM hub_documents")
-                }
+                paths = [path for (path,) in connection.execute("SELECT path FROM hub_documents")]
             finally:
                 connection.close()
+            # Copy logical rows through the reader boundary. A destination writer
+            # accepts full history lists, not another backend's physical references.
+            cls.documents = fixture.fx.store.transact(lambda unit: unit.get_many(paths))
             cls.template = cls.documents[result_path(cls.owner, cls.vault, receipt["resultId"])]
         finally:
             fixture.doCleanups()
