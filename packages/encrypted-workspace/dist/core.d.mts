@@ -31,6 +31,8 @@ export function sign(
 ): Promise<SignedObject>;
 export function validate(schema: string, value: unknown): void;
 export function resultContent(value: PublicJson, outputSpec: PublicJson): void;
+/** Collect from schema-bounded normalized text; caller retains all content/URL policy checks. */
+export function markdownDestinations(text: string): string[];
 export function context(value: PublicJson): PublicJson;
 export function reference(value: PublicJson): PublicJson;
 export function privatePayload(

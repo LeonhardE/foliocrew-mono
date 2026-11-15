@@ -81,6 +81,7 @@ const files = [
   "THIRD_PARTY_NOTICES.md",
   "src/core.mjs",
   "src/crypto.mjs",
+  "src/markdown-links.mjs",
   "src/registry.mjs",
   "src/consents.mjs",
   "src/authority.mjs",
@@ -91,6 +92,7 @@ const files = [
   "dist/core.d.mts",
   "README.md",
   "tests/contracts.test.mjs",
+  "tests/markdown-links.test.mjs",
 ];
 const hashes = {};
 for (const file of files)

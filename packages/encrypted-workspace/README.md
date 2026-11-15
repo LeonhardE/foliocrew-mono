@@ -73,6 +73,21 @@ The schema snapshot preserves the four shared documents without definition-name
 collisions. Money/date/URL/private-content semantic checks accompany AJV structure
 checks. No real account data or private key fixture is stored in this package.
 
+Report Markdown keeps its original entity-decoding, HTML refusal and safe-HTTPS
+destination checks. Its internal URL collector uses indexed delimiter positions
+and forward-only match cursors, preserving the original inline, reference and
+autolink captures and their order without repeatedly scanning unmatched suffixes.
+The existing 16,384-character sections, eight-section limit and 98,304-byte Node
+persistent result limit remain in force. The typed `markdownDestinations(text)`
+core export is a trusted composition primitive for already schema-bounded,
+normalized strings; non-string inputs throw `TypeError` without coercion. Callers
+retain their own original section limits, entity decoding, HTML refusal and URL
+validation. The collector returns captures only; it is not a sanitizer,
+authorization check or safe-URL decision, and performs no rendering or network I/O.
+`tests/markdown-links.test.mjs` compares complete captures and acceptance with the
+previous policy, including Unicode whitespace, multiline references and maximum
+bounded adversarial inputs, then exercises genuine signed/encrypted reports.
+
 Owner-approved 90-day credential leases are documented in the
 [credential lifecycle contract](../../services/common/folioview_shared/encrypted/docs/agent-credentials.md). The profile is additive; consumers must
 implement atomic replacement and current-generation fences before enabling it.
