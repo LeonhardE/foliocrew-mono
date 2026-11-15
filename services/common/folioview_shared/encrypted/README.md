@@ -82,6 +82,7 @@ untyped object. The existing frozen inputs are not rewritten to hide changes.
 | `manifests`                     | Immutable Run/manifest/Begin binding, ordered component pages and separately selected retained author proofs.                                               |
 | `crypto`                        | Mature JOSE operations for public verification and trusted client encryption/decryption. No bespoke KDF, key wrap or AEAD implementation.                   |
 | `reference_history`             | Lossless, bounded internal storage references for repeated complete registry certificates; decoded bundles remain untrusted.                                |
+| `reference_history_v2`          | Explicit opt-in storage-v2, transport-v1 and local history snapshots; existing storage-v1 and wire budgets remain unchanged.                                |
 | `private`                       | Trusted decrypting endpoint's typed payload and exact private/public identity checks. Not a Markdown renderer.                                              |
 | `jsonutil`, `budgets`, `errors` | Bounded strict JSON, JCS, base64url, whole-message limits and fixed diagnostics.                                                                            |
 
@@ -153,6 +154,46 @@ checking the complete expanded row/response, and checking both the complete
 physical JSON document and actual Firestore SDK encoding against the unchanged
 768 KiB storage ceiling. This module alone does not enable a store migration or
 change an existing route, read response limit or Worker.
+
+The separate `reference_history_v2` module provides five explicitly selected
+operations for larger **local** histories:
+
+- `encode_storage_history_v2` writes only
+  `folioview.reference-history.storage.v2`.
+- `decode_storage_history_v2` reads that version, canonical stored bytes, legacy
+  lists and storage-v1. Legacy/v1 still use at most their original 1 MiB expanded
+  ceiling, even when read through this new function.
+- `encode_transport_history` and `decode_transport_history` use only
+  `folioview.reference-history.transport.v1`. The decoder accepts a parsed JSON
+  dictionary, never raw bytes, legacy lists or an internal storage format as a
+  fallback. The caller must first perform its original bounded strict HTTP parse.
+- `snapshot_registry_history` takes a detached typed local list without granting
+  physical storage capacity, HTTP capacity or authorization. A subsequent encoder
+  can still reject that snapshot at its encoded limit.
+
+Each new function defaults to the fixed local history ceiling of 4,198,400 bytes
+(the existing Owner `openResult` history-list scale: 32 × 131,072 + 4,096).
+`max_expanded_bytes` accepts only strict integers from 1 through that ceiling,
+allowing callers to tighten it for their own complete-row/component budgets.
+The original `reference_history` public signatures, defaults, maximum 1 MiB
+expansion, and refusal of these new formats remain unchanged. Neither generic
+JSON parsing nor an existing physical/HTTP budget inherits the new local ceiling.
+
+Both new encoders keep the 768 KiB encoded-history limit, complete three-string
+JWS identity, closed wrappers, first-use reference order and all original
+per-bundle/count/reference guards. They retain all metadata, checkpoints and
+active/revoked entries. Distinct signatures on identical payloads remain distinct
+table entries; a valid 32-generation history can therefore still exceed physical
+capacity and must be rejected rather than deduplicated by payload or key ID.
+The 64-entry limit also remains independent of the generation count.
+
+Consumers must separately enforce full metadata/expanded-row, raw HTTP response
+and complete physical JSON/actual SDK budgets, then run every original schema,
+Root, signature, history, time, owner, epoch, revocation and current-source check.
+Any storage-v2 consumer must deploy compatible readers and retain a compatible
+rollback floor before enabling writers. This foundation does not select a new
+route, activate a writer, migrate data, change a Worker or establish end-to-end
+large-history acceptance for any service or client.
 
 Device signatures may authorize only the named task versions, execution epoch,
 resource versions, agent keys, capabilities, expiry and owner writeback recipients.
