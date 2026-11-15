@@ -68,19 +68,27 @@ recovery key allowlists. Registry signatures, high-water/revocation continuity a
 verified. An existing source cannot change owner/root/vault/incarnation; epochs cannot decrease.
 Agent recipients are not enabled by this owner-only ticket.
 
-The retained public directory chain is bounded to 32 bundles and the shared 768 KiB document limit;
-overflow fails closed instead of dropping revocation history. No private key is stored. Production
+The retained public directory chain is bounded to 32 bundles. Physical storage retains the shared
+768 KiB document limit; overflow fails closed instead of dropping revocation history. No private key is stored. Production
 projection authorization/freshness/delivery belongs to Hub/trust work. Tests install synthetic
 replicas directly through this internal interface.
 
 Firestore readers also accept canonical UTF-8 JSON bytes in the same existing unindexed
 `portfolio_authorities.registryHistory` field, restoring the original bounded array before normal
-signature and fence verification. Malformed, noncanonical and oversized bytes fail closed.
-Firestore writes use canonical bytes in this field; SQLite retains logical JSON arrays. The
-complete logical document and actual SDK wire encoding must both fit the unchanged storage
-budget before committing. Deploy compatible readers to all traffic before enabling these writes,
-and preserve such a revision as the subsequent rollback floor. No history is removed or compressed,
-and public APIs retain the original arrays.
+signature and fence verification. Readers additionally accept the shared versioned reference
+representation in that same field: a table retains each complete signed certificate once and
+each generation retains its original checkpoint, metadata and ordered certificate references.
+Both individual and batch reads restore the original arrays before any authority check. The
+complete physical JSON remains bounded to 768 KiB before expansion; the complete expanded
+authority row is bounded to the existing 1 MiB read ceiling. Invalid references, unknown formats,
+noncanonical bytes and oversized expansion fail closed without rewriting storage.
+
+This reader rollout does not enable reference writes. Firestore still writes canonical bytes
+containing the original arrays; SQLite still writes those arrays, with both logical JSON and
+actual SDK encoding under the unchanged 768 KiB write limit. Deploy these compatible readers
+to all traffic before a separate writer rollout, and preserve this revision as its rollback floor.
+No history, revoked certificate or original signature bytes are removed; public APIs retain the
+original arrays and their existing response budgets.
 
 Every committing transaction re-reads current authority, operation, snapshot and latest before
 staging writes. Firestore conflict retries re-run authorization and verification against changed

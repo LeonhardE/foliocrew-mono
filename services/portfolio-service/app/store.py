@@ -9,9 +9,10 @@ from functools import lru_cache
 from pathlib import Path
 
 from folioview_shared.encrypted.budgets import check_document_budget
-from folioview_shared.encrypted.constants import MAX_STORED_DOCUMENT_BYTES
+from folioview_shared.encrypted.constants import MAX_READ_BYTES, MAX_STORED_DOCUMENT_BYTES
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import canonical_json, strict_json_loads
+from folioview_shared.encrypted.reference_history import decode_reference_history
 
 COLLECTIONS = frozenset(
     {
@@ -53,22 +54,50 @@ def document_path(collection: str, *parts: str) -> str:
     return f"{collection}/{document_id(*parts)}"
 
 
-def _read_document(value: dict, *, path: str) -> dict:
-    """Read the original array or its bounded, canonical UTF-8 storage form.
+def _history_row(path: str) -> bool:
+    return path.split("/", 1)[0] == "portfolio_authorities"
 
-    Only this existing, unindexed authority field may use bytes. Public APIs and
-    signature verification continue to receive the original JSON arrays.
+
+def _history_budget(value: dict) -> int:
+    # Allocate the existing read ceiling across the complete expanded row.
+    # Keep non-history data under its original storage bound as well.
+    remainder = len(canonical_json({**value, "registryHistory": []})) - 2
+    if remainder > MAX_STORED_DOCUMENT_BYTES or remainder >= MAX_READ_BYTES:
+        raise ContractError("payload_too_large")
+    return MAX_READ_BYTES - remainder
+
+
+def _read_document(value: dict, *, path: str) -> dict:
+    """Expand bounded legacy or referenced storage without changing authority.
+
+    Only the existing unindexed history field may use canonical bytes. Physical
+    JSON/SDK documents retain their 768 KiB ceiling; expanded authority rows fit
+    the existing 1 MiB read ceiling. Complete signature and lifecycle checks run
+    on the restored arrays at their normal callers, including after batch reads.
     """
     try:
-        if path.split("/", 1)[0] in {"portfolio_authorities"} and isinstance(
-            value.get("registryHistory"), bytes
-        ):
+        if _history_row(path) and isinstance(value.get("registryHistory"), bytes):
             payload = value["registryHistory"]
             history = strict_json_loads(payload, max_bytes=MAX_STORED_DOCUMENT_BYTES)
-            if type(history) is not list or canonical_json(history) != payload:
+            if canonical_json(history) != payload:
                 raise StoreUnavailable
             value = {**value, "registryHistory": history}
-        return strict_json_loads(canonical_json(value), max_bytes=MAX_STORED_DOCUMENT_BYTES)
+        physical = canonical_json(value)
+        if len(physical) > MAX_STORED_DOCUMENT_BYTES:
+            raise ContractError("payload_too_large")
+        if _history_row(path) and "registryHistory" in value:
+            # Validate references before canonical JSON can normalize 0.0 to 0.
+            value = {
+                **value,
+                "registryHistory": decode_reference_history(
+                    value["registryHistory"], max_expanded_bytes=_history_budget(value)
+                ),
+            }
+            if len(canonical_json(value)) > MAX_READ_BYTES:
+                raise ContractError("payload_too_large")
+        # Preserve numeric types for the authority schema's own integer checks.
+        # Canonical JSON is a byte-accounting tool, not a trusted normalization.
+        return copy.deepcopy(value)
     except ContractError:
         raise StoreUnavailable from None
 
@@ -118,7 +147,7 @@ class SQLiteTransaction:
             raise StoreUnavailable from None
         if type(value) is not dict:
             raise StoreUnavailable
-        return value
+        return _read_document(value, path=path)
 
     def put(self, path: str, value: dict) -> None:
         data = stored_document(
@@ -141,7 +170,7 @@ class SQLiteTransaction:
                 value = strict_json_loads(body, max_bytes=MAX_STORED_DOCUMENT_BYTES)
                 if type(value) is not dict:
                     raise StoreUnavailable
-                result[path] = value
+                result[path] = _read_document(value, path=path)
             except ContractError:
                 raise StoreUnavailable from None
         return result
