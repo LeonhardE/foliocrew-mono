@@ -239,9 +239,9 @@ class TaskOverviewTests(unittest.TestCase):
 
     def test_sqlite_same_snapshot_and_three_queries_without_per_row_reads(self):
         expected = self.query()
-        documents = {
-            name.split("/documents/", 1)[1]: row for name, row in self.rpc.documents.items()
-        }
+        paths = [name.split("/documents/", 1)[1] for name in self.rpc.documents]
+        # Transfer the logical snapshot, not Firestore/SQLite storage encodings.
+        documents = self.store.transact(lambda unit: unit.get_many(paths))
         self.f.store.transact(lambda unit: [unit.put(path, row) for path, row in documents.items()])
         sql, connect = [], self.f.store.connect
 

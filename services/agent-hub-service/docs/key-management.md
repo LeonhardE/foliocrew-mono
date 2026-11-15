@@ -21,13 +21,27 @@ bounded by 1 MiB. A frozen Run allows at most 1 MiB of history plus the independ
 fields before expanding references. Unrelated collections retain the original 768 KiB read
 bound, and retirement tombstones without history remain ordinary bounded JSON.
 
-This reader release does not activate reference writes. Writers still use canonical list bytes
-in Firestore and logical arrays in SQLite; both the complete logical JSON document and the
-actual encoded Firestore document must fit the unchanged 768 KiB write budget before commit.
-Deploy compatible readers to every serving revision before enabling reference writes in a
-separate release. After the first such write, keep a compatible reader as the rollback floor.
-This does not raise HTTP or complete-response limits, remove history, bypass verification, or
-by itself resolve the storage ceiling for an Owner update whose expanded row exceeds 768 KiB.
+Writers now encode complete histories into the shared reference representation only when an
+ordinary, authorized transaction already updates a Vault or frozen persistent Run. Firestore
+keeps canonical reference JSON bytes in the existing unindexed field; SQLite keeps the equivalent
+reference dictionary. Reads never migrate legacy rows. Both the complete compact application
+JSON and actual SDK Document must remain within the original 768 KiB physical write budget.
+The same expanded row/history bounds apply before encoding and decoding, and all owner fields,
+archives, versions, source bindings and signed bytes retain their original logical values.
+
+Reference writes require the compatible Hub reader floor and its old request drain to have
+completed; the Portfolio authority reader/writer consumer must also be ready before allowing
+larger Hub histories that Portfolio subsequently synchronizes. After the first reference write,
+a rollback must retain a reference-capable reader. No migration or history deletion runs during
+rollout. Original transaction authorization, CAS, immutable operation receipts and signature
+checks remain unchanged. Frozen Run history copies use the expanded-history ceiling, while the
+original manifest and whole physical storage budgets still apply.
+
+Public APIs continue returning the original complete bundle arrays. Their HTTP and response
+limits do not change: a complete response that exceeds 1 MiB still fails before the associated
+Vault mutation commits. Internal reference storage restores current document capacity; continued
+history growth requires a separately versioned, backward-compatible wire reader design rather
+than raising limits or dropping old signatures/revocations.
 
 During one complete history verification, Hub uses a bounded
 `RegistryCertificateMemo` to reuse only successful checks of identical certificate

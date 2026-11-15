@@ -12,7 +12,10 @@ from folioview_shared.encrypted.budgets import check_document_budget
 from folioview_shared.encrypted.constants import MAX_READ_BYTES, MAX_STORED_DOCUMENT_BYTES
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import canonical_json, strict_json_loads
-from folioview_shared.encrypted.reference_history import decode_reference_history
+from folioview_shared.encrypted.reference_history import (
+    decode_reference_history,
+    encode_reference_history,
+)
 
 from .registry_reads import RegistryPrefixCache
 
@@ -162,10 +165,9 @@ def _read_document(value: dict, *, path: str) -> dict:
 
 
 def _firestore_document(value: dict, *, path: str) -> dict:
-    if (
-        path.split("/", 1)[0] in {"hub_vaults", "hub_persistent_runs"}
-        and type(value.get("registryHistory")) is list
-    ):
+    if path.split("/", 1)[0] in {"hub_vaults", "hub_persistent_runs"} and type(
+        value.get("registryHistory")
+    ) in {list, dict}:
         return {**value, "registryHistory": canonical_json(value["registryHistory"])}
     return value
 
@@ -180,7 +182,21 @@ def stored_document(value: dict, *, path: str, project: str, database: str) -> d
     from google.cloud.firestore_v1._helpers import encode_dict
     from google.cloud.firestore_v1.types import Document
 
-    data = strict_json_loads(canonical_json(value), max_bytes=MAX_STORED_DOCUMENT_BYTES)
+    collection = path.split("/", 1)[0]
+    if collection in _HISTORY_COLLECTIONS and "registryHistory" in value:
+        # The caller already performed its original authority/CAS checks. Only
+        # the internal representation changes, within the reader's exact bounds.
+        data = copy.deepcopy(value)
+        other_size = len(canonical_json({**data, "registryHistory": []}))
+        if other_size > MAX_STORED_DOCUMENT_BYTES:
+            raise ContractError("payload_too_large")
+        maximum = MAX_READ_BYTES if collection == "hub_vaults" else _MAX_EXPANDED_RUN_BYTES
+        data["registryHistory"] = encode_reference_history(
+            data["registryHistory"],
+            max_expanded_bytes=min(MAX_READ_BYTES, maximum - other_size + 2),
+        )
+    else:
+        data = strict_json_loads(canonical_json(value), max_bytes=MAX_STORED_DOCUMENT_BYTES)
     name = f"projects/{project}/databases/{database}/documents/{path}"
     encoded = Document(
         name=name, fields=encode_dict(_firestore_document(data, path=path))

@@ -1,5 +1,6 @@
 """Exact Agent proofs, current fences and immutable trigger replay under real JOSE."""
 
+import copy
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
@@ -13,7 +14,7 @@ from app.persistent_execution import PersistentExecutionService, run_path
 from app.store import document_path
 from folioview_shared.encrypted.constants import (
     CONTRACT_VERSION,
-    MAX_HTTP_WRITE_BYTES,
+    MAX_READ_BYTES,
     MAX_STORED_DOCUMENT_BYTES,
 )
 from folioview_shared.encrypted.errors import ContractError
@@ -107,7 +108,7 @@ class PersistentExecutionTests(unittest.TestCase):
     def rejects(self, code, action):
         self.fx.rejects(code, action)
 
-    def test_freeze_uses_storage_budget_for_already_verified_registry_history(self):
+    def test_freeze_uses_expanded_budget_for_already_verified_registry_history(self):
         # Grow real, Root-signed history through the normal bounded vault API.
         # Every incoming bundle fits its write budget; accumulated history may
         # legitimately be larger than a single incoming HTTP write.
@@ -123,6 +124,8 @@ class PersistentExecutionTests(unittest.TestCase):
         def append():
             row = self.fx.store.transact(lambda unit: unit.get(path))
             bundle = self.f.make_bundle(previous=self.f.registry, issued_at=self.fx.now)
+            if len(row["registryHistory"]) > 2:
+                bundle["entries"] = copy.deepcopy(row["registryHistory"][-1]["entries"])
             self.fx.vaults.update_registry(
                 UID,
                 self.f.vault,
@@ -137,15 +140,15 @@ class PersistentExecutionTests(unittest.TestCase):
             return self.fx.store.transact(lambda unit: unit.get(path))["registryHistory"]
 
         history = append()
-        while len(canonical_json(history)) <= MAX_HTTP_WRITE_BYTES:
+        while len(canonical_json(history)) <= MAX_STORED_DOCUMENT_BYTES:
             self.assertLess(len(history), 31, "fixture must stay within supported registry history")
             history = append()
-        self.assertLess(len(canonical_json(history)), MAX_STORED_DOCUMENT_BYTES)
+        self.assertLess(len(canonical_json(history)), MAX_READ_BYTES)
         response = self.begin()
         saved_path = run_path(self.f.owner, self.f.vault, response["manifest"]["runId"])
         saved = self.fx.store.transact(lambda unit: unit.get(saved_path))
         self.assertEqual(saved["registryHistory"], history)
-        self.assertLess(len(canonical_json(saved)), MAX_STORED_DOCUMENT_BYTES)
+        self.assertLess(len(canonical_json(saved)), MAX_READ_BYTES + MAX_STORED_DOCUMENT_BYTES)
 
         # Normal SDK document-budget checks still ran at the committing write.
         # A later valid registry update and catalogue outage must not replace or

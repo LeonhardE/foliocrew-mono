@@ -417,25 +417,37 @@ class ReferenceHistoryReaderTests(unittest.TestCase):
             with self.assertRaises(ContractError):
                 VaultService(store, clock=lambda: 499).current(UID)
 
-    def test_reader_release_keeps_existing_writes_and_large_write_rejection_atomic(self):
+    def test_reference_writes_preserve_complete_history_and_reject_oversized_rows_atomically(self):
         for store in self.stores:
             with self.subTest(backend=type(store).__name__):
                 fixture = VaultFixture()
                 service = VaultService(store, clock=lambda: 1000)
                 service.bootstrap(UID, fixture.bootstrap(), BOOT)
                 path = document_path("hub_vaults", fixture.owner)
-                before = self.snapshot(store)
+                small = self.snapshot(store)
                 if store is self.sqlite:
-                    stored = strict_json_loads(dict(before)[path])
+                    stored = strict_json_loads(dict(small)[path])
                 else:
-                    stored = copy.deepcopy(before[self.client.document(path)._document_path])
+                    stored = copy.deepcopy(small[self.client.document(path)._document_path])
                     self.assertIs(type(stored["registryHistory"]), bytes)
                     stored["registryHistory"] = strict_json_loads(stored["registryHistory"])
-                self.assertIs(type(stored["registryHistory"]), list)
-                with self.assertRaises(ContractError) as failure:
-                    store.transact(lambda unit, path=path: unit.put(path, self.row))
-                self.assertEqual(failure.exception.code, "payload_too_large")
-                self.assertEqual(self.snapshot(store), before)
+                self.assertIs(type(stored["registryHistory"]), dict)
+                source = copy.deepcopy(self.row)
+                store.transact(lambda unit, path=path, source=source: unit.put(path, source))
+                self.assertEqual(source, self.row)
+                self.assertEqual(store.transact(lambda unit, path=path: unit.get(path)), self.row)
+                before = self.snapshot(store)
+                # The smaller padding fits compact physical storage but must
+                # still fail the expanded Vault-row ceiling before any commit.
+                for padding in (300000, MAX_STORED_DOCUMENT_BYTES):
+                    with self.subTest(padding=padding), self.assertRaises(ContractError) as failure:
+                        store.transact(
+                            lambda unit, path=path, padding=padding: unit.put(
+                                path, {**self.row, "opaque": "x" * padding}
+                            )
+                        )
+                    self.assertEqual(failure.exception.code, "payload_too_large")
+                    self.assertEqual(self.snapshot(store), before)
 
     def test_private_storage_snapshot_is_the_snapshot_passed_to_decoder(self):
         from app import store as storage
