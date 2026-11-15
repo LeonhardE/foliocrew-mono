@@ -15,6 +15,36 @@ const translations = () => {
 const runtime = { jsx, jsxs: jsx, Fragment: "fragment" };
 const button = (tree, key) => all(tree, (n) => n.type === "button" && n.props.children === key)[0];
 const loaded = (data) => ({ data, loading: false, error: "", stale: false });
+test("reopening the same snapshot does not restart catalogue reads during the private-content gap", () => {
+  const h = hooks(),
+    calls = [],
+    model = {
+      owner: "A",
+      authenticated: true,
+      configured: true,
+      reload: (source) => calls.push(source),
+    };
+  const ResourceLibrary = compile("../components/ResourceLibrary.tsx", {
+    react: h.react,
+    "react/jsx-runtime": runtime,
+    "next-intl": { useTranslations: translations, useLocale: () => "en" },
+    "./useResourceLibrary": { useResourceLibrary: () => model },
+    "@/lib/resource-library": contracts,
+    "./ResourceLibrary.module.css": css,
+  }).default;
+  const render = (holdingsVersion) =>
+    h.render(() => ResourceLibrary({ holdingsVersion, children: "HOLDINGS" }));
+  render("snapshot_1");
+  render(undefined);
+  render("snapshot_1");
+  assert.deepEqual(calls, []);
+  render(undefined);
+  render("snapshot_2");
+  assert.deepEqual(calls, ["catalogue"]);
+  render("snapshot_2");
+  assert.deepEqual(calls, ["catalogue"]);
+  h.close();
+});
 test("real category tabs reveal operative watchlist and follows, with shared-owner list identity", async () => {
   const h = hooks(),
     edits = [],
