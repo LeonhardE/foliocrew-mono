@@ -255,6 +255,12 @@ decryption validates the AEAD tag and the typed private wrapper. Schemas reject
 raw HTML and unsafe link destinations conservatively, but clients must still
 use a safe Markdown renderer and must not fetch arbitrary links automatically.
 
+The Python plaintext guard collects link destinations with bounded linear work.
+It retains Python's original Unicode whitespace and LF-only multiline matching,
+capture order, entity decoding and URL policy. This is an internal parser change;
+the 65,536-byte task/result wrapper limits and all authentication checks remain.
+It does not replace independently frozen JavaScript or native client parsers.
+
 Private functions accepting a private JWK are local trusted-client primitives.
 Do not expose a generic sign/decrypt HTTP endpoint or agent tool. This foundation
 does not implement a key archive, trusted helper delivery, persistent Muse keys,
