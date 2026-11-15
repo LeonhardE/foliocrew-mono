@@ -326,6 +326,14 @@ version is distinct from Portfolio's local CAS/lifecycle version. Ciphertext and
 rewritten. Hub's initial CSV sources stay at epoch 1; a later local source fence must be reconciled
 by the separate source-fence protocol, never reset by synchronization.
 
+Both authority installation adapters verify the complete public directory and active
+writer/recipient selection at one fresh time inside each database transaction attempt.
+Retries and local lock waits cannot carry an earlier key-validity decision into a new
+replica commit or an identical-projection no-op. An initially expired projection is
+refused in the first read-only attempt with the same error and no stored writes.
+Inactive replicas retain their existing revoked-key fencing semantics; encrypted snapshot
+writes and original receipt reads retain their separate authorization rules.
+
 This is public authority replication for an owner upload, not agent content access or a root
 enrollment shortcut. It creates no cloud resources, IAM grants or database migration, does not
 activate the normal Portfolio release pipeline, and does not enable brokerage login or Hub ACKs.

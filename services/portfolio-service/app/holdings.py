@@ -346,9 +346,9 @@ class PortfolioService:
         _identifier(vault_id)
         _positive(expected_version, zero=True)
         owner = owner_key(uid)
-        now = self.now()
 
         def install(unit):
+            now = self.now()
             path = document_path("portfolio_authorities", owner, source)
             previous = unit.get(path)
             if (previous["version"] if previous else 0) != expected_version:
@@ -412,25 +412,26 @@ class PortfolioService:
         """
         _identifier(source)
         owner = owner_key(uid)
-        now = self.now()
-        verified = _authority(document, owner, source, now)
-        if document["active"]:
-            for key in document["writerKeyIds"]:
-                cert = verified.registry.cert(key, role="device_sig", now=now)
-                if "object_write" not in cert["capabilities"]:
-                    raise ContractError("key_authorization_required")
-            roles = {
-                verified.registry.cert(key, now=now)["role"] for key in document["recipientKeyIds"]
-            }
-            if roles != {"device_enc", "recovery_enc"}:
-                raise ContractError("key_authorization_required")
 
         def install(unit):
+            now = self.now()
+            verified = _authority(document, owner, source, now)
+            if document["active"]:
+                for key in document["writerKeyIds"]:
+                    cert = verified.registry.cert(key, role="device_sig", now=now)
+                    if "object_write" not in cert["capabilities"]:
+                        raise ContractError("key_authorization_required")
+                roles = {
+                    verified.registry.cert(key, now=now)["role"]
+                    for key in document["recipientKeyIds"]
+                }
+                if roles != {"device_enc", "recovery_enc"}:
+                    raise ContractError("key_authorization_required")
             path = document_path("portfolio_authorities", owner, source)
             previous = unit.get(path)
             version = 0
             if previous is not None:
-                prior = _authority(previous, owner, source, self.now())
+                prior = _authority(previous, owner, source, now)
                 # A read/sync cannot unlock a locally locked replica, replace a
                 # root/incarnation or roll back/skip a source-owned fence.
                 if not prior.document["active"]:
@@ -455,7 +456,7 @@ class PortfolioService:
                     }
             _positive(version + 1)
             replica = {**document, "version": version + 1}
-            _authority(replica, owner, source, self.now())
+            _authority(replica, owner, source, now)
             unit.put(path, replica)
             return {
                 "contractVersion": CONTRACT_VERSION,
