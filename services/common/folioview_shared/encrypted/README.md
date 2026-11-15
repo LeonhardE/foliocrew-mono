@@ -81,6 +81,7 @@ untyped object. The existing frozen inputs are not rewritten to hide changes.
 | `envelope`                      | Current-write signatures, trusted owner/object/task/run/recipient bindings, delivery/business revisions, stable operation identities and original receipts. |
 | `manifests`                     | Immutable Run/manifest/Begin binding, ordered component pages and separately selected retained author proofs.                                               |
 | `crypto`                        | Mature JOSE operations for public verification and trusted client encryption/decryption. No bespoke KDF, key wrap or AEAD implementation.                   |
+| `reference_history`             | Lossless, bounded internal storage references for repeated complete registry certificates; decoded bundles remain untrusted.                                |
 | `private`                       | Trusted decrypting endpoint's typed payload and exact private/public identity checks. Not a Markdown renderer.                                              |
 | `jsonutil`, `budgets`, `errors` | Bounded strict JSON, JCS, base64url, whole-message limits and fixed diagnostics.                                                                            |
 
@@ -115,6 +116,43 @@ Certificate selection always checks current time and authorization. Discard the
 memo after the operation; do not retain it across requests or use it to cache a
 current registry, permission or revocation decision. No second payload-canonical
 key is constructed for a static hit.
+
+`reference_history.encode_reference_history(history)` returns an internal storage
+object with exactly `format`, `certificates` and `bundles`. The version is
+`folioview.reference-history.storage.v1`. The certificate table retains every
+distinct complete `protected`/`payload`/`signature` tuple; it never identifies a
+certificate by its payload or key ID alone. Each bundle wrapper contains exactly
+`bundle` (the original metadata except `entries`) and `entries` (ordered
+`[certificateIndex, active]` pairs). Checkpoints, contract versions, all metadata,
+generation and entry order, active flags and signed bytes roundtrip unchanged.
+First-use indices must be consecutive from zero; duplicate or unused table
+certificates, invalid/non-integer/boolean references and unknown formats fail
+closed. A template cannot override its referenced entries.
+
+`decode_reference_history(value)` accepts that storage object, an existing legacy
+history list, or canonical JSON bytes for either representation. It returns an
+independent list with an independent certificate object at every occurrence.
+Legacy reads do not migrate or write anything. Stored bytes must be strict,
+canonical JSON within the existing 768 KiB ceiling. Encoded reference objects
+also remain within 768 KiB. Expanded history defaults to at most 1 MiB, with at
+most 32 bundles, 64 entries per bundle, 2,048 references/table entries and 128 KiB
+per expanded bundle. The keyword `max_expanded_bytes` accepts only a strict
+integer from 1 through 1 MiB, so a consumer may tighten the expanded budget but
+cannot increase it. Exact expanded UTF-8/JCS size is checked before repeated
+certificates are copied. Encoder and legacy-list reads enforce expanded limits
+as well. The codec snapshots JSON before interpreting references, retaining
+numeric types until strict reference validation.
+
+This is a storage representation, not a wire contract or authorization result.
+It preserves metadata without certifying its meaning. Every consumer must still
+run its original closed schemas, pinned Root/signature/checkpoint/history checks,
+current time, authorization, revocation, epoch, owner and source fences after
+decoding. The helper imports no service store and performs no I/O or writes.
+Consumers remain responsible for allocating their non-history row budget,
+checking the complete expanded row/response, and checking both the complete
+physical JSON document and actual Firestore SDK encoding against the unchanged
+768 KiB storage ceiling. This module alone does not enable a store migration or
+change an existing route, read response limit or Worker.
 
 Device signatures may authorize only the named task versions, execution epoch,
 resource versions, agent keys, capabilities, expiry and owner writeback recipients.
