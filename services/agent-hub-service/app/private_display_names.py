@@ -21,7 +21,7 @@ from folioview_shared.identity import owner_key
 
 from .fences import _state, fence_path
 from .store import StoreUnavailable, document_path
-from .vaults import _verify_row, identifier
+from .vaults import MAX_SOURCES, _verify_row, identifier
 
 
 def name_path(owner, vault, root, ref):
@@ -91,6 +91,35 @@ def _item(value, *, owner, vault, root, ref):
         raise StoreUnavailable from None
 
 
+def display_name_capabilities():
+    return {
+        "contractVersion": CONTRACT_VERSION,
+        "profile": DISPLAY_NAME_PROFILE,
+        "enabled": True,
+        "maxSources": MAX_SOURCES,
+        "maxNameLength": 80,
+    }
+
+
+def _listing(row, owner, vault, loaded):
+    """Project aliases only after the caller verifies this same fresh Vault snapshot."""
+    projected = _Prefetched(loaded)
+    items = []
+    for source in row["sources"]:
+        ref = source["resourceRef"]
+        if _state(projected, owner, ref)["state"] == "deleted":
+            continue
+        path = name_path(owner, vault, row["rootKeyId"], ref)
+        if path not in loaded:
+            raise StoreUnavailable
+        item = _item(loaded[path], owner=owner, vault=vault, root=row["rootKeyId"], ref=ref)
+        if item is not None:
+            items.append(item)
+    value = {"contractVersion": CONTRACT_VERSION, "profile": DISPLAY_NAME_PROFILE, "items": items}
+    check_read_response(value)
+    return value
+
+
 class PrivateDisplayNameService:
     def __init__(self, store, *, clock=time.time):
         self.store, self.clock = store, clock
@@ -147,21 +176,7 @@ class PrivateDisplayNameService:
                 for ref in refs
             ]
             loaded = unit.get_many([p for pair in paths for p in pair]) if paths else {}
-            projected = _Prefetched(loaded)
-            items = []
-            for ref, (path, _) in zip(refs, paths, strict=True):
-                if _state(projected, owner, ref)["state"] == "deleted":
-                    continue
-                item = _item(loaded[path], owner=owner, vault=vault, root=row["rootKeyId"], ref=ref)
-                if item is not None:
-                    items.append(item)
-            value = {
-                "contractVersion": CONTRACT_VERSION,
-                "profile": DISPLAY_NAME_PROFILE,
-                "items": items,
-            }
-            check_read_response(value)
-            return value
+            return _listing(row, owner, vault, loaded)
 
         return self.store.transact(read)
 

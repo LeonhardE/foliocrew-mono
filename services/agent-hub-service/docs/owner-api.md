@@ -203,6 +203,61 @@ discovery operation reads only Hub's own database and does not initialize lists,
 read encrypted snapshots or create copies of User's mutable masters. Producer trust and cloud configuration are managed separately by per-target infrastructure.
 Example settings alone do not activate them.
 
+### Combined resource display read
+
+`GET /api/v3/resources/display` adds an Owner-only composition for a currently active, verified
+Vault. It requires the same exact contract header and verified Firebase Google owner as the
+catalogue. Queries, nonempty GET bodies, idempotency/author headers, Agent/delegation credentials
+and `X-Serverless-Authorization` are refused. Responses and closed errors are `no-store`; there
+is no rollout flag, owner/vault selector or alternate authentication path. A missing or removed
+Vault returns `not_found` for this new operation. The original catalogue, display-name capabilities
+and holdings display-name listing GETs retain their existing independent behavior, including
+their original no-Vault behavior.
+
+The full response has exactly `contractVersion`, `profile`, `mode`, `scope`, `catalogue`,
+`displayNameCapabilities`, `displayNames`. Its profile is `folioview.owner-resource-display.v1`
+and mode is `full`. The three components are the unchanged original DTOs; no plaintext name,
+financial content, archive or registry history is added. `scope` has exactly `ownerSubject`,
+`vaultId`, `rootKeyId`, `version`, `registrySequence`, `checkpointDigest`, `keyEpoch`, all from
+the final verified Hub snapshot. The composition is display metadata, not decryption or Run
+authorization. Clients still perform the existing signature, binding and envelope checks on
+encrypted names and all ordinary authorization checks before later operations.
+
+The first transaction performs the original fresh Vault/Root verification and batches at most
+ten source fences. The existing joined User/Portfolio readers then run outside every database
+transaction under the same ten-second budget and one-second final reserve. The final transaction
+reads the Vault plus those exact source-fence/name paths in one batch, at most 21 documents.
+It verifies the fresh attempt time, complete current Vault/Root, exact scope, actual source refs
+and original full fence context again. A changed Root, registry/version, ref or fence causes a
+conflict; absent or corrupt dependencies cannot become a confirmed empty result. If the archive
+has been removed, no composition is returned. Aliases are projected from this **final** snapshot
+with the original command/state bindings and deletion filtering, so a concurrent rename is
+returned freshly rather than reusing an earlier alias. Transaction retries recheck time. Static
+history verification is reused only inside this read; no owner, source, authority or name TTL is
+added. The response is still not globally atomic across Hub, User and Portfolio.
+
+Every original component is validated and receives its original response budget before the
+complete envelope receives the unchanged 1 MiB read limit. Only overflow of that last aggregate
+check returns the small explicit response
+`{contractVersion, profile:"folioview.owner-resource-display.v1", mode:"separate", reason:"aggregate_too_large"}`.
+There are no component fields in separate mode; callers can use the three original GETs. An
+authentication, Root, source-context or corrupt-name failure never selects this mode. Normal
+producer outages retain the original unavailable/partial catalogue groups in full mode instead
+of becoming fabricated empty sources or signing the owner out.
+Deploy this producer before its separate Web consumer. A consumer must validate the complete
+scope against its current owner/Vault/registry before adopting either component; a `404` is not
+a separate-mode signal because it can mean that the Vault was removed. An old-producer rollback
+must not turn that same status into a successful independent-read fallback.
+
+For an active Vault with one to ten sources, real SDK regression tests cover two read transactions
+and three BatchGet legs (`1`, `N`, `1+2N` documents), compared with three transactions and six
+legs for the independent catalogue and name listing. Capabilities itself has no Root read.
+This reduces repeated Hub reads and HTTP calls; it does not establish a two-second UI result or
+remove external producer latency. The original cooperative deadline and blocking-SDK cancellation
+limits above still apply. No detached worker, producer prewarm, write, increased byte budget or
+client/Worker protocol change is introduced. Closed timing diagnostics contain only source count,
+mode and before/discovery/after/total durations.
+
 ## Encrypted owner tasks
 
 Task APIs use the existing verified Firebase Google owner, exact v2 contract header and `no-store`

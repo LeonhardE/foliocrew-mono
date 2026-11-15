@@ -36,6 +36,7 @@ class HubErrors:
         if scope["type"] != "http" or not scope.get("path", "").startswith(
             (
                 "/api/v2/",
+                "/api/v3/resources/",
                 "/api/v3/agent-credentials/",
                 "/internal/v2/",
                 "/.well-known/",
