@@ -48,6 +48,10 @@ function compile(file, imports = {}, globals = {}) {
       if (["./WorkspaceFeedback", "./ReportDialog"].includes(name))
         return require("./workspace-feedback-helpers.cjs").component(name, imports);
       if (name === "@/lib/workspace-cache") return cacheContracts;
+      if (name === "@/lib/holdings-publication")
+        return compile("../lib/holdings-publication.ts", {
+          "./resource-library": resourceContracts,
+        });
       assert.ok(Object.hasOwn(imports, name), "Unexpected flow import " + name);
       return imports[name];
     },
@@ -56,6 +60,7 @@ function compile(file, imports = {}, globals = {}) {
     TextEncoder,
     TextDecoder,
     Uint8Array,
+    structuredClone,
     URLSearchParams,
     Intl,
     ...globals,

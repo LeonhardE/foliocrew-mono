@@ -38,6 +38,8 @@ function compile(file, imports = {}, globals = {}) {
       if (["./WorkspaceFeedback", "./ReportDialog"].includes(name))
         return require("./workspace-feedback-helpers.cjs").component(name, imports);
       if (name === "./public-market-json") return compile("../lib/public-market-json.ts");
+      if (["@/lib/holdings-publication", "./holdings-publication"].includes(name))
+        return compile("../lib/holdings-publication.ts", { "./resource-library": contracts });
       if (name === "@/lib/workspace-cache") return compile("../lib/workspace-cache.ts");
       if (["@/lib/holdings-facts", "./holdings-facts"].includes(name))
         return compile("../lib/holdings-facts.ts");

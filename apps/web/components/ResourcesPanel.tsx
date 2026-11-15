@@ -15,6 +15,7 @@ import { useDisplayNames, type DisplayNamesModel } from "./useDisplayNames";
 import { HoldingsSourceBar } from "./HoldingsSourceBar";
 import type { WatchlistModel } from "./useWatchlist";
 import type { ResourceLibraryModel } from "./useResourceLibrary";
+import { workspaceHoldingsPublication } from "@/lib/holdings-publication";
 
 const GUIDE =
   "https://help.wealthsimple.com/hc/en-ca/articles/35654428540571-Request-a-custom-statement";
@@ -928,6 +929,14 @@ function ResourcesView({
     recovered.current.sources.add(sourceKey);
     void model.readStored();
   }, [active, model, recoveryScope, sourceKey]);
+  const workspaceScope = JSON.stringify([
+    model.owner,
+    model.vault?.vaultId,
+    model.vaultGeneration,
+    model.vault?.version,
+    model.sources.map((source) => [source.resourceRef, source.sourceEpoch]),
+  ]);
+  const publication = workspaceHoldingsPublication(model, workspaceScope);
   return (
     <section className={styles.panel} aria-labelledby="resources-title">
       <header className={styles.heading}>
@@ -935,13 +944,8 @@ function ResourcesView({
       </header>
       <ResourceLibrary
         holdingsVersion={model.content?.data.snapshotId}
-        workspaceScope={JSON.stringify([
-          model.owner,
-          model.vault?.vaultId,
-          model.vaultGeneration,
-          model.vault?.version,
-          model.sources.map((source) => [source.resourceRef, source.sourceEpoch]),
-        ])}
+        workspaceScope={workspaceScope}
+        holdingsPublication={publication}
         active={active}
         watchlist={watchlist}
         onOpenWatchlist={onOpenWatchlist}

@@ -14,6 +14,7 @@ import styles from "./ResourceLibrary.module.css";
 import type { WatchlistModel } from "./useWatchlist";
 import { LoadingIndicator, InlineError } from "./WorkspaceFeedback";
 import { useAuth } from "./AuthProvider";
+import type { HoldingsPublication } from "@/lib/holdings-publication";
 
 const kinds: ResourceKind[] = ["holdings", "watchlist", "channel_follows"];
 const blank: ChannelInput = { name: "", handleOrUrl: "", note: "" };
@@ -468,11 +469,13 @@ export default function ResourceLibrary({
   holdingsVersion,
   watchlist,
   workspaceScope,
+  holdingsPublication,
   ...props
 }: {
   active?: boolean;
   workspaceScope?: string | null;
   holdingsVersion?: string;
+  holdingsPublication?: HoldingsPublication | null;
   watchlist?: WatchlistModel;
   children: ReactNode | ((model: ResourceLibraryModel) => ReactNode);
   onOpenWatchlist?: () => void;
@@ -493,6 +496,7 @@ export default function ResourceLibrary({
     workspaceScope,
     externalWatchlist: Boolean(watchlist),
     followsNeeded: filter === "channel_follows",
+    holdingsPublication,
   });
   const previousVersion = useRef(holdingsVersion);
   useEffect(() => {
@@ -502,9 +506,17 @@ export default function ResourceLibrary({
     if (holdingsVersion === undefined) return;
     if (previousVersion.current !== holdingsVersion) {
       previousVersion.current = holdingsVersion;
+      if (model.publicationBound) return;
       if (active && model.authenticated && model.configured) void model.reload("catalogue");
     }
-  }, [holdingsVersion, active, model.authenticated, model.configured, model.reload]);
+  }, [
+    holdingsVersion,
+    active,
+    model.authenticated,
+    model.configured,
+    model.reload,
+    model.publicationBound,
+  ]);
   return (
     <ResourceLibraryView
       key={model.owner ?? "guest"}
