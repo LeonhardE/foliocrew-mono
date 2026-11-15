@@ -355,6 +355,11 @@ class VaultService:
                 "sources": [],
                 "operationCount": 1,
             }
+            # A new commit must use this attempt's time, including after an SDK
+            # retry or local transaction wait. Existing receipt replays stay above.
+            now = self.now()
+            current = _verify_row(row, owner, now, unit=unit)
+            _selection(current, now)
             result = _response(row, unit)
             unit.put(path, row)
             _record(unit, op_path, owner, "bootstrap", fingerprint)

@@ -12,6 +12,12 @@ Every owner request requires the existing verified Firebase Google identity and 
 requests cannot supply an owner UID or implicitly overwrite an existing root/archive. Vault/source writes also
 require one bounded `Idempotency-Key`; source creation requires `X-FolioView-Author-Key`.
 
+First enrollment revalidates the complete initial registry and current writer/recipient
+selection inside each database transaction attempt. A transaction retry or local lock wait
+cannot reuse an earlier certificate-validity decision for a new vault. Exact committed
+bootstrap replays retain their existing behavior and project the current stored registry
+and source fences; they never replace the original root or archive.
+
 | Endpoint                                                    | Behavior                                                                               |
 | ----------------------------------------------------------- | -------------------------------------------------------------------------------------- |
 | `GET /api/v2/vaults/current`                                | Current owner vault and public sources, or `vault:null`                                |
