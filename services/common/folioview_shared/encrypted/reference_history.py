@@ -87,7 +87,12 @@ def _template(value: object) -> None:
     _signed(value["checkpoint"])
 
 
-def _encode_owned(history: list, *, check_encoded_budget: bool = True) -> dict:
+def _encode_owned(
+    history: list,
+    *,
+    check_encoded_budget: bool = True,
+    history_format: str = REFERENCE_HISTORY_FORMAT,
+) -> dict:
     _require(type(history) is list and 1 <= len(history) <= _MAX_BUNDLES)
     certificates, bundles, seen = [], [], {}
     for bundle in history:
@@ -111,7 +116,7 @@ def _encode_owned(history: list, *, check_encoded_budget: bool = True) -> dict:
             references.append([seen[key], entry["active"]])
         bundles.append({"bundle": template, "entries": references})
     encoded = {
-        "format": REFERENCE_HISTORY_FORMAT,
+        "format": history_format,
         "certificates": certificates,
         "bundles": bundles,
     }
@@ -132,10 +137,11 @@ def encode_reference_history(history: list, *, max_expanded_bytes: int = MAX_REA
     return _encode_owned(_snapshot(history, max_expanded_bytes))
 
 
-def _decode_owned(value: dict, maximum: int) -> list:
+def _decode_owned(
+    value: dict, maximum: int, *, history_format: str = REFERENCE_HISTORY_FORMAT
+) -> list:
     _require(
-        value.keys() == {"format", "certificates", "bundles"}
-        and value["format"] == REFERENCE_HISTORY_FORMAT
+        value.keys() == {"format", "certificates", "bundles"} and value["format"] == history_format
     )
     certificates, bundles = value["certificates"], value["bundles"]
     _require(type(certificates) is list and 1 <= len(certificates) <= _MAX_REFERENCES)
