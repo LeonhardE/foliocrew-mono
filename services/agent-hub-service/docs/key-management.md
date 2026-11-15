@@ -8,25 +8,37 @@ Neither rewrapping nor renewal recalls plaintext or already exported recovery ma
 
 Vault and persistent Run readers accept the original `registryHistory` arrays, canonical
 UTF-8 JSON list bytes, and the shared `folioview.reference-history.storage.v1` representation
-(as an internal dictionary or canonical bytes). The reference table retains complete original
+(as an internal dictionary or canonical bytes). They also recognize the explicit
+`folioview.reference-history.storage.v2` format under its separate local read bounds below.
+The reference table retains complete original
 certificate JWS values; each bundle retains its checkpoint, metadata, entry order and active
 flags. Readers restore independent copies of the complete untrusted arrays before the original
 Root, signature, history, identity, time and authorization checks. Unknown versions, malformed
 references, noncanonical bytes and oversized physical or expanded values fail closed. SQLite
 single/batch/retention reads and Firestore reads use the same decoder; reads never migrate rows.
 
-The complete physical application document remains bounded by 768 KiB. Expanded Vault rows are
-bounded by 1 MiB. A frozen Run allows at most 1 MiB of history plus the independently bounded
+The complete physical application document remains bounded by 768 KiB. For legacy arrays and
+storage.v1, expanded Vault rows are bounded by 1 MiB. A frozen Run allows at most 1 MiB of history
+plus the independently bounded
 768 KiB non-history envelope, with a 1.75 MiB expanded row ceiling. The reader deducts other row
 fields before expanding references. Unrelated collections retain the original 768 KiB read
 bound, and retirement tombstones without history remain ordinary bounded JSON.
 
-Writers now encode complete histories into the shared reference representation only when an
+Only an explicit storage.v2 marker allows up to 4,198,400 expanded history bytes. Both Vaults
+and frozen Runs retain the complete 786,432-byte non-history envelope allowance, measured with
+`registryHistory: []`; their local row ceiling is 4,984,832 bytes, deducting that empty array
+before accounting for restored history. The whole physical row still fits 786,432 bytes.
+Legacy arrays and storage.v1 retain the original Vault/Run ceilings above, even when read by
+the same reader. Unknown versions and HTTP transport formats are rejected, and native numeric
+types reach the original strict reference and authority validators without JSON normalization.
+The existing per-attempt cache still accounts for expanded rows within its 8 MiB total bound.
+
+Writers still encode complete histories into storage.v1 only when an
 ordinary, authorized transaction already updates a Vault or frozen persistent Run. Firestore
 keeps canonical reference JSON bytes in the existing unindexed field; SQLite keeps the equivalent
 reference dictionary. Reads never migrate legacy rows. Both the complete compact application
 JSON and actual SDK Document must remain within the original 768 KiB physical write budget.
-The same expanded row/history bounds apply before encoding and decoding, and all owner fields,
+The original storage.v1 expanded row/history bounds still apply before encoding, and all owner fields,
 archives, versions, source bindings and signed bytes retain their original logical values.
 
 Reference writes require the compatible Hub reader floor and its old request drain to have
@@ -42,6 +54,9 @@ limits do not change: a complete response that exceeds 1 MiB still fails before 
 Vault mutation commits. Internal reference storage restores current document capacity; continued
 history growth requires a separately versioned, backward-compatible wire reader design rather
 than raising limits or dropping old signatures/revocations.
+This storage.v2 reader floor does not activate larger writes or extend any HTTP, cryptographic,
+session or persistent-result consumer budget. Expanded writes require compatible downstream
+readers, including Owner persistent-result history transport, before a separate writer rollout.
 
 During one complete history verification, Hub uses a bounded
 `RegistryCertificateMemo` to reuse only successful checks of identical certificate
