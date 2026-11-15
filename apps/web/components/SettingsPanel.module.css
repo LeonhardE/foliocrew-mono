@@ -124,7 +124,6 @@
 }
 
 .select select {
-  appearance: none;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -134,7 +133,7 @@
   font-size: 13px;
   line-height: 1.4;
   min-height: 42px;
-  padding: 9px 42px 9px 12px;
+  padding: 9px 12px;
   width: 100%;
 }
 
@@ -145,16 +144,6 @@
 
 .select select:disabled {
   cursor: default;
-}
-
-.select svg {
-  color: var(--muted);
-  height: 16px;
-  pointer-events: none;
-  position: absolute;
-  right: 14px;
-  top: calc(50% - 8px);
-  width: 16px;
 }
 
 .accountNote,

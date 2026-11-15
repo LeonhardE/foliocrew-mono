@@ -5,6 +5,7 @@
   --raised: #1e222c;
   --border: #2a2e39;
   --muted: #949bac;
+  --native-select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='m4 6 4 4 4-4' stroke='%23949bac' stroke-width='1.5'/%3E%3C/svg%3E");
   --text: #e8ebf2;
   --accent: #5b8ff9;
   --positive: #26c6a2;
@@ -34,6 +35,30 @@ body {
 button,
 input {
   font: inherit;
+}
+/* Keep the settings chevron geometry on every single-choice native select.
+   Specificity preserves the arrow and its reserved space beside local backgrounds/padding. */
+select:not([multiple]):not([size]),
+select:not([multiple])[size="1"] {
+  appearance: none;
+  background-image: var(--native-select-chevron);
+  background-position: right 14px center;
+  background-repeat: no-repeat;
+  background-size: 16px 16px;
+  padding-inline-end: 42px;
+  text-overflow: ellipsis;
+}
+select:not([multiple]):not([size]):dir(rtl),
+select:not([multiple])[size="1"]:dir(rtl) {
+  background-position: left 14px center;
+}
+@media (forced-colors: active) {
+  select:not([multiple]):not([size]),
+  select:not([multiple])[size="1"] {
+    appearance: auto;
+    background-image: none;
+    padding-inline-end: 12px;
+  }
 }
 button {
   cursor: pointer;
@@ -1054,6 +1079,7 @@ html[data-theme="light"] {
   --raised: #eaf0f7;
   --border: #dce3ed;
   --muted: #5c6b81;
+  --native-select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='m4 6 4 4 4-4' stroke='%235c6b81' stroke-width='1.5'/%3E%3C/svg%3E");
   --text: #1c293e;
   --accent: #3269d8;
   --positive: #087f68;
