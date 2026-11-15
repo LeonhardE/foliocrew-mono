@@ -172,7 +172,8 @@
   line-height: 1.55;
   margin: 0;
 }
-.panel code {
+.panel code,
+.review code {
   font-family: ui-monospace, monospace;
   font-size: 11px;
   overflow-wrap: anywhere;
