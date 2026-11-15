@@ -127,6 +127,13 @@ The scanner permits the legacy public Firebase assignment only in two audited hi
 at its exact path and assignment. New commits, staged files and current source must not reintroduce
 inline key values. A clean source scan does not establish cloud-side credential revocation.
 
+The separate [CodeQL workflow](.github/workflows/codeql.yml) checks JavaScript/TypeScript and Python
+data flows on pull requests and pushes to `main`. It uses pinned official actions and build-free
+analysis, with no application dependency installation, cloud identity or production credentials.
+SARIF findings are published to this repository's code scanning; analysis databases are not
+published. Secret scanning, CodeQL, dependency audits, production configuration reviews and the
+cryptographic behavior tests cover different failure modes.
+
 Useful focused commands include:
 
 ```bash
