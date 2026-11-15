@@ -4,6 +4,7 @@ import copy
 import json
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from fixtures import SOURCE, UID, HoldingsFixture
@@ -22,7 +23,10 @@ from folioview_shared.encrypted.authority import RegistryCertificateMemo
 from folioview_shared.encrypted.constants import MAX_READ_BYTES, MAX_STORED_DOCUMENT_BYTES
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import canonical_json, strict_json_loads
-from folioview_shared.encrypted.reference_history import encode_reference_history
+from folioview_shared.encrypted.reference_history import (
+    decode_reference_history,
+    encode_reference_history,
+)
 from folioview_shared.identity import owner_key
 
 
@@ -50,6 +54,7 @@ class ReferenceHistoryReadTests(unittest.TestCase):
             previous = fixture.verify(bundle, previous=previous, signature_memo=memo)
             history.append(bundle)
         cls.fixture, cls.history = fixture, history
+        fixture.bundle, fixture.registry = history[-1], previous
         cls.row = {
             "version": 1,
             "ownerSubject": owner_key(UID),
@@ -86,7 +91,7 @@ class ReferenceHistoryReadTests(unittest.TestCase):
             physical["registryHistory"] = canonical_json(physical["registryHistory"])
             self.rpc.documents[self.name] = physical
         else:
-            with self.sqlite.connect() as connection:
+            with closing(self.sqlite.connect()) as connection:
                 connection.execute(
                     "INSERT OR REPLACE INTO portfolio_documents(path, body) VALUES (?, ?)",
                     (self.path, canonical_json(physical).decode()),
@@ -96,7 +101,7 @@ class ReferenceHistoryReadTests(unittest.TestCase):
     def physical(self, store):
         if store is self.cloud:
             return copy.deepcopy(self.rpc.documents[self.name])
-        with self.sqlite.connect() as connection:
+        with closing(self.sqlite.connect()) as connection:
             body = connection.execute(
                 "SELECT body FROM portfolio_documents WHERE path = ?", (self.path,)
             ).fetchone()[0]
@@ -125,7 +130,7 @@ class ReferenceHistoryReadTests(unittest.TestCase):
                         )
                     )
 
-    def test_legacy_read_and_normal_write_format_remain_unchanged(self):
+    def test_legacy_reads_and_reference_writes_preserve_complete_histories(self):
         row = {**self.row, "registryHistory": self.history[:1]}
         for store in (self.sqlite, self.cloud):
             with self.subTest(store=type(store).__name__):
@@ -137,12 +142,57 @@ class ReferenceHistoryReadTests(unittest.TestCase):
                 history = physical["registryHistory"]
                 if type(history) is bytes:
                     history = strict_json_loads(history)
-                self.assertIs(type(history), list)
-                self.assertEqual(history, row["registryHistory"])
-                with self.assertRaises(ContractError) as raised:
-                    store.transact(lambda unit: unit.put(self.path, self.row))
-                self.assertEqual(raised.exception.code, "payload_too_large")
-                self.assertEqual(self.physical(store), physical)
+                self.assertIs(type(history), dict)
+                self.assertEqual(decode_reference_history(history), row["registryHistory"])
+                store.transact(lambda unit: unit.put(self.path, self.row))
+                self.assertEqual(store.transact(lambda unit: unit.get(self.path)), self.row)
+                physical = self.physical(store)
+                history = physical["registryHistory"]
+                if type(history) is bytes:
+                    history = strict_json_loads(history)
+                self.assertIs(type(history), dict)
+                self.assertEqual(decode_reference_history(history), self.row["registryHistory"])
+
+    def test_large_authority_remains_usable_for_snapshot_and_fence_writes(self):
+        for store in (self.sqlite, self.cloud):
+            with self.subTest(store=type(store).__name__):
+                # Exercise the ordinary verified service operations, not an
+                # enrollment shortcut or a direct trusted-state install.
+                store.transact(lambda unit: unit.put(self.path, self.row))
+                service = PortfolioService(store, clock=lambda: 1000)
+                if store is self.cloud:
+                    self.rpc.aborts = 1
+                receipt = self.fixture.write(service)
+                self.assertEqual(service.snapshot(UID, SOURCE)["receipt"], receipt)
+                self.assertEqual(service.metadata(UID, SOURCE)["state"], "active")
+                mutation = self.fixture.mutate(service)
+                self.assertEqual(mutation["state"], "pending")
+                metadata = service.metadata(UID, SOURCE)
+                self.assertEqual(metadata["sourceEpoch"], 2)
+                self.assertEqual(metadata["state"], "revoking")
+                restored = store.transact(lambda unit: unit.get(self.path))
+                self.assertEqual(restored["registryHistory"], self.history)
+
+    def test_reference_writes_reject_compact_input_and_expanded_overflow_atomically(self):
+        for store in (self.sqlite, self.cloud):
+            with self.subTest(store=type(store).__name__):
+                store.transact(lambda unit: unit.put(self.path, self.row))
+                before = self.physical(store)
+                compact_input = {
+                    **self.row,
+                    "registryHistory": encode_reference_history(self.history),
+                }
+                oversized = {**self.row, "padding": "x" * MAX_READ_BYTES}
+                for candidate, code in (
+                    (compact_input, "malformed_request"),
+                    (oversized, "payload_too_large"),
+                ):
+                    with self.assertRaises(ContractError) as raised:
+                        store.transact(
+                            lambda unit, candidate=candidate: unit.put(self.path, candidate)
+                        )
+                    self.assertEqual(raised.exception.code, code)
+                    self.assertEqual(self.physical(store), before)
 
     def test_corrupt_references_fail_single_and_batch_reads_without_rewrite(self):
         for store in (self.sqlite, self.cloud):
@@ -157,7 +207,7 @@ class ReferenceHistoryReadTests(unittest.TestCase):
                     self.rpc.documents[self.name]["registryHistory"] = canonical_json(compact)
                 else:
                     physical["registryHistory"] = compact
-                    with self.sqlite.connect() as connection:
+                    with closing(self.sqlite.connect()) as connection:
                         connection.execute(
                             "UPDATE portfolio_documents SET body = ? WHERE path = ?",
                             (canonical_json(physical).decode(), self.path),
@@ -188,7 +238,7 @@ class ReferenceHistoryReadTests(unittest.TestCase):
                     else:
                         # Read an existing raw SQLite JSON row without first
                         # using JCS, which would itself turn 0.0 into integer0.
-                        with self.sqlite.connect() as connection:
+                        with closing(self.sqlite.connect()) as connection:
                             connection.execute(
                                 "INSERT OR REPLACE INTO portfolio_documents(path, body) "
                                 "VALUES (?, ?)",
@@ -204,7 +254,7 @@ class ReferenceHistoryReadTests(unittest.TestCase):
                     if store is self.cloud:
                         self.assertEqual(self.rpc.documents[self.name], physical)
                     else:
-                        with self.sqlite.connect() as connection:
+                        with closing(self.sqlite.connect()) as connection:
                             raw = connection.execute(
                                 "SELECT body FROM portfolio_documents WHERE path = ?", (self.path,)
                             ).fetchone()[0]
@@ -265,7 +315,7 @@ class ReferenceHistoryReadTests(unittest.TestCase):
                         }
                         self.rpc.documents[self.name] = copy.deepcopy(physical)
                     else:
-                        with self.sqlite.connect() as connection:
+                        with closing(self.sqlite.connect()) as connection:
                             connection.execute(
                                 "INSERT OR REPLACE INTO portfolio_documents(path, body) "
                                 "VALUES (?, ?)",

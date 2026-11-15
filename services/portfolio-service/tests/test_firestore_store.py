@@ -25,7 +25,8 @@ from app.lifecycle import state_path
 from app.store import FirestorePortfolioStore, StoreUnavailable, document_path, get_store
 from folioview_shared.encrypted.constants import MAX_STORED_DOCUMENT_BYTES
 from folioview_shared.encrypted.errors import ContractError
-from folioview_shared.encrypted.jsonutil import canonical_json, strict_json_loads
+from folioview_shared.encrypted.jsonutil import canonical_json
+from folioview_shared.encrypted.reference_history import decode_reference_history
 from folioview_shared.identity import owner_key
 
 
@@ -197,7 +198,7 @@ class FirestorePortfolioTests(unittest.TestCase):
         expected = self.service.metadata(UID, SOURCE)
         self.assertIsInstance(row["registryHistory"], bytes)
         original = row["registryHistory"]
-        row["registryHistory"] = strict_json_loads(original)
+        row["registryHistory"] = decode_reference_history(original)
         self.assertEqual(self.service.metadata(UID, SOURCE), expected)
         row["registryHistory"] = original
         self.assertEqual(self.service.metadata(UID, SOURCE), expected)
@@ -208,7 +209,7 @@ class FirestorePortfolioTests(unittest.TestCase):
     def test_compact_authority_rejects_invalid_noncanonical_oversized_and_tampered_history(self):
         name, row = next(iter(self.rpc.documents.items()))
         path = name.split("/documents/", 1)[1]
-        altered = strict_json_loads(row["registryHistory"])
+        altered = decode_reference_history(row["registryHistory"])
         altered[0]["checkpoint"]["signature"] = "A" * 86
         for payload in (b"{}", b"[ ]", b"[1,]", b"[\xff]", b" " * 786433):
             with self.subTest(payload=payload[:16]), self.assertRaises(StoreUnavailable):
@@ -228,7 +229,7 @@ class FirestorePortfolioTests(unittest.TestCase):
 
     def test_compact_full_signed_authority_history_fits_unchanged_logical_and_wire_budgets(self):
         name, stored = next(iter(self.rpc.documents.items()))
-        history = strict_json_loads(stored["registryHistory"])
+        history = decode_reference_history(stored["registryHistory"])
         previous = self.fixture.verify(history[-1])
         for i in range(10):
             for suffix, role in (("sig", "agent_sig"), ("enc", "agent_enc")):

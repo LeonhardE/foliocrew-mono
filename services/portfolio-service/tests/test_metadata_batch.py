@@ -15,7 +15,8 @@ from app.store import FirestorePortfolioStore, StoreUnavailable, document_path
 from folioview_shared.encrypted.constants import MAX_SAFE_INTEGER
 from folioview_shared.encrypted.crypto import verify_jws
 from folioview_shared.encrypted.errors import ContractError
-from folioview_shared.encrypted.jsonutil import canonical_json, strict_json_loads
+from folioview_shared.encrypted.jsonutil import canonical_json
+from folioview_shared.encrypted.reference_history import decode_reference_history
 from folioview_shared.identity import owner_key
 
 
@@ -111,7 +112,7 @@ class MetadataBatchTests(unittest.TestCase):
 
     def test_cache_hit_preserves_strict_time_and_complete_public_key_checks(self):
         row = copy.deepcopy(self.rpc.documents[self.authority_name(SOURCE)])
-        row["registryHistory"] = strict_json_loads(row["registryHistory"])
+        row["registryHistory"] = decode_reference_history(row["registryHistory"])
         owner, cache = owner_key(UID), {}
         with patch("app.holdings.verify_registry", wraps=verify_registry) as verify:
             _authority(row, owner, SOURCE, 1000, registry_cache=cache)
@@ -235,7 +236,7 @@ class MetadataBatchTests(unittest.TestCase):
     def test_tampered_second_history_is_not_hidden_by_first_source_cache(self):
         sources = self.sources(2)
         row = self.rpc.documents[self.authority_name(sources[1])]
-        history = strict_json_loads(row["registryHistory"])
+        history = decode_reference_history(row["registryHistory"])
         history[0]["checkpoint"]["signature"] = "A" * 86
         row["registryHistory"] = canonical_json(history)
         with self.assertRaises(StoreUnavailable):

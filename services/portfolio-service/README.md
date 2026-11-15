@@ -83,12 +83,19 @@ complete physical JSON remains bounded to 768 KiB before expansion; the complete
 authority row is bounded to the existing 1 MiB read ceiling. Invalid references, unknown formats,
 noncanonical bytes and oversized expansion fail closed without rewriting storage.
 
-This reader rollout does not enable reference writes. Firestore still writes canonical bytes
-containing the original arrays; SQLite still writes those arrays, with both logical JSON and
-actual SDK encoding under the unchanged 768 KiB write limit. Deploy these compatible readers
-to all traffic before a separate writer rollout, and preserve this revision as its rollback floor.
-No history, revoked certificate or original signature bytes are removed; public APIs retain the
-original arrays and their existing response budgets.
+Writes now use that reference representation in the same field: canonical bytes in Firestore and
+JSON in SQLite. Normal service writers still supply complete histories after the original authority
+checks. The entire expanded authority row fits the existing 1 MiB read ceiling; both the complete
+physical JSON and the actual SDK Document encoding must fit the unchanged 768 KiB storage limit
+before committing. Other collections retain their existing write limits.
+
+This writer rollout requires the compatible readers from PR300 to serve all traffic and the prior
+revision's maximum request duration to elapse first. Preserve that reader release as the rollback
+floor. Reads never migrate data; only an ordinary committing service operation changes its stored
+representation atomically. No history, revoked certificate or original signature bytes are removed;
+public APIs retain the original arrays and their existing response budgets. The separate Hub writer
+rollout must follow this Portfolio release so newly approved devices can synchronize their complete
+public authority without hitting the old expanded storage limit.
 
 Every committing transaction re-reads current authority, operation, snapshot and latest before
 staging writes. Firestore conflict retries re-run authorization and verification against changed
