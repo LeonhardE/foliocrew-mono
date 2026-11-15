@@ -946,6 +946,7 @@ function ResourcesView({
         holdingsVersion={model.content?.data.snapshotId}
         workspaceScope={workspaceScope}
         holdingsPublication={publication}
+        holdingsCatalogueNeeded={Boolean(names.scope)}
         active={active}
         watchlist={watchlist}
         onOpenWatchlist={onOpenWatchlist}

@@ -74,12 +74,14 @@ export function useResourceLibrary({
   active = true,
   externalWatchlist = false,
   followsNeeded = true,
+  catalogueNeeded = true,
   workspaceScope = null,
   holdingsPublication = null,
 }: {
   active?: boolean;
   externalWatchlist?: boolean;
   followsNeeded?: boolean;
+  catalogueNeeded?: boolean;
   workspaceScope?: string | null;
   holdingsPublication?: HoldingsPublication | null;
 } = {}) {
@@ -93,8 +95,8 @@ export function useResourceLibrary({
   const [state, setState] = useState<State>(() => initial(owner, scope));
   const stateRef = useRef(state);
   stateRef.current = state;
-  const live = useRef({ owner, scope, configured, active, visible });
-  live.current = { owner, scope, configured, active, visible };
+  const live = useRef({ owner, scope, configured, active, visible, catalogueNeeded });
+  live.current = { owner, scope, configured, active, visible, catalogueNeeded };
   const jobs = useRef(new Map<string, AbortController>());
   const serials = useRef({ catalogue: 0, watchlist: 0, follows: 0 });
   const writing = useRef<object | null>(null);
@@ -154,7 +156,8 @@ export function useResourceLibrary({
         start.scope !== scope ||
         !start.active ||
         !start.visible ||
-        (hub && !start.configured)
+        (hub && !start.configured) ||
+        (key === "catalogue" && !start.catalogueNeeded)
       )
         throw new ResourceError("cancelled");
       jobs.current.get(key)?.abort();
@@ -174,7 +177,8 @@ export function useResourceLibrary({
           now.scope !== scope ||
           !now.active ||
           !now.visible ||
-          (hub && !now.configured)
+          (hub && !now.configured) ||
+          (key === "catalogue" && !now.catalogueNeeded)
         )
           throw new ResourceError("cancelled");
       };
@@ -291,7 +295,7 @@ export function useResourceLibrary({
         !live.current.visible ||
         (!force && isFresh(source) && !stateRef.current[source].stale) ||
         (source === "follows" && writing.current) ||
-        (source === "catalogue" && !configured)
+        (source === "catalogue" && (!configured || !live.current.catalogueNeeded))
       )
         return;
       const serial = ++serials.current[source];
@@ -307,7 +311,7 @@ export function useResourceLibrary({
         live.current.owner === owner &&
         live.current.scope === scope &&
         serials.current[source] === serial &&
-        (source !== "catalogue" || live.current.configured);
+        (source !== "catalogue" || (live.current.configured && live.current.catalogueNeeded));
       setState((previous) => ({
         ...(previous.scope === scope ? previous : initial(owner, scope)),
         [source]: {
@@ -526,12 +530,30 @@ export function useResourceLibrary({
     );
     if (owner && active && visible) {
       if (!externalWatchlist) void reload("watchlist", false);
-      if (configured) void reload("catalogue", false);
     }
     return () => {
       for (const controller of jobs.current.values()) controller.abort();
     };
   }, [owner, scope, active, visible, configured, reload, externalWatchlist]);
+  useEffect(() => {
+    if (owner && active && visible && configured && catalogueNeeded)
+      void reload("catalogue", false);
+    return () => {
+      // The private workspace prerequisite controls only discovery, never User writes.
+      const controller = jobs.current.get("catalogue");
+      // Completed matching receipts retain their original serial and 30-second timestamp.
+      if (controller || catalogueRead.current?.pending) {
+        controller?.abort();
+        ++serials.current.catalogue;
+      }
+      if (live.current.scope === scope)
+        setState((previous) =>
+          previous.scope === scope
+            ? { ...previous, catalogue: { ...previous.catalogue, loading: false } }
+            : previous,
+        );
+    };
+  }, [owner, scope, active, visible, configured, catalogueNeeded, reload, externalWatchlist]);
   useEffect(() => {
     if (owner && active && visible && followsNeeded) void reload("follows", false);
     return () => {
@@ -548,7 +570,16 @@ export function useResourceLibrary({
 
   useEffect(() => {
     const required = currentPublication;
-    if (!required || !owner || !active || !visible || !configured || writing.current) return;
+    if (
+      !required ||
+      !owner ||
+      !active ||
+      !visible ||
+      !configured ||
+      !catalogueNeeded ||
+      writing.current
+    )
+      return;
     let stopped = false;
     const current = () =>
       !stopped &&
@@ -557,7 +588,8 @@ export function useResourceLibrary({
       live.current.scope === scope &&
       live.current.active &&
       live.current.visible &&
-      live.current.configured;
+      live.current.configured &&
+      live.current.catalogueNeeded;
     const confirm = async () => {
       if (!current() || required.confirmed) return;
       if (required.force) {
@@ -597,7 +629,7 @@ export function useResourceLibrary({
     return () => {
       stopped = true;
     };
-  }, [owner, scope, active, visible, configured, currentPublication, reload]);
+  }, [owner, scope, active, visible, configured, catalogueNeeded, currentPublication, reload]);
 
   const useForTask = useCallback(
     (item: ResourceItem, callback?: (selection: ResourceSelection) => void) => {
@@ -609,6 +641,7 @@ export function useResourceLibrary({
         !live.current.active ||
         !live.current.visible ||
         !live.current.configured ||
+        !live.current.catalogueNeeded ||
         current.owner !== owner ||
         current.scope !== scope ||
         live.current.scope !== scope ||
@@ -653,14 +686,15 @@ export function useResourceLibrary({
     authenticated: Boolean(owner),
     configured,
     publicationBound: Boolean(currentPublication),
-    catalogue: configured
-      ? {
-          ...display("catalogue", masked.catalogue),
-          stale:
-            display("catalogue", masked.catalogue).stale ||
-            Boolean(masked.catalogue.data && currentPublication && !currentPublication.confirmed),
-        }
-      : empty<ResourceCatalogue>(),
+    catalogue:
+      configured && catalogueNeeded
+        ? {
+            ...display("catalogue", masked.catalogue),
+            stale:
+              display("catalogue", masked.catalogue).stale ||
+              Boolean(masked.catalogue.data && currentPublication && !currentPublication.confirmed),
+          }
+        : empty<ResourceCatalogue>(),
     reload,
     saveFollows,
     useForTask,
