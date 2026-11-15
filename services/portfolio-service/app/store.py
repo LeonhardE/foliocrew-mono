@@ -12,7 +12,10 @@ from folioview_shared.encrypted.budgets import check_document_budget
 from folioview_shared.encrypted.constants import MAX_READ_BYTES, MAX_STORED_DOCUMENT_BYTES
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import canonical_json, strict_json_loads
-from folioview_shared.encrypted.reference_history import decode_reference_history
+from folioview_shared.encrypted.reference_history import (
+    decode_reference_history,
+    encode_reference_history,
+)
 
 COLLECTIONS = frozenset(
     {
@@ -103,10 +106,7 @@ def _read_document(value: dict, *, path: str) -> dict:
 
 
 def _firestore_document(value: dict, *, path: str) -> dict:
-    if (
-        path.split("/", 1)[0] == "portfolio_authorities"
-        and type(value.get("registryHistory")) is list
-    ):
+    if _history_row(path) and type(value.get("registryHistory")) in (list, dict):
         return {**value, "registryHistory": canonical_json(value["registryHistory"])}
     return value
 
@@ -121,7 +121,17 @@ def stored_document(value: dict, *, path: str, project: str, database: str) -> d
     from google.cloud.firestore_v1._helpers import encode_dict
     from google.cloud.firestore_v1.types import Document
 
-    data = strict_json_loads(canonical_json(value), max_bytes=MAX_STORED_DOCUMENT_BYTES)
+    history_row = _history_row(path) and "registryHistory" in value
+    data = strict_json_loads(
+        canonical_json(value),
+        max_bytes=MAX_READ_BYTES if history_row else MAX_STORED_DOCUMENT_BYTES,
+    )
+    if history_row:
+        # Normal service writers still provide every original signed bundle.
+        # Reference storage neither installs an authority nor skips its checks.
+        data["registryHistory"] = encode_reference_history(
+            data["registryHistory"], max_expanded_bytes=_history_budget(data)
+        )
     name = f"projects/{project}/databases/{database}/documents/{path}"
     encoded = Document(
         name=name, fields=encode_dict(_firestore_document(data, path=path))
