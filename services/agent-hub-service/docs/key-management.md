@@ -6,15 +6,28 @@ Passkey PRF material. Ordinary owner routes and transport bounds are documented 
 [owner API](owner-api.md); browser flows are in the [Web guide](../../../apps/web/docs/key-management.md).
 Neither rewrapping nor renewal recalls plaintext or already exported recovery material.
 
-Firestore readers accept the original `registryHistory` arrays and canonical UTF-8 JSON bytes
-in the same existing unindexed field of Vault and persistent Run documents. Both forms return
-the identical bounded JSON array to signature verification and public APIs; malformed,
-noncanonical or oversized bytes fail closed. Writes use canonical bytes in those same two
-fields, while SQLite retains logical JSON arrays. Both the complete logical JSON document and
-the actual encoded Firestore document must fit the unchanged storage budget before any write
-commits. Deploy compatible readers to every serving revision before enabling compact writes,
-and retain such a revision as the rollback floor after the first compact write. No history is
-removed, compressed or trusted without its original verification.
+Vault and persistent Run readers accept the original `registryHistory` arrays, canonical
+UTF-8 JSON list bytes, and the shared `folioview.reference-history.storage.v1` representation
+(as an internal dictionary or canonical bytes). The reference table retains complete original
+certificate JWS values; each bundle retains its checkpoint, metadata, entry order and active
+flags. Readers restore independent copies of the complete untrusted arrays before the original
+Root, signature, history, identity, time and authorization checks. Unknown versions, malformed
+references, noncanonical bytes and oversized physical or expanded values fail closed. SQLite
+single/batch/retention reads and Firestore reads use the same decoder; reads never migrate rows.
+
+The complete physical application document remains bounded by 768 KiB. Expanded Vault rows are
+bounded by 1 MiB. A frozen Run allows at most 1 MiB of history plus the independently bounded
+768 KiB non-history envelope, with a 1.75 MiB expanded row ceiling. The reader deducts other row
+fields before expanding references. Unrelated collections retain the original 768 KiB read
+bound, and retirement tombstones without history remain ordinary bounded JSON.
+
+This reader release does not activate reference writes. Writers still use canonical list bytes
+in Firestore and logical arrays in SQLite; both the complete logical JSON document and the
+actual encoded Firestore document must fit the unchanged 768 KiB write budget before commit.
+Deploy compatible readers to every serving revision before enabling reference writes in a
+separate release. After the first such write, keep a compatible reader as the rollback floor.
+This does not raise HTTP or complete-response limits, remove history, bypass verification, or
+by itself resolve the storage ceiling for an Owner update whose expanded row exceeds 768 KiB.
 
 During one complete history verification, Hub uses a bounded
 `RegistryCertificateMemo` to reuse only successful checks of identical certificate

@@ -9,9 +9,10 @@ from functools import lru_cache
 from pathlib import Path
 
 from folioview_shared.encrypted.budgets import check_document_budget
-from folioview_shared.encrypted.constants import MAX_STORED_DOCUMENT_BYTES
+from folioview_shared.encrypted.constants import MAX_READ_BYTES, MAX_STORED_DOCUMENT_BYTES
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import canonical_json, strict_json_loads
+from folioview_shared.encrypted.reference_history import decode_reference_history
 
 from .registry_reads import RegistryPrefixCache
 
@@ -118,23 +119,45 @@ def document_path(collection: str, *parts: str) -> str:
     return f"{collection}/{document_id(*parts)}"
 
 
-def _read_document(value: dict, *, path: str) -> dict:
-    """Read the original array or its bounded, canonical UTF-8 storage form.
+# These are logical read ceilings, not HTTP or physical storage write budgets.
+# A frozen Run also contains its independently bounded manifest and other fields.
+_HISTORY_COLLECTIONS = frozenset({"hub_vaults", "hub_persistent_runs"})
+_MAX_EXPANDED_RUN_BYTES = MAX_STORED_DOCUMENT_BYTES + MAX_READ_BYTES
 
-    Only these two existing, unindexed fields may use bytes. Public APIs and
-    signature verification continue to receive the original JSON arrays.
+
+def _read_document(value: dict, *, path: str) -> dict:
+    """Restore bounded untrusted history before the original authority checks.
+
+    Only Vaults and frozen Runs recognize reference history. Reads never write
+    or migrate a row; current writers still require legacy logical JSON <=768KiB.
     """
     try:
-        if path.split("/", 1)[0] in {"hub_vaults", "hub_persistent_runs"} and isinstance(
-            value.get("registryHistory"), bytes
-        ):
-            payload = value["registryHistory"]
-            history = strict_json_loads(payload, max_bytes=MAX_STORED_DOCUMENT_BYTES)
-            if type(history) is not list or canonical_json(history) != payload:
+        if type(value) is not dict:
+            raise StoreUnavailable
+        # Own the complete storage snapshot. Preserve Python numeric types for
+        # strict authority predicates; JCS must only validate/count, not reparse
+        # a native 1.0 or -0.0 into an integer before those checks.
+        value = copy.deepcopy(value)
+        collection = path.split("/", 1)[0]
+        if collection not in _HISTORY_COLLECTIONS or "registryHistory" not in value:
+            if len(canonical_json(value)) > MAX_STORED_DOCUMENT_BYTES:
                 raise StoreUnavailable
-            value = {**value, "registryHistory": history}
-        return strict_json_loads(canonical_json(value), max_bytes=MAX_STORED_DOCUMENT_BYTES)
-    except ContractError:
+            return value
+
+        history = value["registryHistory"]
+        other = canonical_json({**value, "registryHistory": []})
+        if len(other) > MAX_STORED_DOCUMENT_BYTES:
+            raise StoreUnavailable
+        physical_history_bytes = (
+            len(history) if type(history) is bytes else len(canonical_json(history))
+        )
+        if len(other) - 2 + physical_history_bytes > MAX_STORED_DOCUMENT_BYTES:
+            raise StoreUnavailable
+        maximum = MAX_READ_BYTES if collection == "hub_vaults" else _MAX_EXPANDED_RUN_BYTES
+        remaining = min(MAX_READ_BYTES, maximum - len(other) + 2)
+        value["registryHistory"] = decode_reference_history(history, max_expanded_bytes=remaining)
+        return value
+    except (ContractError, RecursionError):
         raise StoreUnavailable from None
 
 
@@ -225,7 +248,7 @@ class SQLiteTransaction:
             raise StoreUnavailable from None
         if type(value) is not dict:
             raise StoreUnavailable
-        return value
+        return _read_document(value, path=path)
 
     def get_many(self, paths, *, field_paths=None) -> dict[str, dict | None]:
         paths = _batch_paths(paths)
@@ -244,7 +267,7 @@ class SQLiteTransaction:
                     raise StoreUnavailable from None
                 if path not in result or type(value) is not dict:
                     raise StoreUnavailable
-                result[path] = _project(value, field_paths)
+                result[path] = _read_document(_project(value, field_paths), path=path)
         return result
 
     def scan_owner(self, collection, field, owner, *, after=None, limit=4):
@@ -258,7 +281,18 @@ class SQLiteTransaction:
             "AND json_extract(body, ?) = ? ORDER BY path LIMIT ?",
             (prefix + "%", after or prefix, "$." + field, owner, limit),
         ).fetchall()
-        return [(path, strict_json_loads(body)) for path, body in rows]
+        try:
+            return [
+                (
+                    path,
+                    _read_document(
+                        strict_json_loads(body, max_bytes=MAX_STORED_DOCUMENT_BYTES), path=path
+                    ),
+                )
+                for path, body in rows
+            ]
+        except ContractError:
+            raise StoreUnavailable from None
 
     def put(self, path: str, value: dict) -> None:
         data = stored_document(
