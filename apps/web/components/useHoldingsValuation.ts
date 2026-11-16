@@ -154,7 +154,9 @@ export function useHoldingsValuation(
       }
     },
     reset: () => {
-      setSelection(null);
+      setSelection(
+        key && defaultCurrency ? { key, currency: defaultCurrency, defaultCurrency } : null,
+      );
       const previous = model.displayCache.valuations.get(key) as PriceSet | undefined;
       if (previous && defaultCurrency)
         model.displayCache.valuations.set(key, {

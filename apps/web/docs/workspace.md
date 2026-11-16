@@ -292,6 +292,9 @@ quantities, account/source identifiers, unit costs or credentials. Quote cache r
 instruments, within the producer's existing quotas; large/cold sources may remain partially priced.
 Explicit refresh checks the server cache again and can update remaining missing rows. There is no
 unbounded refresh loop, new worker, background timer, higher quota or paid subscription.
+The loader invokes its supplied fetch function without an options-object receiver, so native
+browser fetch can start both quote and FX requests. Returning a restored source to its default
+display currency updates the visible selection immediately without another price request.
 
 One Bank of Canada daily-reference observation supplies CAD legs for native/default currencies.
 All display crosses are derived locally from that observation. Changing display currency therefore
