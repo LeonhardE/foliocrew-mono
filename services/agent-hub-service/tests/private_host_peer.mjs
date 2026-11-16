@@ -1,6 +1,12 @@
 /** Synthetic local peer; never exports the generated private keys. */
 import { createInterface } from "node:readline";
-import { AgentClient, HostStorage, prepare, activate } from "../agent-client/dist/index.mjs";
+const release = process.env.FOLIOVIEW_TEST_NATIVE_CLIENT_RELEASE ?? "current";
+if (!["current", "1.3.0"].includes(release)) throw new Error("unsupported_synthetic_release");
+const { AgentClient, HostStorage, prepare, activate } = await import(
+  release === "current"
+    ? "../agent-client/dist/index.mjs"
+    : "../agent-client/releases/1.3.0/dist/index.mjs"
+);
 const requests = new Map();
 let next = 0,
   storage,

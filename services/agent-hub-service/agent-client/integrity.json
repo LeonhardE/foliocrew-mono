@@ -1,23 +1,23 @@
 {
-  "clientVersion": "1.3.0",
+  "clientVersion": "1.3.1",
   "nodeMinimum": "24.12.0",
   "contractVersion": "folioview.agent-workspace.v2.0",
   "profile": "folioview.agent-credential.v1",
   "sharedLibrary": {
-    "integritySha256": "b288644578f35570030c94a3f0cc6f1f125b0865151ada1aa1c48b79f798e3bd",
-    "bundleSha256": "f875c586528a981c469e06557230210f2af5be288c8ed2551fd43224ea0d2548"
+    "integritySha256": "f710dba835b047445b3a2c51ef7d5a5a97150cd4a9a78adb3e01ab8883da8301",
+    "bundleSha256": "9154f84d3d03af2edb98cbb6471285b0ff12f03e39a51d501b5a0142458aecd4"
   },
   "valuationLibrary": {
-    "integritySha256": "e166b7fce85cf28e7367e0d7f585286c620fa330f09eda0d9c3271c2e9bca6bb",
+    "integritySha256": "f57bd01e351c26b6750f2fb6e165bbc33430abe378088f7e46bef1b64bbc471d",
     "holdingsSha256": "17a725508b9698e3ac2d6016054520c9d4be6208c99fa4a479fc5cf1329fdc8e",
     "schemaSha256": "d7844500991a4ad3362b160bc21d83424531034b202aa5f09a5a97aba4804163"
   },
   "files": {
-    "package.json": "d03d05269ca06dd40afd1e87092d04396d248a8df413e8eab15da3914dd19086",
-    "package-lock.json": "426a925175131fa488d8430241b5f585a023fe85c749c039dbb47e07d1d7f125",
-    "build.mjs": "42f732bbb7b83c20800ca17481f3205d5af1dc6e4434a9e3d35261eefc987fee",
-    "shared-contract.integrity.json": "b288644578f35570030c94a3f0cc6f1f125b0865151ada1aa1c48b79f798e3bd",
-    "valuation-contract.integrity.json": "e166b7fce85cf28e7367e0d7f585286c620fa330f09eda0d9c3271c2e9bca6bb",
+    "package.json": "6b2031e2549eb9d1bf1c3ccfbdf5c1a268ca2a24c1bee237bbe55968c34b2665",
+    "package-lock.json": "f818269fcadbd198ef5f1832a87db05dbf30a0bf79dd11d61d66f2f784dd2532",
+    "build.mjs": "02a891c4a34eba132f4e9a0021b76e5ab2c0b315c3682ca08fa7f579aac2dbcc",
+    "shared-contract.integrity.json": "f710dba835b047445b3a2c51ef7d5a5a97150cd4a9a78adb3e01ab8883da8301",
+    "valuation-contract.integrity.json": "f57bd01e351c26b6750f2fb6e165bbc33430abe378088f7e46bef1b64bbc471d",
     "THIRD_PARTY_NOTICES.md": "16b1768276d7eed2a7ce1142f5766c211da784615fa004a36853f2658e18dd4d",
     "src/cli.mjs": "54609d45173695895c2cf435de48eea9667b64950e69ea5db946de688d26d595",
     "src/index.mjs": "c0462d668038863410f86b1da43fc19fbc17d7619ef0ae0da5c64c29809fc343",
@@ -32,7 +32,7 @@
     "src/policy.mjs": "9425478e061142accddbb32502eb4eb17817bf32843ec87693913a12d8e0ba2b",
     "src/task-center.mjs": "1ad341b987a50e1b3e84964174973d2f5891a967f6af70579ffa2c15d7032a00",
     "src/task-center-validators.cjs": "c10058242abfc3b284df4f9d2184a1dd03e87a928ba06d57cfc703029eb4eb45",
-    "dist/index.mjs": "e118812ea3d0863e570da55a3aaaca7dce3049c06385e4e46de03041d6ff4803",
-    "dist/cli.mjs": "20b1ce199a8ac8ac334c91dde120444fdd11397e879dbf98e3de6b586b59c290"
+    "dist/index.mjs": "6921b5a7bcb2a2844d3e49689dacb0b491e114f5e60b8124782e1b458ccb19c2",
+    "dist/cli.mjs": "697478fe74675a8bb6cfca4f0916a899dcd3eb860a5d4c33b7ef697163ba342c"
   }
 }
