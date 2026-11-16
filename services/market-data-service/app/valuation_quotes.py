@@ -52,7 +52,9 @@ import concurrent.futures
 import contextlib
 import io
 import json
+import math
 import sys
+from datetime import datetime
 output = sys.stdout
 with contextlib.redirect_stdout(io.StringIO()):
     import yfinance as yf
@@ -64,7 +66,21 @@ with contextlib.redirect_stdout(io.StringIO()):
             meta = ticker.get_history_metadata(repair=False)
             keys = ("symbol", "exchangeName", "instrumentType", "currency", "regularMarketPrice",
                     "regularMarketTime", "exchangeTimezoneName")
-            return {key: meta.get(key) for key in keys}
+            result = {key: meta.get(key) for key in keys}
+            observed = result["regularMarketTime"]
+            if isinstance(observed, datetime):
+                try:
+                    if (observed.tzinfo is None or observed.utcoffset() is None
+                            or observed.microsecond or getattr(observed, "nanosecond", 0)):
+                        observed = None
+                    else:
+                        seconds = observed.timestamp()
+                        observed = (int(seconds)
+                                    if math.isfinite(seconds) and int(seconds) == seconds else None)
+                except (OverflowError, OSError, TypeError, ValueError):
+                    observed = None
+                result["regularMarketTime"] = observed
+            return result
         except Exception as error:
             name = type(error).__name__.lower()
             return {"error": "rate_limited" if "ratelimit" in name else

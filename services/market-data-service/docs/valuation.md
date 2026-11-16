@@ -100,6 +100,11 @@ than24 hours old or an expired900-second cache are marked stale. A later fetch c
 a known newer observation with an older one. Negative results can be cached for300 seconds.
 These snapshots remain latest available provider data, without a real-time/executable-price claim.
 
+The pinned provider formats its observation time as a timezone-aware datetime. The quote child
+converts an aware whole-second value back to UTC epoch seconds before JSON serialization;
+naive datetimes and fractional seconds are not assigned a timezone or rounded. The original
+positive, finite, non-future and seven-day observation checks still apply after conversion.
+
 Cache-only first paint uses `?cached=true`, performs one bounded cache batch read, and never
 claims leases, writes or calls Yahoo. Firestore's `get_all` stream has the existing four-second
 SDK timeout; every missing process-copy document is charged before the call. Positive/negative
