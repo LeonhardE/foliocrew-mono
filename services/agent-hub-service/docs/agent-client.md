@@ -36,6 +36,31 @@ The original 1.0.0 download remains byte-identical at its existing versioned URL
 Upgrades require an explicit reviewed version/pin and reuse the same private profile;
 downloading a newer client does not grant authority or require new authorization.
 
+### Explicit parser update in 1.3.1
+
+Client 1.3.1 bundles the reviewed shared linear Markdown destination collector.
+It removes repeated unmatched-suffix scans while preserving the original report
+entity, HTML, image and HTTPS policy, size limits and all cryptographic checks.
+Its shared pin also includes the previously released request-local registry
+certificate verification memo; current time, Root, chain, role and revocation
+checks still run. The independent holdings adapter and its schema are unchanged;
+its manifest records the normal updated shared core pin.
+
+The 1.3.0 source, build inputs, manifest and standalone distributions are retained
+byte-for-byte under `agent-client/releases/1.3.0/`; all older pinned downloads are
+unchanged. Only the three existing public asset names are served for each version.
+The current download is 1.3.1, still Node 24.12.0+ and at most 2MiB. Existing hosts
+must explicitly review and adopt its version and SHA-256; publication does not
+silently update installed clients or native task instructions.
+
+Reuse the original HostStorage directory, active profile, pending activation,
+credential lease, rollback floor and sealed outbox. Do not generate replacement
+keys, request another consent, close a connection or start a new Run for this
+upgrade. An unknown prior submission retries its original ciphertext and receipt
+even if later report arguments differ. Local synthetic compatibility tests do
+not prove that either real native host has installed this release; actual host
+adoption remains a separate acceptance step.
+
 Native authorization accepts an optional bounded `ui_locales` display hint used by
 ChatGPT. The hint is discarded before consent state or Authlib processing; duplicate
 parameters, unknown fields and invalid locale lists remain rejected. Registered
