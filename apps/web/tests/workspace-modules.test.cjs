@@ -165,3 +165,339 @@ test("public Agent config deadline and hidden late reply cannot create an unveri
   assert.equal(h.render().data, null);
   h.close();
 });
+
+// Actual component code and React elements; deterministic lifecycle only for the DOM-free host.
+function taskModuleHost(load) {
+  const { readFileSync } = require("node:fs"),
+    path = require("node:path"),
+    vm = require("node:vm");
+  const { transformSync } = require("next/dist/build/swc");
+  let activeHooks,
+    child = hooks(),
+    childKey,
+    writes = 0,
+    imports = 0,
+    last;
+  let panel = hooks();
+  const timers = new Map();
+  const source = readFileSync(path.join(__dirname, "../components/WorkspacePanels.tsx"), "utf8");
+  assert.equal(source.split('import("./TasksPanel").then').length, 2);
+  // Replace only the code-chunk transport; production loader/component behavior is unchanged.
+  const { code } = transformSync(
+    source.replace('import("./TasksPanel").then', "__taskImport().then"),
+    {
+      filename: "WorkspacePanels.tsx",
+      jsc: {
+        parser: { syntax: "typescript", tsx: true },
+        target: "es2022",
+        transform: { react: { runtime: "automatic" } },
+      },
+      module: { type: "commonjs" },
+    },
+  );
+  const r = {
+    ...React,
+    useState(value) {
+      const [state, set] = activeHooks.react.useState(value);
+      return [
+        state,
+        (next) => {
+          writes++;
+          set(next);
+        },
+      ];
+    },
+    useEffect: (...args) => activeHooks.react.useEffect(...args),
+    useMemo(fn, deps) {
+      const ref = activeHooks.react.useRef();
+      if (!ref.current || deps.some((v, i) => ref.current.deps[i] !== v))
+        ref.current = { value: fn(), deps };
+      return ref.current.value;
+    },
+  };
+  const Loading = () => null,
+    ErrorView = () => null;
+  const provided = {
+    react: r,
+    "react/jsx-runtime": jsx,
+    "next-intl": { useTranslations: () => (key) => key },
+    "./WorkspaceFeedback": { InlineError: ErrorView, LoadingIndicator: Loading },
+  };
+  const module = { exports: {} };
+  vm.runInNewContext(code, {
+    module,
+    exports: module.exports,
+    require: (name) => {
+      assert.ok(name in provided, name);
+      return provided[name];
+    },
+    __taskImport: () => {
+      imports++;
+      return load();
+    },
+    setTimeout(fn, ms) {
+      const id = {};
+      timers.set(id, { fn, ms });
+      return id;
+    },
+    clearTimeout(id) {
+      timers.delete(id);
+    },
+  });
+  function draw(props = {}, name = "TasksPanel") {
+    activeHooks = panel;
+    const entry = module.exports[name](props);
+    const boundary = panel.render(() => entry.type(entry.props));
+    const suspense = boundary.props.children,
+      loader = suspense.props.children;
+    if (boundary.key !== childKey) {
+      child.close();
+      child = hooks();
+      childKey = boundary.key;
+    }
+    activeHooks = child;
+    assert.equal(
+      typeof loader.type,
+      "function",
+      "Tasks must use an effect loader rather than first-render React.lazy suspension",
+    );
+    const body = child.render(() => loader.type(loader.props));
+    return (last = { boundary, suspense, loader, body });
+  }
+  return {
+    draw,
+    api: module.exports,
+    timers,
+    Loading,
+    imports: () => imports,
+    writes: () => writes,
+    retry: () => last.boundary.props.fallback.props.onRetry(),
+    describe(name, props = {}) {
+      activeHooks = panel;
+      const entry = module.exports[name](props);
+      return panel.render(() => entry.type(entry.props));
+    },
+    remount() {
+      child.close();
+      panel.close();
+      child = hooks();
+      panel = hooks();
+      childKey = undefined;
+      last = null;
+    },
+    close: () => {
+      child.close();
+      panel.close();
+    },
+  };
+}
+
+test("Tasks load on mount through ordinary state and render resolved code with current props", async () => {
+  const gate = deferred();
+  let mounts = 0;
+  function Task(props) {
+    const [owner] = React.useState(props.owner);
+    mounts++;
+    return React.createElement("p", null, owner);
+  }
+  const h = taskModuleHost(() => gate.promise);
+  try {
+    assert.equal(h.imports(), 0);
+    let x = h.draw({ owner: "OWNER_A" });
+    assert.equal(h.imports(), 1);
+    assert.equal(mounts, 0);
+    assert.equal(x.body.props.style.minBlockSize, 180);
+    assert.equal(x.body.props.children.type, h.Loading);
+    assert.equal(x.body.props.children.props.busy, true);
+    h.draw({ owner: "OWNER_B" });
+    gate.resolve({ default: Task });
+    await settle();
+    x = h.draw({ owner: "OWNER_B" });
+    assert.equal(x.body.type, Task);
+    assert.equal(h.imports(), 1);
+    assert.equal(mounts, 0, "loading code must not mount Task hooks");
+    const html = require("react-dom/server").renderToStaticMarkup(x.body);
+    assert.ok(html.includes("OWNER_B"));
+    assert.ok(!html.includes("OWNER_A"));
+    assert.equal(mounts, 1, "resolved element renders with the actual React renderer");
+  } finally {
+    h.close();
+  }
+});
+
+test("Task module rejection renders the fixed boundary error and retry remounts in place", async () => {
+  let rejectFirst;
+  const first = {
+      promise: new Promise((_, reject) => {
+        rejectFirst = reject;
+      }),
+    },
+    second = deferred();
+  let calls = 0;
+  const h = taskModuleHost(() => (++calls === 1 ? first.promise : second.promise));
+  const Task = () => null;
+  try {
+    const initial = h.draw({ session: "SAME_SESSION" });
+    rejectFirst(Error("RAW_CHUNK_FAILURE_SENTINEL"));
+    await settle();
+    assert.throws(
+      () => h.draw({ session: "SAME_SESSION" }),
+      (e) => e.message === "module_unavailable",
+    );
+    const boundary = new h.api.WorkspaceModuleBoundary(initial.boundary.props);
+    boundary.state = h.api.WorkspaceModuleBoundary.getDerivedStateFromError(
+      Error("module_unavailable"),
+    );
+    assert.equal(boundary.render(), initial.boundary.props.fallback);
+    assert.equal(boundary.render().props.message, "moduleUnavailable");
+    h.retry();
+    const retry = h.draw({ session: "SAME_SESSION" });
+    assert.notEqual(retry.boundary.key, initial.boundary.key);
+    assert.equal(h.imports(), 2);
+    second.resolve({ default: Task });
+    await settle();
+    const ready = h.draw({ session: "SAME_SESSION" });
+    assert.equal(ready.body.type, Task);
+    assert.equal(ready.body.props.session, "SAME_SESSION");
+    assert.equal(h.timers.size, 0);
+  } finally {
+    h.close();
+  }
+});
+
+test("Task module keeps the original15s deadline and late timed-out code cannot replace a retry", async () => {
+  const first = deferred(),
+    second = deferred();
+  let calls = 0;
+  const h = taskModuleHost(() => (++calls === 1 ? first.promise : second.promise));
+  const Old = () => null,
+    Current = () => null;
+  try {
+    h.draw();
+    assert.equal(h.timers.size, 1);
+    assert.equal([...h.timers.values()][0].ms, 15000);
+    [...h.timers.values()][0].fn();
+    await settle();
+    assert.throws(
+      () => h.draw(),
+      (e) => e.message === "module_unavailable",
+    );
+    h.retry();
+    h.draw();
+    second.resolve({ default: Current });
+    await settle();
+    assert.equal(h.draw().body.type, Current);
+    const writes = h.writes();
+    first.resolve({ default: Old });
+    await settle();
+    assert.equal(h.draw().body.type, Current);
+    assert.equal(h.writes(), writes);
+    assert.equal(h.imports(), 2);
+    assert.equal(h.timers.size, 0);
+  } finally {
+    h.close();
+  }
+});
+
+test("Task code sharing never retains an old mount or Owner props across unmount and remount", async () => {
+  for (const remountPending of [false, true]) {
+    const gate = deferred(),
+      h = taskModuleHost(() => gate.promise);
+    const Task = (props) => React.createElement("p", null, props.owner);
+    try {
+      h.draw({ owner: "OLD_OWNER" });
+      const writes = h.writes();
+      h.close();
+      if (remountPending) {
+        h.remount();
+        h.draw({ owner: "NEW_OWNER" });
+      }
+      gate.resolve({ default: Task });
+      await settle();
+      assert.equal(
+        h.writes() - writes,
+        remountPending ? 1 : 0,
+        "an old effect must not schedule state after unmount",
+      );
+      if (!remountPending) h.remount();
+      const x = h.draw({ owner: "NEW_OWNER" });
+      assert.equal(x.body.type, Task);
+      assert.equal(h.imports(), 1, "share only the code promise/success, not another import");
+      const html = require("react-dom/server").renderToStaticMarkup(x.body);
+      assert.ok(html.includes("NEW_OWNER"));
+      assert.ok(!html.includes("OLD_OWNER"));
+    } finally {
+      h.close();
+    }
+  }
+});
+
+test("a resolved Task component keeps the original real Suspense boundary for its children", async () => {
+  const suspended = deferred();
+  let mounts = 0;
+  function Task() {
+    mounts++;
+    throw suspended.promise;
+  }
+  const h = taskModuleHost(async () => ({ default: Task }));
+  try {
+    h.draw();
+    await settle();
+    const x = h.draw();
+    assert.equal(x.body.type, Task);
+    assert.equal(x.suspense.type, React.Suspense);
+    const fallback = React.createElement("span", null, "GENUINE_CHILD_FALLBACK");
+    assert.equal(mounts, 0, "code loading alone does not render the suspending Task");
+    const html = require("react-dom/server").renderToString(
+      React.cloneElement(x.suspense, { fallback }, x.body),
+    );
+    assert.ok(html.includes("GENUINE_CHILD_FALLBACK"));
+    assert.ok(mounts > 0);
+  } finally {
+    suspended.resolve();
+    h.close();
+  }
+});
+
+test("other workspace panels retain lazy loading and do not start a Task import", () => {
+  const h = taskModuleHost(() => {
+    throw Error("Task must not preload");
+  });
+  try {
+    for (const name of [
+      "SettingsPanel",
+      "ResourcesPanel",
+      "PersistentAgentsPanel",
+      "CandlestickChart",
+    ]) {
+      const boundary = h.describe(name),
+        suspense = boundary.props.children;
+      assert.equal(suspense.type, React.Suspense);
+      assert.equal(typeof suspense.props.children.type, "object", name);
+    }
+    assert.equal(h.imports(), 0);
+  } finally {
+    h.close();
+  }
+});
+
+test("a fulfilled Task module without a default component fails closed to the same retry", async () => {
+  const Task = () => null;
+  let reads = 0;
+  const h = taskModuleHost(async () => (++reads === 1 ? {} : { default: Task }));
+  try {
+    h.draw();
+    await settle();
+    assert.throws(
+      () => h.draw(),
+      (e) => e.message === "module_unavailable",
+    );
+    h.retry();
+    h.draw();
+    await settle();
+    assert.equal(h.draw().body.type, Task);
+    assert.equal(h.imports(), 2);
+  } finally {
+    h.close();
+  }
+});

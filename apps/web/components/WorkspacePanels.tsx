@@ -4,6 +4,7 @@ import {
   Component,
   Suspense,
   lazy,
+  useEffect,
   useMemo,
   useState,
   type ComponentProps,
@@ -48,6 +49,56 @@ export async function loadWorkspaceModule<T>(
   }
 }
 
+// Cache public code only. Task hooks still mount exclusively after navigation.
+let taskComponent: ComponentType<any> | null = null;
+let taskLoad: Promise<ComponentType<any>> | null = null;
+function loadTaskComponent() {
+  if (taskComponent) return Promise.resolve(taskComponent);
+  if (taskLoad) return taskLoad;
+  const attempt = loadWorkspaceModule(modules.tasks).then((module) => {
+    const Content = module.default;
+    if (!Content) throw Error("module_unavailable");
+    taskComponent = Content;
+    return Content;
+  });
+  taskLoad = attempt;
+  const release = () => {
+    if (taskLoad === attempt) taskLoad = null;
+  };
+  void attempt.then(release, release);
+  return attempt;
+}
+
+function TaskLoader(props: Record<string, any>) {
+  const t = useTranslations("workspaceFeedback");
+  const [ready, setReady] = useState(() => ({ Content: taskComponent, failed: false }));
+  useEffect(() => {
+    if (ready.Content) return;
+    let stopped = false;
+    void loadTaskComponent().then(
+      (Content) => {
+        if (!stopped) setReady({ Content, failed: false });
+      },
+      () => {
+        if (!stopped) setReady({ Content: null, failed: true });
+      },
+    );
+    return () => {
+      stopped = true;
+    };
+  }, []);
+  // Throw during child render so the existing boundary owns the in-place retry.
+  if (ready.failed) throw Error("module_unavailable");
+  const Content = ready.Content;
+  return Content ? (
+    <Content {...props} />
+  ) : (
+    <div style={{ minBlockSize: 180 }}>
+      <LoadingIndicator busy label={t("loading")} />
+    </div>
+  );
+}
+
 export class WorkspaceModuleBoundary extends Component<
   { children: ReactNode; fallback: ReactNode },
   { failed: boolean }
@@ -70,7 +121,10 @@ function Panel({
 }) {
   const t = useTranslations("workspaceFeedback");
   const [attempt, setAttempt] = useState(0);
-  const Content = useMemo(() => lazy(() => loadWorkspaceModule(modules[name])), [name, attempt]);
+  const Content = useMemo(
+    () => (name === "tasks" ? TaskLoader : lazy(() => loadWorkspaceModule(modules[name]))),
+    [name, attempt],
+  );
   return (
     <WorkspaceModuleBoundary
       key={`${name}:${attempt}`}
