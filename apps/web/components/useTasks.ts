@@ -467,6 +467,8 @@ export function useTasks(
       const readScope = `${owner}:${scope ?? "locked"}`;
       const fresh = freshReads.current[region];
       if (!force && fresh?.scope === readScope && Date.now() - fresh.at < 30000) return;
+      // A new metadata read owns name backfill until its validated receipt commits.
+      if (region === "tasks") delete freshReads.current.tasks;
       const serial = ++readSerial.current[region];
       const loading = region === "tasks" ? "loading" : "catalogueLoading";
       const failure = region === "tasks" ? "listError" : "catalogueError";
@@ -496,16 +498,15 @@ export function useTasks(
                 context,
                 { retryAdmission: true },
               ));
-            if (snapshot) {
-              context.assert();
-              inlinePackets.current.clear();
-              for (const row of snapshot.data.packets?.items ?? [])
-                inlinePackets.current.set(row.taskId, row);
-            }
             const data =
               region === "tasks" ? { items: taskPage(body) } : { catalogue: taskCatalogue(body) };
             context.assert();
             if (serial !== readSerial.current[region]) return;
+            if (snapshot) {
+              inlinePackets.current.clear();
+              for (const row of snapshot.data.packets?.items ?? [])
+                inlinePackets.current.set(row.taskId, row);
+            }
             freshReads.current[region] = { scope: readScope, at: snapshot?.at ?? Date.now() };
             if (data.items) {
               const selected = stateRef.current.selected;
@@ -1457,7 +1458,13 @@ export function useTasks(
     } else if (scope && visible) void operation(true, summaries).catch(fail);
   }, [active, scope, visible, operation, summaries, fail]);
   useEffect(() => {
+    if (owner && configured && active && visible) void reload(false);
+  }, [owner, configured, active, visible, scope, catalogueNeeded, reload]);
+  useEffect(() => {
     if (!scope || !visible || !active || state.privateScope !== scope) return;
+    const metadataReady = () =>
+      !overviewEnabled || freshReads.current.tasks?.scope === `${owner}:${scope}`;
+    if (!metadataReady()) return;
     if (nameLoader.current.scope !== scope)
       nameLoader.current = { scope, queue: [], running: 0, active: true };
     const loader = nameLoader.current;
@@ -1477,17 +1484,25 @@ export function useTasks(
           loader.queue.length &&
           live.current.scope === scope &&
           live.current.active &&
-          live.current.visible
+          live.current.visible &&
+          metadataReady()
         ) {
           const batch = loader.queue.splice(0, 4);
+          const receipt = overviewEnabled ? freshReads.current.tasks : null;
           const pendingKeys = new Set(batch.map(nameKey));
           for (const key of pendingKeys) namePending.current.add(key);
           try {
             await operation(true, async (context) => {
+              const assertNameRead = () => {
+                context.assert();
+                if (overviewEnabled && freshReads.current.tasks !== receipt)
+                  throw new TaskError("cancelled");
+              };
               let remaining = batch.map((item) => item.taskId);
               // The exact suffix must shrink on every response; at most four
               // requests even when large encrypted packets need smaller pages.
               while (remaining.length) {
+                assertNameRead();
                 const included = remaining.filter((id) => inlinePackets.current.has(id));
                 const page = included.length
                   ? {
@@ -1506,7 +1521,7 @@ export function useTasks(
                       }),
                       remaining,
                     );
-                context.assert();
+                assertNameRead();
                 for (const row of page.items) {
                   const item = batch.find((v) => v.taskId === row.taskId)!,
                     key = nameKey(item);
@@ -1515,7 +1530,7 @@ export function useTasks(
                     if (!sameTaskMetadata(row.packet.metadata, item))
                       throw new TaskError("version_conflict");
                     const content = await live.current.workspace.openTask(row.packet);
-                    context.assert();
+                    assertNameRead();
                     if (
                       stateRef.current.items.some((current) => nameKey(current) === key) &&
                       !hiddenTaskIds.current.has(item.taskId)
@@ -1524,7 +1539,7 @@ export function useTasks(
                       nameFailures.current.delete(key);
                     }
                   } catch (error) {
-                    context.assert();
+                    assertNameRead();
                     if (!names.current.get(key)) nameFailures.current.set(key, taskError(error));
                   } finally {
                     pendingKeys.delete(key);
@@ -1538,7 +1553,11 @@ export function useTasks(
               }
             });
           } catch (error) {
-            if (live.current.scope === scope && taskError(error) !== "cancelled")
+            if (
+              live.current.scope === scope &&
+              (!overviewEnabled || freshReads.current.tasks === receipt) &&
+              taskError(error) !== "cancelled"
+            )
               for (const item of batch)
                 if (!names.current.get(nameKey(item)))
                   nameFailures.current.set(nameKey(item), taskError(error));
@@ -1550,7 +1569,8 @@ export function useTasks(
                 nameLoader.current === loader &&
                 stateRef.current.privateScope === scope &&
                 live.current.active &&
-                live.current.visible
+                live.current.visible &&
+                metadataReady()
               )
                 loader.queue = stateRef.current.items.filter(
                   (item) =>
@@ -1574,7 +1594,19 @@ export function useTasks(
       loader.active = false;
       loader.queue = [];
     };
-  }, [scope, visible, active, state.items, state.privateScope, nameRetry, operation, api]);
+  }, [
+    scope,
+    visible,
+    active,
+    state.items,
+    state.privateScope,
+    state.loading,
+    nameRetry,
+    operation,
+    api,
+    owner,
+    overviewEnabled,
+  ]);
   useEffect(() => {
     if (
       scope &&
@@ -1591,9 +1623,6 @@ export function useTasks(
       }
     }
   }, [scope, visible, state.privateScope, state.selected, state.form, state.dirty]);
-  useEffect(() => {
-    if (owner && configured && active && visible) void reload(false);
-  }, [owner, configured, active, visible, scope, catalogueNeeded, reload]);
   useEffect(() => {
     if (state.privateScope === scope && state.form && state.dirty && active && visible)
       void persistDraft().catch(fail);

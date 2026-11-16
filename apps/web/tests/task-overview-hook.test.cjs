@@ -5,7 +5,7 @@ const { compile } = require("./resource-library-helpers.cjs"),
 const { types, overview, reader, inbox, providers } = require("./task-overview-helpers.cjs"),
   fixtures = require("./task-overview-fixtures.cjs");
 const tick = () => new Promise((r) => setImmediate(r));
-function harness({ count = 2, respond, open } = {}) {
+function harness({ count = 2, respond, open, overviewEnabled = true } = {}) {
   const ui = hooks(),
     calls = [],
     opens = [],
@@ -148,7 +148,11 @@ function harness({ count = 2, respond, open } = {}) {
   );
   const render = () =>
     ui.render(() => {
-      const m = tasks.useTasks(workspace, { active, catalogueOnDemand: true, overview: true });
+      const m = tasks.useTasks(workspace, {
+        active,
+        catalogueOnDemand: true,
+        overview: overviewEnabled,
+      });
       const c = center.useTaskCenter(workspace, active, m.selected, m.overview);
       const r = results.useTaskResults(workspace, undefined, m, active, "", c, m.overview);
       const tree = view.TaskCenterView({ workspace, model: m, center: c, resultState: r, active });
@@ -436,6 +440,303 @@ test("explicit metadata refresh during an overview cannot replay old metadata or
     assert.equal(h.calls.filter((c) => c.path.includes("/tasks?")).length, 1);
     assert.equal(x.m.overview.receipt, null, "superseded overview is not reusable cache");
   } finally {
+    h.close();
+  }
+});
+
+test("visible return waits for its metadata receipt and uses inline packets before requesting names", async () => {
+  let block = false,
+    release,
+    request;
+  const gate = new Promise((r) => (release = r));
+  const h = harness({
+    count: 3,
+    respond: (path, o) => {
+      if (block && path.endsWith("/overview/query")) {
+        request = o.json;
+        return gate;
+      }
+    },
+  });
+  try {
+    await h.ready();
+    const start = h.calls.length,
+      opens = h.opens.length;
+    h.hide(true);
+    h.advance(30001);
+    block = true;
+    h.hide(false);
+    const waiting = await h.ready();
+    assert.equal(
+      h.calls.slice(start).filter((c) => c.path === types.TASK_PACKET_QUERY).length,
+      0,
+      "retained old list items must wait for the current overview instead of duplicating its inline packets",
+    );
+    assert.equal(h.opens.length, opens);
+    assert.equal(waiting.m.listReady, false);
+    assert.notEqual(waiting.tree.props["data-load-state"], "ready");
+    release(Response.json(fixtures.body(request, 3)));
+    const done = await h.ready();
+    assert.equal(h.calls.length - start, 1);
+    assert.equal(Object.keys(done.m.taskNames).length, 3);
+    assert.equal(h.opens.length - opens, 3);
+    assert.equal(done.r.unreadCounts.task_1, 1);
+    assert.equal(
+      done.r.providerFor({
+        kind: "persistent",
+        metadata: fixtures.body().feeds.persistent.items[0],
+      }),
+      "muse",
+    );
+    assert.equal(done.tree.props["data-load-state"], "ready");
+  } finally {
+    release(Response.json(fixtures.body(request, 3)));
+    h.close();
+  }
+});
+
+test("visible overview fallback reads only uncovered names through strictly shrinking short pages", async () => {
+  for (const inline of ["full", "partial", "null"]) {
+    let block = false,
+      release,
+      request;
+    const gate = new Promise((r) => (release = r));
+    const h = harness({
+      count: 6,
+      respond: (path, o) => {
+        if (block && path.endsWith("/overview/query")) {
+          request = o.json;
+          return gate;
+        }
+        if (path === types.TASK_PACKET_QUERY) {
+          const ids = o.json.taskIds,
+            body = fixtures.batch(ids.slice(0, 1), fixtures.body(undefined, 6).tasks.items);
+          body.remainingTaskIds = ids.slice(1);
+          return Response.json(body);
+        }
+      },
+    });
+    try {
+      await h.ready();
+      h.hide(true);
+      h.advance(30001);
+      block = true;
+      const start = h.calls.length;
+      h.hide(false);
+      await h.ready();
+      assert.equal(
+        h.calls.slice(start).filter((c) => c.path === types.TASK_PACKET_QUERY).length,
+        0,
+      );
+      const response = fixtures.body(request, 6);
+      if (inline === "null") response.packets = null;
+      if (inline === "partial") {
+        const ids = overview.overviewPacketIds(response.tasks.items, request.knownPacketVersions);
+        response.packets = fixtures.batch(ids.slice(0, 1), response.tasks.items);
+        response.packets.remainingTaskIds = ids.slice(1);
+      }
+      release(Response.json(response));
+      let done = await h.ready();
+      for (let i = 0; i < 8 && Object.keys(done.m.taskNames).length !== 6; i++)
+        done = await h.ready();
+      const queries = h.calls.slice(start).filter((c) => c.path === types.TASK_PACKET_QUERY);
+      const served = new Set(
+        inline === "full"
+          ? ["task_1", "task_2", "task_3", "task_4"]
+          : inline === "partial"
+            ? ["task_1"]
+            : [],
+      );
+      assert.equal(
+        queries.length,
+        6 - served.size,
+        "one real suffix query per uncovered short-page item",
+      );
+      assert.ok(queries.every((c) => c.options.json.taskIds.every((id) => !served.has(id))));
+      assert.equal(
+        h.calls.slice(start).filter((c) => c.path.endsWith("/overview/query")).length,
+        1,
+      );
+      assert.equal(Object.keys(done.m.taskNames).length, 6);
+      assert.equal(done.tree.props["data-load-state"], "ready");
+    } finally {
+      release(Response.json(fixtures.body(request, 6)));
+      h.close();
+    }
+  }
+});
+
+test("failed metadata refresh retains the list without speculative name backfill and explicit list retry stays legacy", async () => {
+  let failed = false;
+  const h = harness({
+    count: 3,
+    respond: (path) =>
+      failed && path.endsWith("/overview/query") ? Response.json({}, { status: 503 }) : undefined,
+  });
+  try {
+    await h.ready();
+    h.hide(true);
+    h.advance(30001);
+    failed = true;
+    const start = h.calls.length;
+    h.hide(false);
+    let x = await h.ready();
+    assert.equal(x.m.items.length, 3, "keep the real prior task list visible");
+    assert.ok(x.m.listError);
+    assert.equal(Object.keys(x.m.taskNames).length, 0);
+    assert.equal(h.calls.slice(start).filter((c) => c.path === types.TASK_PACKET_QUERY).length, 0);
+    assert.equal(x.tree.props["data-load-state"], "error");
+    const retry = h.calls.length;
+    await x.m.reloadTasks();
+    x = await h.ready();
+    assert.equal(h.calls.slice(retry).filter((c) => c.path.includes("/tasks?")).length, 1);
+    assert.equal(h.calls.slice(retry).filter((c) => c.path.endsWith("/overview/query")).length, 0);
+    assert.equal(h.calls.slice(retry).filter((c) => c.path === types.TASK_PACKET_QUERY).length, 1);
+    assert.equal(Object.keys(x.m.taskNames).length, 3);
+  } finally {
+    h.close();
+  }
+});
+
+test("explicit name retry and overview-disabled task reads retain the original packet route", async () => {
+  let fail = true;
+  const h = harness({
+    open: (p) => {
+      if (fail && p.metadata.taskId === "task_2") throw Error("invalid_response");
+      return { name: `Name ${p.metadata.taskId}` };
+    },
+  });
+  try {
+    let x = await h.ready();
+    assert.ok(x.m.nameErrors.task_2);
+    const start = h.calls.length;
+    fail = false;
+    x.m.retryTaskName("task_2");
+    x = await h.ready();
+    assert.equal(h.calls.length - start, 1);
+    assert.equal(h.calls.at(-1).path, types.TASK_PACKET_QUERY);
+    assert.deepEqual(Array.from(h.calls.at(-1).options.json.taskIds), ["task_2"]);
+    assert.equal(x.m.taskNames.task_2, "Name task_2");
+  } finally {
+    h.close();
+  }
+  const legacy = harness({ overviewEnabled: false, count: 3 });
+  try {
+    const x = await legacy.ready();
+    assert.equal(legacy.calls.filter((c) => c.path.endsWith("/overview/query")).length, 0);
+    assert.equal(legacy.calls.filter((c) => c.path.includes("/tasks?")).length, 1);
+    assert.equal(legacy.calls.filter((c) => c.path === types.TASK_PACKET_QUERY).length, 1);
+    assert.equal(Object.keys(x.m.taskNames).length, 3);
+  } finally {
+    legacy.close();
+  }
+});
+
+test("a superseded name receipt cannot publish late Worker output or exceed the original two workers", async () => {
+  const releases = [];
+  let active = 0,
+    maximum = 0;
+  const h = harness({
+    count: 6,
+    open: (p) =>
+      new Promise((r) => {
+        active++;
+        maximum = Math.max(maximum, active);
+        releases.push((name = `Name ${p.metadata.taskId}`) => {
+          active--;
+          r({ name });
+        });
+      }),
+  });
+  try {
+    let x = await h.ready();
+    assert.equal(releases.length, 2);
+    await x.m.reloadTasks();
+    await h.ready();
+    releases.splice(0).forEach((r) => r("SUPERSEDED_NAME"));
+    x = await h.ready();
+    assert.equal(Object.keys(x.m.taskNames).length, 0);
+    assert.notEqual(x.tree.props["data-load-state"], "ready");
+    for (let i = 0; i < 8 && Object.keys(x.m.taskNames).length !== 6; i++) {
+      releases.splice(0).forEach((r) => r());
+      x = await h.ready();
+    }
+    assert.equal(Object.keys(x.m.taskNames).length, 6);
+    assert.ok(Object.values(x.m.taskNames).every((n) => n !== "SUPERSEDED_NAME"));
+    assert.equal(maximum, 2);
+  } finally {
+    h.active(false);
+    releases.splice(0).forEach((r) => r());
+    h.close();
+  }
+});
+
+test("late fallback packet replies cannot restore names after demand or private scope changes", async () => {
+  for (const boundary of ["inactive", "hidden", "owner", "vault", "lock"]) {
+    let release,
+      count = 0;
+    const gate = new Promise((r) => (release = r));
+    const h = harness({
+      respond: (path) => {
+        if (path.endsWith("/overview/query")) {
+          if (++count > 1) return new Promise(() => {});
+          const b = fixtures.body();
+          b.packets = null;
+          return Response.json(b);
+        }
+        if (path === types.TASK_PACKET_QUERY) return gate;
+      },
+    });
+    try {
+      await h.ready();
+      assert.equal(h.calls.filter((c) => c.path === types.TASK_PACKET_QUERY).length, 1);
+      if (boundary === "inactive") h.active(false);
+      else if (boundary === "hidden") h.hide(true);
+      else if (boundary === "owner") h.owner("owner_B");
+      else {
+        if (boundary === "vault") h.workspace.vaultGeneration++;
+        else h.workspace.phase = "locked";
+        h.render();
+      }
+      release(Response.json(fixtures.batch(["task_1", "task_2"], fixtures.body().tasks.items)));
+      const x = await h.ready();
+      assert.equal(h.opens.length, 0, boundary);
+      assert.equal(Object.keys(x.m.taskNames).length, 0, boundary);
+      assert.notEqual(x.tree.props["data-load-state"], "ready", boundary);
+    } finally {
+      release(Response.json(fixtures.batch(["task_1", "task_2"], fixtures.body().tasks.items)));
+      h.close();
+    }
+  }
+});
+
+test("an old packet failure cannot mark names unavailable under a newer metadata receipt", async () => {
+  let release,
+    packetReads = 0;
+  const gate = new Promise((r) => (release = r));
+  const h = harness({
+    respond: (path, o) => {
+      if (path.endsWith("/overview/query")) {
+        const b = fixtures.body(o.json);
+        b.packets = null;
+        return Response.json(b);
+      }
+      if (path === types.TASK_PACKET_QUERY && ++packetReads === 1) return gate;
+    },
+  });
+  try {
+    let x = await h.ready();
+    assert.equal(packetReads, 1);
+    await x.m.reloadTasks();
+    await h.ready();
+    release(Response.json({}, { status: 503 }));
+    x = await h.ready();
+    assert.equal(Object.keys(x.m.nameErrors).length, 0);
+    assert.equal(Object.keys(x.m.taskNames).length, 2);
+    assert.equal(packetReads, 2);
+    assert.equal(x.m.listReady, true);
+  } finally {
+    release(Response.json({}, { status: 503 }));
     h.close();
   }
 });
