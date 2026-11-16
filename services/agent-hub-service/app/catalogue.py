@@ -29,9 +29,10 @@ from folioview_shared.http import PrivateRoute
 from folioview_shared.identity import owner_key
 
 from .api import Owner, Service, _invoke, transport
+from .catalogue_paths import FenceKeyHints
 from .fences import _state, fence_path
 from .signing import _EMAIL, get_signer, origin
-from .store import document_path
+from .store import StoreUnavailable, document_path
 from .vaults import _verify_row
 
 PROFILE = "folioview.owner-resource-discovery.v1"
@@ -627,25 +628,60 @@ class CatalogueService:
 
     def _snapshot(self, uid, *, registry_cache=None):
         owner = owner_key(uid)
+        store = self.vaults.store
+        hints = getattr(store, "_catalogue_fence_keys", None)
+        if type(hints) is not FenceKeyHints:
+            hints = None
+        vault_path = document_path("hub_vaults", owner)
 
         def read(unit):
-            row = unit.get(document_path("hub_vaults", owner))
+            # Hints contain paths only. Every retry starts with a new SDK unit
+            # and reads these documents again in that attempt's fresh snapshot.
+            known = hints.get(owner) if hints is not None else None
+            loaded = unit.get_many([vault_path, *known]) if known is not None else {}
+            if known is not None and any(path not in loaded for path in (vault_path, *known)):
+                raise StoreUnavailable
+            row = loaded[vault_path] if known is not None else unit.get(vault_path)
             if row is None:
-                return {"vault": None, "sources": []}, None, False
+                return ({"vault": None, "sources": []}, None, False), None
             registry = _verify_row(
                 row, owner, self.vaults.now(), unit=unit, registry_cache=registry_cache
             )
-            fences = unit.get_many(
-                [fence_path(owner, source["resourceRef"]) for source in row["sources"]]
-            )
+            paths = tuple(fence_path(owner, source["resourceRef"]) for source in row["sources"])
+            missing = [path for path in paths if path not in loaded]
+            if missing:
+                loaded.update(unit.get_many(missing))
+            if any(path not in loaded for path in paths):
+                raise StoreUnavailable
+            # Old hints never influence actual scope or returned source data.
+            fences = {path: loaded[path] for path in paths}
 
             return (
-                _context(row, registry, owner, fences),
-                _scope(owner, row, registry),
-                row["archive"] is not None,
+                (
+                    _context(row, registry, owner, fences),
+                    _scope(owner, row, registry),
+                    row["archive"] is not None,
+                ),
+                paths,
             )
 
-        return self.vaults.store.transact(read)
+        try:
+            result, paths = store.transact(read)
+        except Exception:
+            # An obsolete hinted document may itself be physically corrupt.
+            # Keep this failure closed, but let the next explicit retry start
+            # without those hints. Never retry or hide a transaction error here.
+            if hints is not None:
+                hints.discard(owner)
+            raise
+        # Publish only after the complete successful transaction, never from an
+        # aborted or invalid attempt. This does not retain its rows or proof.
+        if hints is not None:
+            if paths is None:
+                hints.discard(owner)
+            else:
+                hints.remember(owner, paths)
+        return result
 
     def read(self, uid):
         clock = self.sources.clock

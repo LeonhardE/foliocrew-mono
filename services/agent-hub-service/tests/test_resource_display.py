@@ -176,6 +176,9 @@ class ResourceDisplayTests(unittest.TestCase):
                         self.f.kid("device_sig"),
                     )
                 created = count
+                # Keep this original cold-path counter independent of earlier
+                # subtests. Warm path hints have their own exact SDK regression.
+                self.firestore._catalogue_fence_keys.discard(self.f.owner)
                 self.rpc.calls.clear()
                 self.service(self.firestore).read(UID)
                 gets = [args for kind, args in self.rpc.calls if kind == "get"]

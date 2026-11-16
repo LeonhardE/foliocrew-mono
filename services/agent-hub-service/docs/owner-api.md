@@ -236,6 +236,18 @@ returned freshly rather than reusing an earlier alias. Transaction retries reche
 history verification is reused only inside this read; no owner, source, authority or name TTL is
 added. The response is still not globally atomic across Hub, User and Portfolio.
 
+Each Store also keeps at most 64 owner-partitioned, immutable tuples of up to ten source-fence
+document paths, expiring five minutes after a successful directory read. These are path hints
+only: no document, Root proof, source state or permission decision is retained. A hit lets the
+first read batch the fixed authenticated Owner Vault path with those keys. Every transaction
+attempt still reads fresh documents and verifies the complete current Vault/Root/history and
+clock. It derives the real source-fence paths from that verified row, reads any missing paths
+in the same transaction and discards obsolete hints. Only those real paths reach the original
+fence validator. New tuples are published only after a successful transaction. The final
+Vault/fence/name snapshot and every scope/context comparison above remain unchanged. A missing,
+expired or unsupported hint cache follows the original read path; no client selector, protocol,
+authorization TTL, database write or background refresh is introduced.
+
 Every original component is validated and receives its original response budget before the
 complete envelope receives the unchanged 1 MiB read limit. Only overflow of that last aggregate
 check returns the small explicit response
@@ -252,6 +264,11 @@ must not turn that same status into a successful independent-read fallback.
 For an active Vault with one to ten sources, real SDK regression tests cover two read transactions
 and three BatchGet legs (`1`, `N`, `1+2N` documents), compared with three transactions and six
 legs for the independent catalogue and name listing. Capabilities itself has no Root read.
+With matching Store-local path hints, the same two transactions use two BatchGet legs
+(`1+N`, `1+2N` documents). Changed keys are freshly derived and supplemented in the first
+transaction; the union of initial Vault/fence keys and missing real fence keys is at most 21.
+Existing archive-removal lifecycle verification is unchanged and can require its original
+separate lifecycle read. No lifecycle row is placed in the path-hint cache.
 This reduces repeated Hub reads and HTTP calls; it does not establish a two-second UI result or
 remove external producer latency. The original cooperative deadline and blocking-SDK cancellation
 limits above still apply. No detached worker, producer prewarm, write, increased byte budget or
