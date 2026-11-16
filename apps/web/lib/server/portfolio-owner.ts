@@ -23,7 +23,6 @@ import {
   carrier,
   signedObject,
   createFirebaseVerifier,
-  createAdmission,
   forwardResponse,
   proxyClock,
   timeProxyResponse,
@@ -237,7 +236,6 @@ export function createPortfolioProxy(options: Options = {}) {
   const send = options.fetch ?? fetch;
   const now = options.now ?? Date.now;
   const verifyOwner = createFirebaseVerifier(send, now);
-  const admission = createAdmission(now);
   let serviceToken: { audience: string; token: string; until: number } | undefined;
   let tokenFlight: { audience: string; promise: Promise<string> } | undefined;
 
@@ -291,19 +289,15 @@ export function createPortfolioProxy(options: Options = {}) {
 
   return async function portfolioProxy(request: Request): Promise<Response> {
     const started = proxyClock();
-    let releaseGlobal: (() => void) | undefined;
-    let releaseOwner: (() => void) | undefined;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), options.deadlineMs ?? 12000);
     const signal = AbortSignal.any([request.signal, controller.signal]);
     try {
-      releaseGlobal = admission.enter();
       const config = portfolioConfiguration(env);
       if (!config) fail("authorization_unavailable");
       const { path, rule } = ruleFor(request);
       const { headers, raw, token, viewExpected } = await transport(request, rule, signal);
       const uid = await verifyOwner(token, config!.project, signal);
-      releaseOwner = admission.owner(uid);
       headers.set("X-Serverless-Authorization", `Bearer ${await until(identity(config!), signal)}`);
       const response = await until(
         send(config!.origin + path, {
@@ -353,15 +347,10 @@ export function createPortfolioProxy(options: Options = {}) {
       );
     } catch (error) {
       return timeProxyResponse(
-        errorResponse(
-          error instanceof Failure ? error.code : "authorization_unavailable",
-          error instanceof Failure ? error.admissionRetrySeconds : undefined,
-        ),
+        errorResponse(error instanceof Failure ? error.code : "authorization_unavailable"),
         started,
       );
     } finally {
-      releaseOwner?.();
-      releaseGlobal?.();
       clearTimeout(timer);
     }
   };

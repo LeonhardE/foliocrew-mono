@@ -936,30 +936,41 @@ test("deadline includes upstream body; cancellation and response overrun remain 
   await error(await over.proxy(request()), 503, "authorization_unavailable");
 });
 
-test("owner rate bound is per UID and independent of Portfolio", async () => {
+test("incident normal-read timing sequence no longer stops at the thirty-first request", async () => {
+  // Relative times from the metadata-only incident. Use a synthetic, authenticated
+  // Vault GET: the removed counter was route-independent. No live IDs or tokens.
+  const offsets = [
+    0.0, 120.143, 1099.35, 1169.208, 2505.496, 2505.722, 3416.87, 3982.305, 4876.342, 5859.371,
+    6940.273, 7201.463, 8109.433, 8529.824, 9348.279, 10762.599, 11868.52, 12593.535, 13357.533,
+    15863.963, 16488.489, 17305.632, 17306.366, 18209.004, 18787.026, 19520.609, 19610.888,
+    20409.138, 21228.791, 21738.918, 22458.7,
+  ];
   let now = NOW;
   const h = harness({ now: () => now });
-  for (let n = 0; n < 30; n++) assert.equal((await h.proxy(request())).status, 200);
-  const blocked = await h.proxy(request());
-  assert.equal(blocked.headers.get("retry-after"), "60");
-  assert.equal(blocked.headers.get("x-folioview-admission-retry"), "safe");
-  await error(blocked, 503, "authorization_unavailable");
-  assert.equal(h.hub().length, 30);
-  now += 30000;
-  const stillBlocked = await h.proxy(request());
-  assert.equal(stillBlocked.headers.get("retry-after"), "30");
-  await error(stillBlocked, 503, "authorization_unavailable");
-  assert.equal(h.hub().length, 30);
+  for (const offset of offsets) {
+    now = NOW + offset;
+    const reply = await h.proxy(request());
+    assert.equal(reply.status, 200);
+    assert.equal(reply.headers.get("x-folioview-admission-retry"), null);
+  }
+  assert.equal(h.hub().length, 31);
+});
+
+test("120 normal Hub reads across tabs do not receive application minute quotas", async () => {
+  let now = NOW;
+  const h = harness({ now: () => now });
+  for (let n = 0; n < 120; n++) {
+    now = NOW + n * 250;
+    assert.equal((await h.proxy(request())).status, 200);
+  }
+  assert.equal(h.hub().length, 120);
   assert.equal(
     (await h.proxy(request(undefined, { auth: await token({ sub: "owner_B" }) }))).status,
     200,
   );
-  assert.equal(h.hub().length, 31);
-  now += 30000;
-  const resumed = await h.proxy(request());
-  assert.equal(resumed.status, 200);
-  assert.equal(resumed.headers.get("x-folioview-admission-retry"), null);
-  assert.equal(h.hub().length, 32);
+  now += 60001;
+  assert.equal((await h.proxy(request())).status, 200);
+  assert.equal(h.hub().length, 122);
 });
 
 test("upstream errors cannot forge a safe pre-forward admission retry", async () => {
