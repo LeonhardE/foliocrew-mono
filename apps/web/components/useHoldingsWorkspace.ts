@@ -27,6 +27,13 @@ import {
   type HoldingsView,
 } from "@/lib/holdings-view";
 import { WorkspaceDisplayCache, boundedJson, untilSignal } from "@/lib/workspace-cache";
+import {
+  resourceDisplaySnapshot,
+  verifiedDisplayVault,
+  type VerifiedDisplayVault,
+  type ResourceDisplayAccess,
+  type ResourceDisplaySnapshot,
+} from "@/lib/resource-display";
 import { EncryptedVaultSession } from "@/lib/encrypted-vault";
 import {
   createVaultPasskey,
@@ -143,6 +150,7 @@ type State = {
   phase: Phase;
   busy: Busy;
   vault: Vault | null;
+  verifiedDisplay: VerifiedDisplayVault | null;
   sources: Source[];
   selectedSourceId: string | null;
   newSource: boolean;
@@ -209,6 +217,7 @@ const empty: State = {
   phase: "checking",
   busy: null,
   vault: null,
+  verifiedDisplay: null,
   sources: [],
   selectedSourceId: null,
   newSource: false,
@@ -476,6 +485,8 @@ export function useHoldingsWorkspace() {
   capabilitiesRef.current = { hub: configured, portfolio: auth.portfolioConfigured };
   const ownerRef = useRef(owner);
   ownerRef.current = owner;
+  const uidRef = useRef(uid);
+  uidRef.current = uid;
   const [state, setState] = useState<State>(empty);
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -810,6 +821,31 @@ export function useHoldingsWorkspace() {
       return session.current.instance;
     },
     [owner],
+  );
+
+  const proveResourceDisplay = useCallback(
+    async (
+      snapshot: ResourceDisplaySnapshot,
+      sources: Source[],
+      instance: EncryptedVaultSession,
+      assertActive: () => void,
+    ) => {
+      const generation = vaultGeneration.current;
+      const proof =
+        owner && uid
+          ? await verifiedDisplayVault(snapshot, sources, owner, uid, generation, instance)
+          : null;
+      assertActive();
+      if (
+        ownerRef.current !== owner ||
+        uidRef.current !== uid ||
+        session.current?.instance !== instance ||
+        vaultGeneration.current !== generation
+      )
+        throw new WorkspaceError("cancelled");
+      return proof;
+    },
+    [owner, uid],
   );
 
   const sync = useCallback(
@@ -1370,19 +1406,28 @@ export function useHoldingsWorkspace() {
             const refreshed = await readCurrent(signal);
             assertActive();
             if (!refreshed.vault) throw new WorkspaceError("invalid_response");
-            const resultAccess = readOnly
-              ? await instance.acceptResultVault(refreshed.vault)
-              : null;
-            if (!readOnly) await instance.acceptVault(refreshed.vault);
-            const keyManagement = await instance.deviceManagement(refreshed.vault);
-            const deviceChange = await instance.loadDeviceChange(refreshed.vault);
+            const privateDisplayVault = resourceDisplaySnapshot(refreshed.vault);
+            const displayVault = privateDisplayVault?.vault ?? refreshed.vault;
+            const resultAccess = readOnly ? await instance.acceptResultVault(displayVault) : null;
+            if (!readOnly) await instance.acceptVault(displayVault);
+            const keyManagement = await instance.deviceManagement(displayVault);
+            const deviceChange = await instance.loadDeviceChange(displayVault);
             const sourceCreation = await instance.loadSourceCreation();
             assertActive();
+            const verifiedDisplay = privateDisplayVault
+              ? await proveResourceDisplay(
+                  privateDisplayVault,
+                  refreshed.sources,
+                  instance,
+                  assertActive,
+                )
+              : null;
             setState((previous) => ({
               ...previous,
               phase: "unlocked",
               sourceCreationId: sourceCreation?.sourceId ?? null,
-              vault: refreshed.vault,
+              vault: displayVault,
+              verifiedDisplay,
               sources: refreshed.sources,
               canWriteState: readOnly ? Boolean(resultAccess?.canWriteState) : true,
               keyManagement,
@@ -1430,6 +1475,7 @@ export function useHoldingsWorkspace() {
       uid,
       reconcileArchiveDeletion,
       ownerSession,
+      proveResourceDisplay,
     ],
   );
 
@@ -1445,22 +1491,33 @@ export function useHoldingsWorkspace() {
       if (uid && result.vault?.archive && EncryptedVaultSession.supportsSharedUnlock?.()) {
         const instance = ownerSession(uid);
         session.current = { owner: owner!, instance };
-        const access = await instance.resumeUnlock(result.vault);
+        const privateDisplayVault = resourceDisplaySnapshot(result.vault);
+        const displayVault = privateDisplayVault?.vault ?? result.vault;
+        const access = await instance.resumeUnlock(displayVault);
         assertActive();
         if (access) {
-          const lifecycle = await readLifecycle(result.vault, signal);
-          await instance.verifyLifecycle(result.vault, lifecycle);
-          const archiveChange = await instance.getArchiveChange(result.vault, lifecycle);
+          const lifecycle = await readLifecycle(displayVault, signal);
+          await instance.verifyLifecycle(displayVault, lifecycle);
+          const archiveChange = await instance.getArchiveChange(displayVault, lifecycle);
           if (archiveChange) throw new WorkspaceError("archive_session_stale");
-          const keyManagement = await instance.deviceManagement(result.vault);
-          const deviceChange = await instance.loadDeviceChange(result.vault);
+          const keyManagement = await instance.deviceManagement(displayVault);
+          const deviceChange = await instance.loadDeviceChange(displayVault);
           const sourceCreation = await instance.loadSourceCreation();
           assertActive();
+          const verifiedDisplay = privateDisplayVault
+            ? await proveResourceDisplay(
+                privateDisplayVault,
+                result.sources,
+                instance,
+                assertActive,
+              )
+            : null;
           setState({
             ...empty,
             owner,
             phase: "unlocked",
-            vault: result.vault,
+            vault: displayVault,
+            verifiedDisplay,
             sources: result.sources,
             canWriteState: access.canWriteState,
             keyManagement,
@@ -1491,6 +1548,7 @@ export function useHoldingsWorkspace() {
     reconcileArchiveDeletion,
     unlock,
     ownerSession,
+    proveResourceDisplay,
   ]);
 
   useEffect(() => {
@@ -1535,14 +1593,25 @@ export function useHoldingsWorkspace() {
           const result = await readCurrent(signal);
           assertActive();
           if (!result.vault) throw new WorkspaceError("invalid_response");
-          await instance.acceptVault(result.vault);
-          await instance.verifyLifecycle(result.vault, await readLifecycle(result.vault, signal));
-          const keyManagement = await instance.deviceManagement(result.vault);
+          const privateDisplayVault = resourceDisplaySnapshot(result.vault);
+          const displayVault = privateDisplayVault?.vault ?? result.vault;
+          await instance.acceptVault(displayVault);
+          await instance.verifyLifecycle(displayVault, await readLifecycle(displayVault, signal));
+          const keyManagement = await instance.deviceManagement(displayVault);
           assertActive();
+          const verifiedDisplay = privateDisplayVault
+            ? await proveResourceDisplay(
+                privateDisplayVault,
+                result.sources,
+                instance,
+                assertActive,
+              )
+            : null;
           setState((previous) => ({
             ...previous,
             phase: "unlocked",
-            vault: result.vault,
+            vault: displayVault,
+            verifiedDisplay,
             sources: result.sources,
             notice: "vault_created",
             canWriteState: true,
@@ -1556,7 +1625,17 @@ export function useHoldingsWorkspace() {
           if (material.secret.byteLength) new Uint8Array(material.secret).fill(0);
         }
       }),
-    [ownerSession, api, owner, perform, readCurrent, readLifecycle, terminate, uid],
+    [
+      ownerSession,
+      api,
+      owner,
+      perform,
+      readCurrent,
+      readLifecycle,
+      terminate,
+      uid,
+      proveResourceDisplay,
+    ],
   );
 
   const importFile = useCallback(
@@ -2665,11 +2744,13 @@ export function useHoldingsWorkspace() {
         : await readCurrent(signal);
       assertInboxSession(instance, generation);
       if (signal.aborted || !refreshed.vault) throw new WorkspaceError("invalid_response");
+      const privateDisplayVault = resourceDisplaySnapshot(refreshed.vault);
+      const displayVault = privateDisplayVault?.vault ?? refreshed.vault;
       let access: { canWriteState: boolean };
       try {
         access = forState
-          ? (await instance.acceptVault(refreshed.vault), { canWriteState: true })
-          : await instance.acceptResultVault(refreshed.vault);
+          ? (await instance.acceptVault(displayVault), { canWriteState: true })
+          : await instance.acceptResultVault(displayVault);
       } catch (error) {
         if (
           [
@@ -2686,6 +2767,12 @@ export function useHoldingsWorkspace() {
       }
       assertInboxSession(instance, generation);
       if (signal.aborted) throw new WorkspaceError("cancelled");
+      const verifiedDisplay = privateDisplayVault
+        ? await proveResourceDisplay(privateDisplayVault, refreshed.sources, instance, () => {
+            assertInboxSession(instance, generation);
+            if (signal.aborted) throw new WorkspaceError("cancelled");
+          })
+        : null;
       const selected = stateRef.current.sourceMetadata?.source;
       const currentSource =
         selected &&
@@ -2695,14 +2782,15 @@ export function useHoldingsWorkspace() {
       if (changedSource) displayCache.current.holdings.clear();
       setState((previous) => ({
         ...previous,
-        vault: refreshed.vault,
+        vault: displayVault,
+        verifiedDisplay,
         sources: refreshed.sources,
         canWriteState: access.canWriteState,
         ...(changedSource ? { content: null, sourceMetadata: null } : {}),
       }));
-      return refreshed.vault;
+      return displayVault;
     },
-    [api, assertInboxSession, liveSession, readCurrent],
+    [api, assertInboxSession, liveSession, readCurrent, proveResourceDisplay],
   );
 
   const openResult = useCallback(
@@ -3301,16 +3389,22 @@ export function useHoldingsWorkspace() {
         assertActive();
         assertKeySession(instance, managementGeneration);
         if (!saved.vault) throw new WorkspaceError("invalid_response");
-        await instance.acceptVault(saved.vault);
-        const next = await keySnapshot(instance, saved.vault);
+        const privateDisplayVault = resourceDisplaySnapshot(saved.vault);
+        const displayVault = privateDisplayVault?.vault ?? saved.vault;
+        await instance.acceptVault(displayVault);
+        const next = await keySnapshot(instance, displayVault);
         assertActive();
         assertKeySession(instance, managementGeneration);
         ++vaultGeneration.current;
+        const verifiedDisplay = privateDisplayVault
+          ? await proveResourceDisplay(privateDisplayVault, saved.sources, instance, assertActive)
+          : null;
         setState((previous) => ({
           ...previous,
           ...next,
           phase: "unlocked",
-          vault: saved.vault,
+          vault: displayVault,
+          verifiedDisplay,
           sources: saved.sources,
           needsDeviceApproval: false,
           canWriteState: next.keyManagement.canManage,
@@ -3340,6 +3434,7 @@ export function useHoldingsWorkspace() {
       readCurrent,
       readSaved,
       enrollmentCheckpoint,
+      proveResourceDisplay,
     ],
   );
   const verifyRecovery = useCallback(
@@ -4930,12 +5025,36 @@ export function useHoldingsWorkspace() {
       : null,
   );
   const visible = owner && configured && state.owner === owner ? state : { ...empty, owner };
+  const { verifiedDisplay: _privateDisplay, ...publicVisible } = visible;
+  const displayCurrent = () => ({
+    owner: ownerRef.current,
+    uid: uidRef.current,
+    generation: vaultGeneration.current,
+    session: session.current?.owner === ownerRef.current ? session.current.instance : null,
+    eligible: Boolean(
+      owner &&
+      configured &&
+      stateRef.current.owner === owner &&
+      stateRef.current.phase === "unlocked" &&
+      !stateRef.current.needsDeviceApproval,
+    ),
+    vault: stateRef.current.vault,
+    sources: stateRef.current.sources,
+    proof: stateRef.current.verifiedDisplay,
+  });
+  const prepareResourceDisplay = () =>
+    stateRef.current.verifiedDisplay?.context(displayCurrent) ?? null;
+  const resourceDisplay: ResourceDisplayAccess = {
+    readKey: prepareResourceDisplay()?.coalesceScope ?? null,
+    prepare: prepareResourceDisplay,
+  };
   return {
     providerSlotsSupported: true,
     displayCache: displayCache.current,
     contentRefreshing: state.busy === "reading" && Boolean(state.content),
     contentStale: Boolean(state.error && state.content),
-    ...visible,
+    ...publicVisible,
+    resourceDisplay,
     sourceMetadata: visible.phase === "unlocked" ? visible.sourceMetadata : null,
     sourceReview: visible.phase === "unlocked" ? visible.sourceReview : null,
     sourceMutation: visible.phase === "unlocked" ? visible.sourceMutation : null,
@@ -5117,10 +5236,20 @@ export function useHoldingsWorkspace() {
         assertActive();
         const source = selectedSource(fresh.sources, stateRef.current.selectedSourceId);
         if (!fresh.vault || !source) return;
-        await instance.acceptVault(fresh.vault);
+        const privateDisplayVault = resourceDisplaySnapshot(fresh.vault);
+        const displayVault = privateDisplayVault?.vault ?? fresh.vault;
+        await instance.acceptVault(displayVault);
         assertActive();
-        setState((previous) => ({ ...previous, vault: fresh.vault, sources: fresh.sources }));
-        await readSaved(source, signal, assertActive, false, fresh.vault);
+        const verifiedDisplay = privateDisplayVault
+          ? await proveResourceDisplay(privateDisplayVault, fresh.sources, instance, assertActive)
+          : null;
+        setState((previous) => ({
+          ...previous,
+          vault: displayVault,
+          verifiedDisplay,
+          sources: fresh.sources,
+        }));
+        await readSaved(source, signal, assertActive, false, displayVault);
       }),
   };
 }

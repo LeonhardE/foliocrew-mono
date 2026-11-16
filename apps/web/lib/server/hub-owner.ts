@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { readResourceDisplay, RESOURCE_DISPLAY_PATH } from "../resource-display";
 import "server-only";
 import { taskOverviewRequest } from "../task-overview-request";
 import { parseTaskOverview, overviewPacketIds } from "../task-overview";
@@ -179,6 +181,13 @@ function route(request: Request): { path: string; rule: Rule } {
   let rule: Rule | undefined;
   const center = taskCenterRoute(path, request.method);
   const persistent = persistentOwnerRoute(path, request.method);
+  if (
+    get &&
+    path === RESOURCE_DISPLAY_PATH &&
+    (request.headers.has("x-serverless-authorization") ||
+      request.headers.has("x-folioview-delegation"))
+  )
+    fail("insufficient_scope");
   if (center) rule = center;
   else if (persistent) rule = persistent;
   else if (
@@ -617,43 +626,55 @@ export function createHubProxy(options: Options = {}) {
       }
       return timeProxyResponse(
         await forwardResponse(response, signal, (body) =>
-          rule.kind === "task-overview"
-            ? overviewResponse(path, body, overviewRequest)
-            : /^\/api\/v3\/provider-connections\/[^/]+\/display$/.test(path)
-              ? displayResponse(path, body)
-              : /^\/api\/v3\/provider-connections\/[^/]+\/summary$/.test(path)
-                ? summaryResponse(path, body)
-                : taskCenterRoute(path, request.method)
-                  ? taskCenterResponse(path, body, headers.get("idempotency-key") ?? undefined) &&
-                    (!path.startsWith("/api/v3/provider-connections/") ||
-                      !record(body) ||
-                      !("credentialReceipt" in body) ||
-                      body.credentialReceipt === null ||
-                      credentialReceipt(
-                        body.credentialReceipt,
-                        headers.get("idempotency-key") ?? path.split("/operations/")[1],
-                      ))
-                  : rule.cancel
-                    ? cancellationResponse(
-                        "task",
-                        body,
-                        rule.cancel.slot,
-                        rule.cancel.id ?? headers.get("idempotency-key") ?? undefined,
-                      )
-                    : persistentOwnerRoute(path.split("?", 1)[0], request.method)
-                      ? persistentResponse(
-                          path,
-                          request.method,
+          path === RESOURCE_DISPLAY_PATH
+            ? (() => {
+                try {
+                  const display = readResourceDisplay(body);
+                  return (
+                    display.mode === "separate" ||
+                    display.scope.ownerSubject === createHash("sha256").update(uid).digest("hex")
+                  );
+                } catch {
+                  return false;
+                }
+              })()
+            : rule.kind === "task-overview"
+              ? overviewResponse(path, body, overviewRequest)
+              : /^\/api\/v3\/provider-connections\/[^/]+\/display$/.test(path)
+                ? displayResponse(path, body)
+                : /^\/api\/v3\/provider-connections\/[^/]+\/summary$/.test(path)
+                  ? summaryResponse(path, body)
+                  : taskCenterRoute(path, request.method)
+                    ? taskCenterResponse(path, body, headers.get("idempotency-key") ?? undefined) &&
+                      (!path.startsWith("/api/v3/provider-connections/") ||
+                        !record(body) ||
+                        !("credentialReceipt" in body) ||
+                        body.credentialReceipt === null ||
+                        credentialReceipt(
+                          body.credentialReceipt,
+                          headers.get("idempotency-key") ?? path.split("/operations/")[1],
+                        ))
+                    : rule.cancel
+                      ? cancellationResponse(
+                          "task",
                           body,
-                          headers.get("idempotency-key") ?? undefined,
+                          rule.cancel.slot,
+                          rule.cancel.id ?? headers.get("idempotency-key") ?? undefined,
                         )
-                      : hubResponse(
-                          path,
-                          request.method,
-                          body,
-                          headers.get("idempotency-key") ?? undefined,
-                          taskIds,
-                        ),
+                      : persistentOwnerRoute(path.split("?", 1)[0], request.method)
+                        ? persistentResponse(
+                            path,
+                            request.method,
+                            body,
+                            headers.get("idempotency-key") ?? undefined,
+                          )
+                        : hubResponse(
+                            path,
+                            request.method,
+                            body,
+                            headers.get("idempotency-key") ?? undefined,
+                            taskIds,
+                          ),
         ),
         started,
       );

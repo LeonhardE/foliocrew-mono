@@ -43,6 +43,10 @@ function compile(file, imports = {}, globals = {}) {
     module,
     exports: module.exports,
     require(name) {
+      if (["@/lib/resource-display", "../resource-display"].includes(name))
+        return require("./resource-library-helpers.cjs").compile("../lib/resource-display.ts");
+      if (name === "../display-name-contract")
+        return require("./resource-library-helpers.cjs").compile("../lib/display-name-contract.ts");
       if (name === "./WorkspacePanels")
         return require("./workspace-panel-helpers.cjs").panelStandins(imports);
       if (["./WorkspaceFeedback", "./ReportDialog"].includes(name))

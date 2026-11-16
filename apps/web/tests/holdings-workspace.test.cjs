@@ -23,6 +23,13 @@ const compile = (file, imports, globals = {}) => {
     Uint8Array,
     AbortController,
     require: (name) => {
+      if (["@/lib/resource-display", "../resource-display"].includes(name))
+        return (
+          imports[name] ??
+          require("./resource-library-helpers.cjs").compile("../lib/resource-display.ts")
+        );
+      if (name === "../display-name-contract")
+        return require("./resource-library-helpers.cjs").compile("../lib/display-name-contract.ts");
       if (name === "@/lib/holdings-view") return require("./holdings-view-helpers.cjs");
       if (name === "@/lib/workspace-cache") return cacheContracts;
       if (name === "@/lib/holdings-facts")
@@ -151,6 +158,10 @@ function harness({
   sharedUnlock = false,
   sharedResume = false,
   viewMode = "sync_required",
+  sessionOverrides,
+  passkeyMaterial,
+  displayModule,
+  metadataIdentity = false,
 } = {}) {
   let viewReply = null;
   const requests = [];
@@ -336,6 +347,7 @@ function harness({
       this.uid = uid;
       this.locked = false;
       instances.push(this);
+      if (sessionOverrides) Object.assign(this, sessionOverrides(this));
     }
     lock() {
       this.locked = true;
@@ -888,7 +900,10 @@ function harness({
         }),
       );
     }
-    if (route === "/api/v2/vaults/vault_a/archive") {
+    if (
+      route === "/api/v2/vaults/vault_a/archive" ||
+      (metadataIdentity && route === `/api/v2/vaults/${remoteVault.vaultId}/archive`)
+    ) {
       if (options.method === "PUT") {
         if (archiveFailure !== "before") {
           archiveApplied = true;
@@ -1124,9 +1139,9 @@ function harness({
         JSON.stringify({
           contractVersion: CONTRACT,
           resourceRef: selected.resourceRef,
-          ownerSubject: "a".repeat(64),
+          ownerSubject: metadataIdentity ? remoteVault.archive.ownerSubject : "a".repeat(64),
           sourceId: selected.resourceRef.resourceId,
-          vaultId: "vault_a",
+          vaultId: metadataIdentity ? remoteVault.vaultId : "vault_a",
           authorityVersion: meta.authorityVersion,
           state: meta.state,
           pendingMutationId: meta.pendingMutationId,
@@ -1179,6 +1194,7 @@ function harness({
     "../components/useHoldingsWorkspace.ts",
     {
       react: React,
+      "@/lib/resource-display": displayModule,
       "@/components/AuthProvider": {
         useAuth: () => ({
           ...auth,
@@ -1359,7 +1375,11 @@ function harness({
       readFailure = status;
     },
     resolvePasskey() {
-      passkey.resolve({ credentialId: "credential", prfSalt: "salt", secret: new ArrayBuffer(32) });
+      passkey.resolve(
+        passkeyMaterial
+          ? passkeyMaterial()
+          : { credentialId: "credential", prfSalt: "salt", secret: new ArrayBuffer(32) },
+      );
     },
     rejectPasskey(code) {
       passkey.reject({ code });
@@ -4230,5 +4250,280 @@ test("actual source-mutation journals before or during a view preserve the origi
     } finally {
       h.unmount();
     }
+  }
+});
+
+async function displayControllerFixture({ shared = false, readonly = false, displayModule } = {}) {
+  const fixture = await require("./resource-display-fixtures.cjs").fixture("owner_a"),
+    { runtime, owner } = fixture;
+  if (readonly) {
+    const summary = (await owner.session.deviceManagement(owner.vault)).summary;
+    owner.time(Math.max(...summary.devices.map((d) => d.expiresAt)) + 1);
+    assert.equal((await owner.session.acceptResultVault(owner.vault)).canWriteState, false);
+  }
+  const component = require("./resource-library-helpers.cjs").compile;
+  const { createVaultKernel } = component("../lib/encrypted-vault-engine.ts", {
+    "./encrypted-core": runtime.core,
+    "./encrypted-types": runtime.types,
+  });
+  const waiters = new Map(),
+    methods = [],
+    accepted = [];
+  let id = 0;
+  const kernel = createVaultKernel(
+    (reply) => {
+      waiters.get(reply.id)?.(reply);
+      waiters.delete(reply.id);
+    },
+    () => owner.session,
+  );
+  const call = (method, args = {}) =>
+    new Promise((resolve, reject) => {
+      const n = ++id;
+      methods.push(method);
+      waiters.set(n, (r) => (r.ok ? resolve(r.result) : reject({ code: r.error })));
+      kernel.postMessage(structuredClone({ id: n, method, args }));
+    });
+  await call("init", { uid: owner.uid });
+  methods.length = 0;
+  const h = harness({
+    hasSource: false,
+    sharedUnlock: shared,
+    sharedResume: shared,
+    resultCanWrite: !readonly,
+    displayModule,
+    metadataIdentity: true,
+    passkeyMaterial: owner.material,
+    sessionOverrides: () => ({
+      acceptVault: async (vault) => {
+        accepted.push(vault);
+        return call("acceptVault", { vault });
+      },
+      acceptResultVault: async (vault) => {
+        accepted.push(vault);
+        return call("acceptResultVault", { vault });
+      },
+      unlockForResults: async (vault, material) =>
+        call("unlockForResults", { vault, material, local: owner.local }),
+      resumeUnlock: async (vault) => {
+        accepted.push(vault);
+        return call("acceptResultVault", { vault });
+      },
+      deviceManagement: async (vault) => (await call("deviceManagement", { vault })).summary,
+    }),
+  });
+  h.setRemoteVault(owner.vault);
+  return {
+    fixture,
+    h,
+    methods,
+    accepted,
+    close: async () => {
+      h.unmount();
+      kernel.terminate();
+      await fixture.close();
+    },
+  };
+}
+for (const [shared, readonly] of [
+  [false, false],
+  [false, true],
+  [true, false],
+  [true, true],
+])
+  test(`actual original Worker acceptance publishes atomic compound context (${shared ? "shared resume" : "normal unlock"}, ${readonly ? "read only" : "writer"})`, async () => {
+    const x = await displayControllerFixture({ shared, readonly });
+    try {
+      const { h, methods } = x;
+      if (shared) {
+        await ready(h);
+        for (let i = 0; i < 100 && h.render().phase !== "unlocked"; i++)
+          await new Promise((r) => setTimeout(r, 1));
+      } else {
+        await ready(h);
+        const unlocking = h.render().unlock({ forResults: true });
+        h.resolvePasskey();
+        await unlocking;
+      }
+      const model = h.render();
+      assert.equal(model.phase, "unlocked", model.error);
+      assert.equal(model.canWriteState, !readonly);
+      assert.ok(
+        model.resourceDisplay?.readKey,
+        "Unlocked publication must include its verified display context",
+      );
+      const body = x.fixture.body();
+      body.displayNames.items = [];
+      body.catalogue.groups[0].items = [];
+      body.catalogue.groups[0].status = "uninitialized";
+      assert.equal(
+        model.resourceDisplay.prepare().read(body).scope.checkpointDigest,
+        x.fixture.scope.checkpointDigest,
+      );
+      assert.equal(Object.hasOwn(model, "verifiedDisplay"), false);
+      assert.equal(h.counts().passkeyCalls, shared ? 0 : 1);
+      assert.deepEqual(
+        methods,
+        shared
+          ? ["acceptResultVault", "deviceManagement"]
+          : ["unlockForResults", "acceptResultVault", "deviceManagement"],
+      );
+      assert.notEqual(
+        x.accepted.at(-1),
+        x.fixture.owner.vault,
+        "Original RPC received its private snapshot",
+      );
+      const previous = model.resourceDisplay.prepare(),
+        before = methods.length;
+      await model.refreshVault(new AbortController().signal);
+      assert.doesNotThrow(() => previous.assertCurrent());
+      assert.equal(methods.length, before + 1, "Optimization adds no verification RPC");
+      assert.equal(methods.at(-1), "acceptResultVault");
+    } finally {
+      await x.close();
+    }
+  });
+test("deferred optional SHA never publishes unlocked without its initial association, and Owner cancellation fences late completion", async () => {
+  for (const changeOwner of [false, true]) {
+    const gate = deferred(),
+      started = deferred();
+    const module = require("./resource-library-helpers.cjs").compile(
+      "../lib/resource-display.ts",
+      {},
+      {
+        crypto: {
+          subtle: {
+            digest: async (...args) => {
+              started.resolve();
+              await gate.promise;
+              return webcrypto.subtle.digest(...args);
+            },
+          },
+        },
+      },
+    );
+    const x = await displayControllerFixture({ displayModule: module });
+    try {
+      await ready(x.h);
+      const action = x.h.render().unlock({ forResults: true });
+      x.h.resolvePasskey();
+      await started.promise;
+      assert.notEqual(x.h.render().phase, "unlocked");
+      assert.equal(x.h.render().resourceDisplay.readKey, null);
+      if (changeOwner) {
+        x.h.auth({ status: "authenticated", sessionKey: "owner_b:2", profile: { uid: "owner_b" } });
+        x.h.render();
+      }
+      gate.resolve();
+      await action;
+      const model = x.h.render();
+      if (changeOwner) {
+        assert.equal(model.owner, "owner_b:2");
+        assert.equal(model.resourceDisplay.readKey, null);
+        assert.notEqual(model.phase, "unlocked");
+      } else {
+        assert.equal(model.phase, "unlocked");
+        assert.ok(
+          model.resourceDisplay?.readKey,
+          "Unlocked publication must include its verified display context",
+        );
+      }
+    } finally {
+      gate.resolve();
+      await x.close();
+    }
+  }
+});
+test("optional association failure or after-RPC nested mutation keeps original successful unlock through safe legacy reads", async () => {
+  for (const mutate of [false, true]) {
+    const gate = deferred(),
+      started = deferred();
+    const module = require("./resource-library-helpers.cjs").compile(
+      "../lib/resource-display.ts",
+      {},
+      {
+        crypto: {
+          subtle: {
+            digest: async (...args) => {
+              started.resolve();
+              await gate.promise;
+              if (!mutate) throw Error("unsupported");
+              return webcrypto.subtle.digest(...args);
+            },
+          },
+        },
+      },
+    );
+    const x = await displayControllerFixture({ displayModule: module });
+    try {
+      await ready(x.h);
+      const action = x.h.render().unlock({ forResults: true });
+      x.h.resolvePasskey();
+      await started.promise;
+      if (mutate) x.accepted.at(-1).registryHistory[0].checkpoint.payload = "e30";
+      gate.resolve();
+      await action;
+      const model = x.h.render();
+      assert.equal(model.phase, "unlocked", model.error);
+      assert.equal(model.error, "");
+      assert.equal(model.resourceDisplay.readKey, null);
+      assert.equal(model.resourceDisplay.prepare(), null);
+    } finally {
+      gate.resolve();
+      await x.close();
+    }
+  }
+});
+test("revoking freshSource publishes no optimization proof for its unaccepted current Vault and performs no hidden acceptance", async () => {
+  const x = await displayControllerFixture();
+  try {
+    await ready(x.h);
+    const action = x.h.render().unlock({ forResults: true });
+    x.h.resolvePasskey();
+    await action;
+    assert.ok(x.h.render().resourceDisplay.readKey);
+    x.h.sources().push(...structuredClone(x.fixture.state.sources));
+    const selected = x.h.sources()[0];
+    const state = x.h.sourceState(selected.resourceRef.resourceId);
+    state.state = "revoking";
+    state.epoch = selected.sourceEpoch + 1;
+    state.pendingMutationId = "source_mutation_012345678901234567890";
+    x.h.setRemoteVault({ ...x.fixture.owner.vault, version: 2 });
+    const before = x.methods.length;
+    await x.h.render().reviewSourceChange("disconnect");
+    const model = x.h.render();
+    assert.equal(model.vault.version, 2);
+    assert.equal(model.resourceDisplay.prepare(), null);
+    assert.equal(x.methods.length, before);
+  } finally {
+    await x.close();
+  }
+});
+
+test("source creation journal recovery keeps an unaccepted current Vault in legacy mode without another acceptance", async () => {
+  const x = await displayControllerFixture();
+  try {
+    await ready(x.h);
+    const action = x.h.render().unlock({ forResults: true });
+    x.h.resolvePasskey();
+    await action;
+    assert.ok(x.h.render().resourceDisplay.readKey);
+    await x.h.render().importFile(file);
+    x.h.failSourceCreate("after");
+    await x.h.render().save();
+    const original = x.h.creation();
+    assert.ok(original);
+    assert.equal(x.h.sources().length, 1);
+    x.h.failSourceCreate(null);
+    const before = x.methods.length;
+    await x.h.render().resumeSourceCreation();
+    const model = x.h.render();
+    assert.equal(x.h.creation(), null);
+    assert.equal(model.selectedSourceId, original.sourceId);
+    assert.equal(model.resourceDisplay.prepare(), null);
+    assert.equal(x.methods.length, before);
+    assert.equal(x.h.requests.filter((r) => r.route.includes("/holdings-sources/")).length, 1);
+  } finally {
+    await x.close();
   }
 });

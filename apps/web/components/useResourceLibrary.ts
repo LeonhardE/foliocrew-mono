@@ -1,4 +1,9 @@
 "use client";
+import {
+  RESOURCE_DISPLAY_PATH,
+  type ResourceDisplayAccess,
+  type ResourceDisplayContext,
+} from "@/lib/resource-display";
 import { untilSignal } from "@/lib/workspace-cache";
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -75,6 +80,7 @@ export function useResourceLibrary({
   externalWatchlist = false,
   followsNeeded = true,
   catalogueNeeded = true,
+  resourceDisplay,
   workspaceScope = null,
   holdingsPublication = null,
 }: {
@@ -82,6 +88,7 @@ export function useResourceLibrary({
   externalWatchlist?: boolean;
   followsNeeded?: boolean;
   catalogueNeeded?: boolean;
+  resourceDisplay?: ResourceDisplayAccess;
   workspaceScope?: string | null;
   holdingsPublication?: HoldingsPublication | null;
 } = {}) {
@@ -95,8 +102,16 @@ export function useResourceLibrary({
   const [state, setState] = useState<State>(() => initial(owner, scope));
   const stateRef = useRef(state);
   stateRef.current = state;
-  const live = useRef({ owner, scope, configured, active, visible, catalogueNeeded });
-  live.current = { owner, scope, configured, active, visible, catalogueNeeded };
+  const live = useRef({
+    owner,
+    scope,
+    configured,
+    active,
+    visible,
+    catalogueNeeded,
+    resourceDisplay,
+  });
+  live.current = { owner, scope, configured, active, visible, catalogueNeeded, resourceDisplay };
   const jobs = useRef(new Map<string, AbortController>());
   const serials = useRef({ catalogue: 0, watchlist: 0, follows: 0 });
   const writing = useRef<object | null>(null);
@@ -178,7 +193,9 @@ export function useResourceLibrary({
           !now.active ||
           !now.visible ||
           (hub && !now.configured) ||
-          (key === "catalogue" && !now.catalogueNeeded)
+          (key === "catalogue" &&
+            (!now.catalogueNeeded ||
+              now.resourceDisplay?.readKey !== start.resourceDisplay?.readKey))
         )
           throw new ResourceError("cancelled");
       };
@@ -203,20 +220,37 @@ export function useResourceLibrary({
   );
 
   const api = useCallback(
-    async (source: Source, signal: AbortSignal, assert: () => void, json?: unknown) => {
+    async (
+      source: Source,
+      signal: AbortSignal,
+      assertScope: () => void,
+      json?: unknown,
+      display?: ResourceDisplayContext,
+    ) => {
+      const assert = () => {
+        assertScope();
+        try {
+          display?.assertCurrent();
+        } catch {
+          throw new ResourceError("cancelled");
+        }
+      };
       assert();
       const response = await auth.requestPrivate(
         source === "catalogue" ? "agent-hub" : "user",
-        source === "catalogue"
-          ? "/api/v2/resources/catalogue"
-          : source === "watchlist"
-            ? "/api/v1/watchlist"
-            : "/api/v1/channel-follows",
+        display
+          ? RESOURCE_DISPLAY_PATH
+          : source === "catalogue"
+            ? "/api/v2/resources/catalogue"
+            : source === "watchlist"
+              ? "/api/v1/watchlist"
+              : "/api/v1/channel-follows",
         owner!,
         {
           method: json === undefined ? "GET" : "PUT",
           signal,
           coalesceDisplay: json === undefined,
+          ...(display ? { coalesceDisplayScope: display.coalesceScope } : {}),
           ...(json === undefined ? {} : { json }),
           ...(source === "catalogue"
             ? { headers: { "X-FolioView-Contract": RESOURCE_CONTRACT } }
@@ -234,6 +268,7 @@ export function useResourceLibrary({
                 ? "rate_limited"
                 : "unavailable",
         );
+      if (display && response.status !== 200) throw new ResourceError("invalid_response");
       if (
         !response.body ||
         response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !==
@@ -265,6 +300,11 @@ export function useResourceLibrary({
         text += decoder.decode();
         assert();
         const value: unknown = JSON.parse(text);
+        if (display) {
+          const data = display.read(value);
+          if (data.mode === "full") return data.catalogue;
+          return api(source, signal, assert);
+        }
         return source === "catalogue"
           ? readResourceCatalogue(value)
           : source === "watchlist"
@@ -298,6 +338,9 @@ export function useResourceLibrary({
         (source === "catalogue" && (!configured || !live.current.catalogueNeeded))
       )
         return;
+      const display =
+        source === "catalogue" && !force ? live.current.resourceDisplay?.prepare() : null;
+      const readKey = live.current.resourceDisplay?.readKey;
       const serial = ++serials.current[source];
       let finishCatalogue: ((outcome: CatalogueOutcome) => void) | undefined;
       let outcome: CatalogueOutcome = { scope, serial, status: "cancelled" };
@@ -311,7 +354,10 @@ export function useResourceLibrary({
         live.current.owner === owner &&
         live.current.scope === scope &&
         serials.current[source] === serial &&
-        (source !== "catalogue" || (live.current.configured && live.current.catalogueNeeded));
+        (source !== "catalogue" ||
+          (live.current.configured &&
+            live.current.catalogueNeeded &&
+            live.current.resourceDisplay?.readKey === readKey));
       setState((previous) => ({
         ...(previous.scope === scope ? previous : initial(owner, scope)),
         [source]: {
@@ -323,7 +369,7 @@ export function useResourceLibrary({
       }));
       try {
         const data = await operation(source, source === "catalogue", (signal, assert) =>
-          api(source, signal, assert),
+          api(source, signal, assert, undefined, display ?? undefined),
         );
         if (current()) {
           const at = Date.now(),
@@ -536,7 +582,7 @@ export function useResourceLibrary({
     };
   }, [owner, scope, active, visible, configured, reload, externalWatchlist]);
   useEffect(() => {
-    if (owner && active && visible && configured && catalogueNeeded)
+    if (owner && active && visible && configured && catalogueNeeded && !writing.current)
       void reload("catalogue", false);
     return () => {
       // The private workspace prerequisite controls only discovery, never User writes.
@@ -553,7 +599,17 @@ export function useResourceLibrary({
             : previous,
         );
     };
-  }, [owner, scope, active, visible, configured, catalogueNeeded, reload, externalWatchlist]);
+  }, [
+    owner,
+    scope,
+    active,
+    visible,
+    configured,
+    catalogueNeeded,
+    resourceDisplay?.readKey,
+    reload,
+    externalWatchlist,
+  ]);
   useEffect(() => {
     if (owner && active && visible && followsNeeded) void reload("follows", false);
     return () => {

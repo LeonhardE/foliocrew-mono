@@ -3029,3 +3029,704 @@ test("language endpoint admits only its exact Config route and closed CAS update
   assert.equal(harness.requests.length, 1);
   harness.unmount();
 });
+
+test("compound display local scope shares only equal-context GETs and never enters the transport", async () => {
+  const gates = [],
+    calls = [];
+  const h = mountProvider({
+    fetchOwnerConfig: async () => configResponse(false, true),
+    fetchProfile: async (url, options) => {
+      if (url.endsWith("/api/v1/me")) return profileResponse("a");
+      const gate = deferred();
+      gates.push(gate);
+      calls.push({ url, options });
+      return gate.promise;
+    },
+  });
+  try {
+    h.emitUser(user("a"));
+    await settle();
+    const a = new AbortController(),
+      b = new AbortController();
+    const options = (scope, signal) => ({
+      coalesceDisplay: true,
+      coalesceDisplayScope: scope,
+      signal,
+    });
+    const first = h.actions.requestPrivate(
+      "agent-hub",
+      "/api/v3/resources/display",
+      "a:1",
+      options("scope_A", a.signal),
+    );
+    const rejected = assert.rejects(first, /cancelled|session changed/);
+    const second = h.actions.requestPrivate(
+      "agent-hub",
+      "/api/v3/resources/display",
+      "a:1",
+      options("scope_A", b.signal),
+    );
+    const other = h.actions.requestPrivate(
+      "agent-hub",
+      "/api/v3/resources/display",
+      "a:1",
+      options("scope_B"),
+    );
+    await settle();
+    assert.equal(calls.length, 2);
+    for (const call of calls) {
+      assert.equal(call.url, "/api/private/agent-hub/api/v3/resources/display");
+      assert.equal(call.options.body, undefined);
+      assert.equal(
+        Object.keys(call.options.headers).sort().join(","),
+        "Authorization,X-FolioView-Contract",
+      );
+      assert.ok(!JSON.stringify(call.options).includes("scope_"));
+    }
+    a.abort();
+    await rejected;
+    assert.equal(calls[0].options.signal.aborted, false);
+    const queued = h.actions.requestPrivate(
+      "agent-hub",
+      "/api/v3/resources/display",
+      "a:1",
+      options("scope_C"),
+    );
+    await settle();
+    assert.equal(calls.length, 2, "Physical two-read cap remains");
+    gates[0].resolve(new Response("A"));
+    assert.equal(await (await second).text(), "A");
+    await settle();
+    assert.equal(calls.length, 3);
+    gates[1].resolve(new Response("B"));
+    gates[2].resolve(new Response("C"));
+    assert.equal(await (await other).text(), "B");
+    assert.equal(await (await queued).text(), "C");
+    const again = h.actions.requestPrivate(
+      "agent-hub",
+      "/api/v3/resources/display",
+      "a:1",
+      options("scope_A"),
+    );
+    await settle();
+    assert.equal(calls.length, 4, "No settled response reuse");
+    gates[3].resolve(new Response("new"));
+    await again;
+  } finally {
+    h.unmount();
+  }
+});
+test("compound GET admission and local key bound reject before token retrieval, including UTF-8 and delegated headers", async () => {
+  let tokens = 0;
+  const h = mountProvider({ fetchOwnerConfig: async () => configResponse(false, true) });
+  try {
+    h.emitUser({ uid: "a", getIdToken: async () => `test-token-${++tokens}` });
+    await settle();
+    const before = tokens,
+      requests = h.requests.length;
+    for (const [path, options] of [
+      ["/api/v3/resources/display?", {}],
+      ["/api/v3/resources/display?scope=A", {}],
+      ["/api/v3/resources/display", { method: "POST" }],
+      ["/api/v3/resources/display", { json: {} }],
+      ...[
+        "X-Serverless-Authorization",
+        "X-FolioView-Authority-Delegation",
+        "X-FolioView-Author-Key",
+        "Idempotency-Key",
+      ].map((k) => ["/api/v3/resources/display", { headers: { [k]: "forged" } }]),
+      ...["", "x".repeat(8193), "界".repeat(2731)].map((key) => [
+        "/api/v3/resources/display",
+        { coalesceDisplay: true, coalesceDisplayScope: key },
+      ]),
+      ["/api/v3/resources/display", { coalesceDisplayScope: "scope" }],
+      ["/api/v2/resources/catalogue", { coalesceDisplay: true, coalesceDisplayScope: "scope" }],
+    ])
+      await assert.rejects(
+        h.actions.requestPrivate("agent-hub", path, "a:1", options),
+        /Invalid private API/,
+      );
+    assert.equal(tokens, before);
+    assert.equal(h.requests.length, requests);
+  } finally {
+    h.unmount();
+  }
+});
+
+// Run the actual ResourcesView and both read hooks against the actual AuthProvider pool.
+function mountCompoundResources(auth, f) {
+  const { hooks, jsx, all } = require("./resource-ui-harness.cjs"),
+    { compile, contracts, stocks } = require("./resource-library-helpers.cjs");
+  const ui = hooks(),
+    events = new Map();
+  let active = true,
+    visible = true,
+    current,
+    names,
+    tree,
+    opens = 0,
+    workerError = null,
+    clock = 100000,
+    rootReads = 0,
+    pending = 0;
+  const globals = {
+    Date: class extends Date {
+      static now() {
+        return clock;
+      }
+    },
+    document: {
+      get visibilityState() {
+        return visible ? "visible" : "hidden";
+      },
+      addEventListener(k, fn) {
+        if (!events.has(k)) events.set(k, new Set());
+        events.get(k).add(fn);
+      },
+      removeEventListener: (k, fn) => events.get(k)?.delete(fn),
+    },
+    window: { setTimeout, clearTimeout },
+    setTimeout,
+    clearTimeout,
+  };
+  const ownerAuth = { useAuth: () => auth.actions };
+  const namesModule = compile(
+    "../components/useDisplayNames.ts",
+    { react: ui.react, "./AuthProvider": ownerAuth },
+    globals,
+  );
+  const hook = compile(
+    "../components/useResourceLibrary.ts",
+    {
+      react: ui.react,
+      "@/components/AuthProvider": ownerAuth,
+      "@/lib/resource-library": contracts,
+    },
+    globals,
+  );
+  const lib = compile(
+    "../components/ResourceLibrary.tsx",
+    {
+      react: ui.react,
+      "react/jsx-runtime": { jsx, jsxs: jsx },
+      "next-intl": { useTranslations: () => (k) => k },
+      "./useResourceLibrary": hook,
+      "./AuthProvider": ownerAuth,
+      "@/lib/resource-library": contracts,
+      "./ResourceLibrary.module.css": { __esModule: true, default: {} },
+    },
+    globals,
+  );
+  const view = compile(
+    "../components/ResourcesPanel.tsx",
+    {
+      react: ui.react,
+      "react/jsx-runtime": { jsx, jsxs: jsx },
+      "next-intl": { useTranslations: () => (k) => k },
+      "next/dynamic": { __esModule: true, default: () => () => null },
+      "@/components/useHoldingsWorkspace": {},
+      "@/lib/holdings-facts": compile("../lib/holdings-facts.ts"),
+      "./HoldingsEditor": { __esModule: true, default: () => null },
+      "./ResourceLibrary": lib,
+      "./PasskeyHelp": {},
+      "./HoldingsSourceBar": {},
+      "./useDisplayNames": {
+        useDisplayNames: (...args) => (names = namesModule.useDisplayNames(...args)),
+      },
+      "./ResourcesPanel.module.css": { __esModule: true, default: {} },
+    },
+    globals,
+  );
+  const workspace = () => ({
+    owner: f.state.owner,
+    authenticated: true,
+    configured: true,
+    phase: f.state.eligible ? "unlocked" : "locked",
+    vault: f.state.vault,
+    vaultGeneration: f.state.generation,
+    sources: f.state.sources,
+    selectedSourceId: null,
+    sourceMetadata: null,
+    content: null,
+    canWriteState: false,
+    needsDeviceApproval: false,
+    newSource: false,
+    busy: null,
+    error: "",
+    resourceDisplay: {
+      get readKey() {
+        return f.state.proof?.context(() => f.state)?.coalesceScope ?? null;
+      },
+      prepare: () => f.state.proof?.context(() => f.state) ?? null,
+    },
+    refreshVault: async (signal) => {
+      rootReads++;
+      const reply = await auth.actions.requestPrivate(
+        "agent-hub",
+        "/api/v2/vaults/current",
+        f.state.owner,
+        { signal },
+      );
+      const data = await reply.json();
+      await f.owner.session.acceptResultVault(structuredClone(data.vault));
+      return data.vault;
+    },
+    openDisplayNames: async (refs, items) => {
+      opens++;
+      try {
+        return await f.owner.session.openDisplayNames(structuredClone({ refs, items }));
+      } catch (error) {
+        workerError = { code: error.code, message: error.message };
+        throw error;
+      }
+    },
+    loadDisplayNamePending: async () => {
+      pending++;
+      return null;
+    },
+    readStored: async () => {
+      throw Error("Read-only view cannot start Portfolio reads");
+    },
+  });
+  const render = () =>
+    ui.render(() => {
+      const root = view.default({
+        workspace: workspace(),
+        active,
+        watchlist: {
+          sessionKey: f.state.owner,
+          items: stocks().items,
+          limit: 50,
+          loading: false,
+          busy: false,
+        },
+      });
+      const panel = root.type(root.props);
+      const child = all(panel, (n) => n.type === lib.default)[0];
+      const node = child.type(child.props);
+      current = node.props.model;
+      return (tree = node.type(node.props));
+    });
+  return {
+    render,
+    get model() {
+      return current;
+    },
+    get names() {
+      return names;
+    },
+    get opens() {
+      return opens;
+    },
+    get workerError() {
+      return workerError;
+    },
+    get rootReads() {
+      return rootReads;
+    },
+    advance(ms) {
+      clock += ms;
+    },
+    filter(kind) {
+      const button = all(
+        tree,
+        (n) => n.type === "button" && n.props.children === "kinds." + kind,
+      )[0];
+      assert.ok(button);
+      button.props.onClick();
+      return render();
+    },
+    get pending() {
+      return pending;
+    },
+    active(v) {
+      active = v;
+      return render();
+    },
+    visibility(v) {
+      visible = v;
+      for (const fn of events.get("visibilitychange") ?? []) fn();
+      return render();
+    },
+    async settle() {
+      for (let i = 0; i < 4; i++) {
+        await settle();
+        render();
+      }
+      return tree;
+    },
+    async complete() {
+      const until = Date.now() + 2000;
+      while (Date.now() < until) {
+        await new Promise((r) => setTimeout(r, 1));
+        render();
+        if (!current.catalogue.loading && !names.loading) {
+          await settle();
+          return render();
+        }
+      }
+      throw Error("Display did not settle");
+    },
+    close: ui.close,
+  };
+}
+for (const mode of [
+  "full",
+  "separate",
+  "404",
+  "bad-other-component",
+  "wrong-scope",
+  "bad-signature",
+])
+  test(`actual ResourcesView/Auth pool compound ${mode} retains original Worker and fallback boundaries`, async () => {
+    const f = await require("./resource-display-fixtures.cjs").fixture("a"),
+      gate = deferred(),
+      calls = [];
+    let ui;
+    const h = mountProvider({
+      fetchOwnerConfig: async () => configResponse(false, true),
+      fetchProfile: async (url) => {
+        if (url.endsWith("/api/v1/me")) return profileResponse("a");
+        calls.push(url);
+        if (url.endsWith("/api/v3/resources/display")) return gate.promise;
+        const v = f.body();
+        if (url.endsWith("/resources/catalogue")) return Response.json(v.catalogue);
+        if (url.endsWith("/capabilities")) return Response.json(v.displayNameCapabilities);
+        if (url.endsWith("/holdings")) return Response.json(v.displayNames);
+        throw Error("Unexpected request");
+      },
+    });
+    try {
+      h.emitUser(user("a"));
+      await settle();
+      ui = mountCompoundResources(h, f);
+      ui.render();
+      await ui.settle();
+      assert.equal(calls.length, 1);
+      assert.ok(calls[0].endsWith("/api/v3/resources/display"));
+      assert.equal(ui.opens, 0);
+      assert.equal(ui.model.catalogue.loading, true);
+      let value = f.body(),
+        status = 200;
+      if (mode === "separate")
+        value = {
+          contractVersion: "folioview.agent-workspace.v2.0",
+          profile: "folioview.owner-resource-display.v1",
+          mode: "separate",
+          reason: "aggregate_too_large",
+        };
+      if (mode === "404") {
+        value = { error: { code: "not_found" } };
+        status = 404;
+      }
+      if (mode === "bad-other-component") value.displayNameCapabilities.extra = true;
+      if (mode === "wrong-scope") value.scope.keyEpoch++;
+      if (mode === "bad-signature") value.displayNames.items[0].command.signature = "A".repeat(86);
+      gate.resolve(Response.json(value, { status }));
+      await ui.complete();
+      assert.equal(calls.length, mode === "separate" ? 4 : 1);
+      if (mode === "full" || mode === "separate") {
+        assert.ok(ui.model.catalogue.data);
+        assert.equal(ui.model.catalogue.stale, false);
+        assert.equal(
+          ui.names.ready,
+          true,
+          JSON.stringify({
+            error: ui.names.error,
+            loading: ui.names.loading,
+            opens: ui.opens,
+            pending: ui.pending,
+            worker: ui.workerError,
+          }),
+        );
+        assert.equal(ui.names.name(f.state.sources[0].resourceRef), "Synthetic alias");
+        assert.equal(ui.opens, 1);
+        assert.equal(ui.pending, 1);
+      } else {
+        assert.equal(ui.names.ready, false);
+        assert.ok(ui.names.error);
+        assert.equal(ui.pending, 0);
+        if (mode === "bad-signature") {
+          assert.equal(ui.opens, 1);
+          assert.ok(ui.model.catalogue.data);
+        } else {
+          assert.equal(ui.opens, 0);
+          assert.equal(ui.model.catalogue.data, null);
+          assert.ok(ui.model.catalogue.error);
+        }
+      }
+    } finally {
+      gate.resolve(Response.json({}));
+      ui?.close();
+      h.unmount();
+      await f.close();
+    }
+  });
+
+test("actual compound subscriber cancellation fences old outcomes, retains original TTL and explicit fresh calls", async () => {
+  const f = await require("./resource-display-fixtures.cjs").fixture("a"),
+    gates = [],
+    calls = [];
+  let ui;
+  const h = mountProvider({
+    fetchOwnerConfig: async () => configResponse(false, true),
+    fetchProfile: async (url, options) => {
+      if (url.endsWith("/api/v1/me")) return profileResponse("a");
+      calls.push({ url, options });
+      const value = f.body();
+      if (url.endsWith("/api/v3/resources/display")) {
+        const g = deferred();
+        gates.push(g);
+        return g.promise;
+      }
+      if (url.endsWith("/vaults/current"))
+        return Response.json({
+          contractVersion: "folioview.agent-workspace.v2.0",
+          vault: f.state.vault,
+          sources: f.state.sources,
+        });
+      if (url.endsWith("/resources/catalogue")) return Response.json(value.catalogue);
+      if (url.endsWith("/capabilities")) return Response.json(value.displayNameCapabilities);
+      if (url.endsWith("/holdings")) return Response.json(value.displayNames);
+      throw Error("Unexpected read");
+    },
+  });
+  try {
+    h.emitUser(user("a"));
+    await settle();
+    ui = mountCompoundResources(h, f);
+    ui.render();
+    await ui.settle();
+    assert.equal(calls.length, 1);
+    ui.active(false);
+    await ui.settle();
+    assert.equal(calls[0].options.signal.aborted, true);
+    ui.active(true);
+    await ui.settle();
+    assert.equal(calls.length, 2);
+    gates[0].resolve(Response.json(f.body()));
+    await ui.settle();
+    assert.equal(ui.model.catalogue.loading, true);
+    assert.equal(ui.model.catalogue.data, null);
+    assert.equal(ui.opens, 0);
+    gates[1].resolve(Response.json(f.body()));
+    await ui.complete();
+    assert.equal(ui.opens, 1);
+    ui.active(false);
+    ui.advance(29999);
+    ui.active(true);
+    await ui.settle();
+    assert.equal(calls.length, 2);
+    ui.active(false);
+    ui.advance(2);
+    ui.active(true);
+    await ui.settle();
+    assert.equal(calls.length, 3);
+    gates[2].resolve(Response.json(f.body()));
+    await ui.complete();
+    assert.equal(ui.opens, 2);
+    await ui.model.reload("catalogue");
+    await ui.complete();
+    assert.equal(calls.length, 4);
+    assert.ok(calls.at(-1).url.endsWith("/resources/catalogue"));
+    assert.equal(ui.opens, 2);
+    await ui.names.reload();
+    await ui.complete();
+    assert.equal(calls.length, 7);
+    assert.equal(ui.rootReads, 1);
+    assert.deepEqual(
+      calls
+        .slice(-3)
+        .map(
+          (c) =>
+            new URL(c.url, "https://synthetic.test").pathname.split("/api/private/agent-hub")[1],
+        ),
+      [
+        "/api/v2/vaults/current",
+        "/api/v3/private-display-names/capabilities",
+        `/api/v3/private-display-names/${f.state.vault.vaultId}/holdings`,
+      ],
+    );
+    assert.equal(ui.opens, 3);
+  } finally {
+    for (const g of gates) g.resolve(Response.json({}));
+    ui?.close();
+    h.unmount();
+    await f.close();
+  }
+});
+for (const success of [true, false])
+  test(`soft display-context invalidation preserves User PUT and original ${success ? "ACK refresh" : "uncertain recovery"}`, async () => {
+    const f = await require("./resource-display-fixtures.cjs").fixture("a"),
+      putGate = deferred(),
+      calls = [];
+    let ui,
+      revision = 1;
+    const { channels } = require("./resource-library-helpers.cjs");
+    const h = mountProvider({
+      fetchOwnerConfig: async () => configResponse(false, true),
+      fetchProfile: async (url, options) => {
+        if (url.endsWith("/api/v1/me")) return profileResponse("a");
+        calls.push({ url, options });
+        const value = f.body();
+        value.catalogue.groups[2].items[0].revision = revision;
+        if (url.endsWith("/api/v3/resources/display")) return Response.json(value);
+        if (url.endsWith("/resources/catalogue")) return Response.json(value.catalogue);
+        if (url.endsWith("/capabilities")) return Response.json(value.displayNameCapabilities);
+        if (url.endsWith("/holdings")) return Response.json(value.displayNames);
+        if (url.endsWith("/channel-follows"))
+          return options.method === "PUT"
+            ? putGate.promise
+            : Response.json(channels("Synthetic", revision));
+        throw Error("Unexpected read");
+      },
+    });
+    try {
+      h.emitUser(user("a"));
+      await settle();
+      ui = mountCompoundResources(h, f);
+      ui.render();
+      await ui.complete();
+      ui.filter("channel_follows");
+      await ui.complete();
+      assert.ok(ui.model.follows.data);
+      const write = ui.model.saveFollows(
+        ui.model.follows.data.items.map(({ name, handleOrUrl, note }) => ({
+          name,
+          handleOrUrl,
+          note,
+        })),
+      );
+      await ui.settle();
+      const put = calls.find((c) => c.options.method === "PUT");
+      assert.ok(put);
+      const catalogueBefore = calls.filter((c) => c.url.endsWith("/resources/catalogue")).length;
+      f.state.vault = structuredClone(f.state.vault);
+      ui.render();
+      await ui.settle();
+      assert.equal(put.options.signal.aborted, false);
+      assert.equal(ui.model.busy, true);
+      assert.equal(
+        calls.filter((c) => c.url.endsWith("/resources/catalogue")).length,
+        catalogueBefore,
+        "No pre-ACK catalogue can become fresh",
+      );
+      assert.equal(ui.model.catalogue.stale, true);
+      if (success) revision = 2;
+      putGate.resolve(
+        Response.json(success ? channels("Synthetic", revision) : {}, {
+          status: success ? 200 : 503,
+        }),
+      );
+      assert.equal(await write, success);
+      await ui.complete();
+      assert.equal(calls.filter((c) => c.options.method === "PUT").length, 1);
+      assert.equal(
+        calls.filter((c) => c.url.endsWith("/resources/catalogue")).length,
+        catalogueBefore + Number(success),
+      );
+      if (success) {
+        assert.equal(ui.model.follows.data.revision, 2);
+        assert.equal(ui.model.catalogue.stale, false);
+      } else {
+        assert.equal(ui.model.follows.stale, true);
+        assert.equal(ui.model.writeError, "unavailable");
+        assert.equal(ui.model.catalogue.stale, true);
+      }
+    } finally {
+      putGate.resolve(Response.json({}, { status: 503 }));
+      ui?.close();
+      h.unmount();
+      await f.close();
+    }
+  });
+
+test("soft display-context invalidation preserves an in-flight User channel GET", async () => {
+  const f = await require("./resource-display-fixtures.cjs").fixture("a"),
+    follow = deferred(),
+    calls = [];
+  let ui;
+  const h = mountProvider({
+    fetchOwnerConfig: async () => configResponse(false, true),
+    fetchProfile: async (url, options) => {
+      if (url.endsWith("/api/v1/me")) return profileResponse("a");
+      calls.push({ url, options });
+      const v = f.body();
+      if (url.endsWith("/api/v3/resources/display")) return Response.json(v);
+      if (url.endsWith("/resources/catalogue")) return Response.json(v.catalogue);
+      if (url.endsWith("/capabilities")) return Response.json(v.displayNameCapabilities);
+      if (url.endsWith("/holdings")) return Response.json(v.displayNames);
+      if (url.endsWith("/channel-follows")) return follow.promise;
+      throw Error("Unexpected read");
+    },
+  });
+  try {
+    h.emitUser(user("a"));
+    await settle();
+    ui = mountCompoundResources(h, f);
+    ui.render();
+    await ui.complete();
+    ui.filter("channel_follows");
+    await ui.settle();
+    const reading = calls.find((c) => c.url.endsWith("/channel-follows"));
+    assert.ok(reading);
+    f.state.vault = structuredClone(f.state.vault);
+    ui.render();
+    await ui.settle();
+    assert.equal(reading.options.signal.aborted, false);
+    follow.resolve(Response.json(require("./resource-library-helpers.cjs").channels("Synthetic")));
+    await ui.settle();
+    assert.equal(ui.model.follows.data.items[0].name, "Synthetic");
+    assert.equal(calls.filter((c) => c.url.endsWith("/channel-follows")).length, 1);
+  } finally {
+    follow.resolve(Response.json({}));
+    ui?.close();
+    h.unmount();
+    await f.close();
+  }
+});
+
+for (const [bytes, status] of [
+  [1048576, 200],
+  [1048577, 200],
+  [0, 201],
+])
+  test(`actual compound body/status boundary ${bytes} bytes HTTP${status} preserves fail-closed behavior`, async () => {
+    const f = await require("./resource-display-fixtures.cjs").fixture("a"),
+      calls = [];
+    let ui;
+    const raw = JSON.stringify(f.body()),
+      body = bytes ? raw + " ".repeat(bytes - Buffer.byteLength(raw)) : raw;
+    const h = mountProvider({
+      fetchOwnerConfig: async () => configResponse(false, true),
+      fetchProfile: async (url) => {
+        if (url.endsWith("/api/v1/me")) return profileResponse("a");
+        calls.push(url);
+        assert.ok(url.endsWith("/api/v3/resources/display"));
+        return new Response(body, { status, headers: { "Content-Type": "application/json" } });
+      },
+    });
+    try {
+      h.emitUser(user("a"));
+      await settle();
+      ui = mountCompoundResources(h, f);
+      ui.render();
+      await ui.complete();
+      assert.equal(calls.length, 1);
+      if (bytes === 1048576) {
+        assert.ok(ui.model.catalogue.data);
+        assert.equal(ui.names.ready, true);
+        assert.equal(ui.opens, 1);
+      } else {
+        assert.equal(ui.model.catalogue.data, null);
+        assert.equal(ui.names.ready, false);
+        assert.ok(ui.model.catalogue.error);
+        assert.ok(ui.names.error);
+        assert.equal(ui.opens, 0);
+      }
+    } finally {
+      ui?.close();
+      h.unmount();
+      await f.close();
+    }
+  });

@@ -496,6 +496,8 @@ function harness() {
       AbortController,
       window: { setTimeout: () => 1, clearTimeout() {} },
       require(name) {
+        if (name === "@/lib/resource-display")
+          return require("./resource-library-helpers.cjs").compile("../lib/resource-display.ts");
         if (name === "@/lib/holdings-view") return require("./holdings-view-helpers.cjs");
         if (name === "@/lib/workspace-cache") return cacheContracts;
         if (name === "@/lib/holdings-facts")
