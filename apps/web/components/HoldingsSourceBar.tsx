@@ -199,7 +199,7 @@ export function HoldingsSourceBar({
           )}
         </div>
       </div>
-      {selected && !model.newSource && (
+      {selected && !model.newSource && model.content && (
         <p className={styles.note}>
           {model.content && factsContent(model.content) && !model.content.data.importSnapshot
             ? t("editing.manualSource")

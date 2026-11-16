@@ -2681,6 +2681,7 @@ export function useHoldingsWorkspace() {
         setState((previous) => ({
           ...previous,
           content: null,
+          sourceMetadata: null,
           preview: null,
           importPreview: null,
           sourceReview: null,

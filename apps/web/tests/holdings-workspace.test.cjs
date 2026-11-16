@@ -1253,6 +1253,7 @@ function harness({
   }
   return {
     render,
+    document,
     setRemoteVault(value) {
       remoteVault = structuredClone(value);
     },
@@ -3540,20 +3541,24 @@ function sharedResourceView(h) {
   const { hooks, jsx } = require("./resource-ui-harness.cjs"),
     ui = hooks();
   const { compile: component } = require("./resource-library-helpers.cjs");
-  const { default: ResourcesPanel } = component("../components/ResourcesPanel.tsx", {
-    react: ui.react,
-    "react/jsx-runtime": { jsx, jsxs: jsx },
-    "next-intl": { useTranslations: () => (key) => key },
-    "next/dynamic": { __esModule: true, default: () => () => null },
-    "@/components/useHoldingsWorkspace": {},
-    "@/lib/holdings-facts": component("../lib/holdings-facts.ts"),
-    "./HoldingsEditor": { __esModule: true, default: () => null },
-    "./ResourceLibrary": { __esModule: true, default: () => null },
-    "./PasskeyHelp": {},
-    "./HoldingsSourceBar": {},
-    "./useDisplayNames": { useDisplayNames: () => ({ scope: "names" }) },
-    "./ResourcesPanel.module.css": { __esModule: true, default: {} },
-  });
+  const { default: ResourcesPanel } = component(
+    "../components/ResourcesPanel.tsx",
+    {
+      react: ui.react,
+      "react/jsx-runtime": { jsx, jsxs: jsx },
+      "next-intl": { useTranslations: () => (key) => key },
+      "next/dynamic": { __esModule: true, default: () => () => null },
+      "@/components/useHoldingsWorkspace": {},
+      "@/lib/holdings-facts": component("../lib/holdings-facts.ts"),
+      "./HoldingsEditor": { __esModule: true, default: () => null },
+      "./ResourceLibrary": { __esModule: true, default: () => null },
+      "./PasskeyHelp": {},
+      "./HoldingsSourceBar": {},
+      "./useDisplayNames": { useDisplayNames: () => ({ scope: "names" }) },
+      "./ResourcesPanel.module.css": { __esModule: true, default: {} },
+    },
+    { document: h.document },
+  );
   return {
     render: (active = true) =>
       ui.render(() => {
@@ -3563,6 +3568,230 @@ function sharedResourceView(h) {
     close: () => ui.close(),
   };
 }
+
+async function pumpResourceView(view, active = true, turns = 6) {
+  for (let i = 0; i < turns; i++) {
+    view.render(active);
+    await settle();
+  }
+}
+
+test("visibility return automatically restores the selected saved snapshot after authority-only resume", async () => {
+  const h = harness({ sharedUnlock: true, sharedResume: true });
+  await ready(h);
+  const view = sharedResourceView(h);
+  await pumpResourceView(view);
+  assert.equal(h.render().sourceMetadata.snapshotId, null);
+  await h.render().importFile(file);
+  await h.render().save();
+  const saved = JSON.stringify(h.render().content),
+    selected = h.render().selectedSourceId,
+    snapshotReads = () =>
+      h.requests.filter((r) => r.route.includes("/snapshots/") && !r.options.method).length;
+  assert.ok(h.render().content);
+  const before = snapshotReads();
+  h.visibility(false);
+  await pumpResourceView(view);
+  assert.equal(h.render().content, null, "hidden plaintext cleanup remains intact");
+  assert.equal(h.render().displayCache.holdings.size, 0);
+  assert.equal(snapshotReads(), before, "hidden Resources must not start a Portfolio read");
+  h.visibility(true);
+  await pumpResourceView(view);
+  assert.equal(h.render().selectedSourceId, selected);
+  assert.equal(
+    JSON.stringify(h.render().content),
+    saved,
+    "focus restores data without pressing Refresh",
+  );
+  assert.equal(
+    snapshotReads(),
+    before + 1,
+    "one actual encrypted snapshot read per visibility generation",
+  );
+  const complete = h.requests.length;
+  await pumpResourceView(view);
+  assert.equal(h.requests.length, complete, "settled renders do not loop or reload catalogue");
+  for (let i = 0; i < 3; i++) {
+    h.visibility(true);
+    await pumpResourceView(view);
+  }
+  assert.equal(
+    snapshotReads(),
+    before + 1,
+    "a visible-event storm cannot reread the same generation",
+  );
+  assert.equal(h.counts().passkeyCalls, 0);
+  view.close();
+  h.unmount();
+});
+
+test("visibility-hidden unresolved source waits for visible active Resources before automatic reading", async () => {
+  const h = harness({ sharedUnlock: true, sharedResume: true });
+  await ready(h);
+  const view = sharedResourceView(h);
+  h.visibility(false);
+  await pumpResourceView(view);
+  assert.equal(h.requests.filter((r) => r.service === "portfolio").length, 0);
+  h.visibility(true);
+  await pumpResourceView(view, false);
+  assert.equal(h.requests.filter((r) => r.service === "portfolio").length, 0);
+  await pumpResourceView(view);
+  assert.equal(
+    h.render().sourceMetadata.snapshotId,
+    null,
+    "a successful empty head remains confirmed empty",
+  );
+  const complete = h.requests.length;
+  await pumpResourceView(view);
+  assert.equal(h.requests.length, complete);
+  view.close();
+  h.unmount();
+});
+
+test("a formerly empty source reads a new head written while hidden without a duplicate initial empty read", async () => {
+  const h = harness();
+  await unlocked(h);
+  assert.equal(h.render().sourceMetadata.snapshotId, null);
+  const view = sharedResourceView(h),
+    before = h.requests.length;
+  await pumpResourceView(view);
+  assert.equal(h.requests.length, before, "unlock already confirmed this generation's empty head");
+  h.visibility(false);
+  h.forceHead(1); // Another device stores the first snapshot while this document is hidden.
+  await pumpResourceView(view);
+  h.visibility(true);
+  await pumpResourceView(view);
+  assert.equal(h.render().sourceMetadata.snapshotId, "snapshot_remote_newer");
+  assert.ok(h.render().content);
+  const loaded = h.requests.length;
+  await pumpResourceView(view);
+  assert.equal(h.requests.length, loaded);
+  view.close();
+  h.unmount();
+});
+
+test("failed visibility restoration stays an error until explicit retry instead of becoming empty or looping", async () => {
+  const h = harness();
+  await unlocked(h);
+  await h.render().importFile(file);
+  await h.render().save();
+  const view = sharedResourceView(h);
+  h.visibility(false);
+  h.failRead(503);
+  h.visibility(true);
+  await pumpResourceView(view);
+  assert.equal(h.render().error, "service_unavailable");
+  assert.equal(h.render().content, null);
+  assert.equal(h.render().sourceMetadata, null, "failed metadata is not confirmed empty");
+  const failed = h.requests.length;
+  await pumpResourceView(view);
+  view.render(false);
+  await pumpResourceView(view);
+  assert.equal(h.requests.length, failed, "error is not an automatic retry storm");
+  h.failRead(null);
+  await h.render().readStored();
+  await pumpResourceView(view);
+  assert.equal(h.render().error, "");
+  assert.ok(h.render().content);
+  view.close();
+  h.unmount();
+});
+
+test("visibility restoration never resaves an unknown-ack outbox or bypasses its pending guard", async () => {
+  const h = harness();
+  await unlocked(h);
+  await h.render().importFile(file);
+  h.failCommit(true);
+  await h.render().save();
+  assert.equal(h.render().hasPending, true);
+  const pending = JSON.stringify([...h.outboxes]),
+    commits = h.commits.length,
+    seals = h.counts().seals;
+  const view = sharedResourceView(h);
+  h.visibility(false);
+  h.visibility(true);
+  const start = h.requests.length;
+  await pumpResourceView(view);
+  assert.equal(h.render().hasPending, true);
+  assert.equal(JSON.stringify([...h.outboxes]), pending);
+  assert.equal(h.commits.length, commits);
+  assert.equal(h.counts().seals, seals);
+  assert.ok(!h.requests.slice(start).some((r) => r.service === "portfolio"));
+  view.close();
+  h.unmount();
+});
+
+test("visibility recovery neither submits an unsaved preview nor bypasses a pending source mutation", async () => {
+  const preview = harness();
+  await unlocked(preview);
+  await preview.render().importFile(file);
+  assert.ok(preview.render().preview);
+  const previewView = sharedResourceView(preview);
+  preview.visibility(false);
+  preview.visibility(true);
+  await pumpResourceView(previewView);
+  assert.equal(
+    preview.render().preview,
+    null,
+    "existing hidden-page plaintext cleanup still discards unsaved preview",
+  );
+  assert.equal(preview.commits.length, 0);
+  assert.equal(preview.counts().seals, 0);
+  previewView.close();
+  preview.unmount();
+
+  const mutation = harness();
+  await unlocked(mutation);
+  mutation.failMutation("after");
+  await mutation.render().reviewSourceChange("disconnect");
+  await mutation.render().confirmSourceChange();
+  assert.ok(mutation.render().sourceMutation);
+  const journal = JSON.stringify([...mutation.sourcePackets]),
+    operation = mutation.render().sourceMutation.operationId,
+    counts = mutation.mutationCounts(),
+    view = sharedResourceView(mutation);
+  mutation.visibility(false);
+  mutation.visibility(true);
+  const start = mutation.requests.length;
+  await pumpResourceView(view);
+  assert.equal(mutation.render().sourceMutation.operationId, operation);
+  assert.equal(JSON.stringify([...mutation.sourcePackets]), journal);
+  assert.deepEqual(mutation.mutationCounts(), counts);
+  assert.ok(!mutation.requests.slice(start).some((r) => r.service === "portfolio"));
+  view.close();
+  mutation.unmount();
+});
+
+test("late restored snapshot cannot cross explicit lock logout or another owner", async () => {
+  for (const change of ["lock", "logout", "owner"]) {
+    const h = harness();
+    await unlocked(h);
+    await h.render().importFile(file);
+    await h.render().save();
+    const view = sharedResourceView(h),
+      held = deferred();
+    h.visibility(false);
+    h.holdBody(held);
+    h.visibility(true);
+    await pumpResourceView(view);
+    assert.ok(h.bodyReads() > 0);
+    if (change === "lock") h.render().lock();
+    else
+      h.auth(
+        change === "logout"
+          ? { status: "anonymous", sessionKey: null, profile: null }
+          : { status: "authenticated", sessionKey: "owner_b:1", profile: { uid: "owner_b" } },
+      );
+    h.render();
+    held.resolve();
+    await pumpResourceView(view);
+    assert.equal(h.render().content, null, change);
+    assert.equal(h.render().preview, null, change);
+    assert.equal(h.render().displayCache.holdings.size, 0, change);
+    view.close();
+    h.unmount();
+  }
+});
 
 test("shared unlock restores missing Portfolio metadata only after visible resource entry, through the real readStored path", async () => {
   const h = harness({ sharedUnlock: true, sharedResume: true });
