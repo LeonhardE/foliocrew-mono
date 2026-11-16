@@ -249,8 +249,15 @@ class QuoteService:
             at = result["sourceAsOf"]
             if at and now - datetime.fromisoformat(at).timestamp() > 7 * 86400:
                 return None
+            updated = entry.updated_at
+            if (
+                type(updated) not in (int, float)
+                or not fetched <= updated < fetched + 1
+                or updated > now
+            ):
+                return None
             until = value["_refreshAfter"]
-            if type(until) not in (int, float) or not fetched <= until <= fetched + TTL:
+            if type(until) not in (int, float) or not updated <= until <= updated + TTL:
                 return None
             if result["price"] is not None and (
                 now >= until or (at and now - datetime.fromisoformat(at).timestamp() > 86400)
