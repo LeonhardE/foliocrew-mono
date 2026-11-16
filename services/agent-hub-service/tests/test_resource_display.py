@@ -185,14 +185,20 @@ class ResourceDisplayTests(unittest.TestCase):
                 self.assertEqual(
                     [len(x["request"]["documents"]) for x in gets], [1, count, 1 + 2 * count]
                 )
-                self.assertEqual(sum(kind == "begin" for kind, _ in self.rpc.calls), 2)
+                self.assertEqual(sum(kind == "begin" for kind, _ in self.rpc.calls), 0)
                 self.assertEqual(sum(kind == "commit" for kind, _ in self.rpc.calls), 2)
                 self.assertTrue(
                     all(
                         not x["request"]["writes"] for kind, x in self.rpc.calls if kind == "commit"
                     )
                 )
-                self.assertTrue(all(x["request"]["transaction"] for x in gets))
+                self.assertTrue(
+                    all(
+                        x["request"].get("transaction")
+                        or x["request"]["new_transaction"]._pb.WhichOneof("mode") == "read_write"
+                        for x in gets
+                    )
+                )
 
     def test_active_vault_without_registered_sources_is_full_and_does_not_invent_aliases(self):
         path = document_path("hub_vaults", self.f.owner)
@@ -365,18 +371,15 @@ class ResourceDisplayTests(unittest.TestCase):
                 self.service(store).read(UID)
         # A malformed SDK response cannot masquerade as confirmed alias absence.
         self.rpc.documents.pop(self.client.document(alias)._document_path)
-        from app.store import FirestoreTransaction
+        original = self.rpc.batch_get_documents
+        alias_name = self.client.document(alias)._document_path
 
-        original = FirestoreTransaction.get_many
-
-        def missing(unit, paths, **kwargs):
-            value = original(unit, paths, **kwargs)
-            if alias in value:
-                value.pop(alias)
-            return value
+        def missing(**kwargs):
+            rows = list(original(**kwargs))
+            return iter(row for row in rows if (row.found.name or row.missing) != alias_name)
 
         with (
-            patch.object(FirestoreTransaction, "get_many", missing),
+            patch.object(self.rpc, "batch_get_documents", missing),
             self.assertRaises(StoreUnavailable),
         ):
             self.service(self.firestore).read(UID)

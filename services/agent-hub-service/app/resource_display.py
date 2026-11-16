@@ -139,7 +139,12 @@ class ResourceDisplayService:
                 return current_scope, _listing(row, owner, row["vaultId"], loaded)
 
             stage_name, stage = "after", clock()
-            final_scope, names = self.vaults.store.transact(after)
+            snapshot = getattr(self.vaults.store, "read_snapshot", None)
+            final_scope, names = (
+                snapshot(lambda: paths, after)
+                if callable(snapshot)
+                else self.vaults.store.transact(after)
+            )
             timing["after"] = clock() - stage
             stage_name = None
             remaining(deadline, clock)

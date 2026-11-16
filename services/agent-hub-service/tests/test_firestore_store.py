@@ -44,18 +44,17 @@ class MemoryRpc:
 
     def batch_get_documents(self, **kwargs):
         self.record("get", kwargs)
-        return iter(
-            [
-                BatchGetDocumentsResponse(
-                    found=Document(
-                        name=name, fields=encode_dict(copy.deepcopy(self.documents[name]))
-                    )
-                )
-                if name in self.documents
-                else BatchGetDocumentsResponse(missing=name)
-                for name in kwargs["request"]["documents"]
-            ]
-        )
+        rows = [
+            BatchGetDocumentsResponse(
+                found=Document(name=name, fields=encode_dict(copy.deepcopy(self.documents[name])))
+            )
+            if name in self.documents
+            else BatchGetDocumentsResponse(missing=name)
+            for name in kwargs["request"]["documents"]
+        ]
+        if "new_transaction" in kwargs["request"]:
+            rows.insert(0, BatchGetDocumentsResponse(transaction=b"synthetic-hub-transaction"))
+        return iter(rows)
 
     def commit(self, **kwargs):
         self.record("commit", kwargs)
