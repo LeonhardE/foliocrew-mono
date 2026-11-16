@@ -28,6 +28,7 @@ from folioview_shared.encrypted.schema import validate_schema
 from folioview_shared.http import PrivateRoute
 from folioview_shared.identity import owner_key
 
+from ._catalogue_timings import CatalogueTimings
 from .api import Owner, Service, _invoke, transport
 from .catalogue_paths import FenceKeyHints
 from .fences import _state, fence_path
@@ -199,18 +200,30 @@ class CatalogueSources:
         self.clock, self.wall_clock = clock, wall_clock
 
     def discover(self, uid, sources, *, deadline=None):
+        timings = CatalogueTimings()
+        try:
+            return self._discover(uid, sources, deadline=deadline, timings=timings)
+        finally:
+            try:
+                timings.emit()
+            except Exception:
+                pass  # Observability must never replace the original outcome.
+
+    def _discover(self, uid, sources, *, deadline, timings):
         deadline = min(
             self.clock() + TOTAL_SECONDS,
             deadline if deadline is not None else self.clock() + TOTAL_SECONDS,
         )
         credentials, failures = {}, set()
         locks = {name: threading.Lock() for name in self.origins}
-        with httpx.Client(
-            trust_env=False,
-            follow_redirects=False,
-            transport=self.transport,
-            limits=httpx.Limits(max_connections=4, max_keepalive_connections=2),
-        ) as client:
+        with timings.setup():
+            client = httpx.Client(
+                trust_env=False,
+                follow_redirects=False,
+                transport=self.transport,
+                limits=httpx.Limits(max_connections=4, max_keepalive_connections=2),
+            )
+        with client:
 
             def prepare(service):
                 if not locks[service].acquire(timeout=remaining(deadline, self.clock)):
@@ -229,9 +242,10 @@ class CatalogueSources:
                                 or self.origins["user"] == self.origins["portfolio"]
                             ):
                                 raise ContractError("authorization_unavailable")
-                            token = self.token_factory(
-                                upstream, deadline=deadline, clock=self.clock
-                            )
+                            with timings.producers[service].measure("token"):
+                                token = self.token_factory(
+                                    upstream, deadline=deadline, clock=self.clock
+                                )
                             remaining(deadline, self.clock)
                             if (
                                 type(token) is not str
@@ -256,9 +270,10 @@ class CatalogueSources:
                                 if service == "user"
                                 else ["holdings"],
                             }
-                            delegation = self.signer_factory().sign(
-                                claims, deadline=deadline, budget_clock=self.clock
-                            )
+                            with timings.producers[service].measure("sign"):
+                                delegation = self.signer_factory().sign(
+                                    claims, deadline=deadline, budget_clock=self.clock
+                                )
                             remaining(deadline, self.clock)
                             if (
                                 type(delegation) is not str
@@ -290,27 +305,29 @@ class CatalogueSources:
                         kwargs["content"] = canonical_json(body)
                     stage = "producer_request"
                     read_budget = remaining(deadline, self.clock, maximum=8.0)
-                    with client.stream(
-                        "GET" if body is None else "POST",
-                        self.origins[service] + path,
-                        headers=headers,
-                        timeout=httpx.Timeout(min(4.0, read_budget), read=read_budget),
-                        **kwargs,
-                    ) as response:
-                        stage = "response_status"
-                        if response.status_code != 200:
-                            # Never read, persist or forward a producer's error body.
-                            raise _ProducerRefusal(response.status_code)
-                        stage = "response_media_type"
-                        if (
-                            response.headers.get("content-type", "").split(";", 1)[0]
-                            != "application/json"
-                        ):
-                            raise ContractError("source_unavailable")
-                        stage = "response_bytes"
-                        raw = bounded_bytes(response, deadline, self.clock)
-                        stage = "response_json"
-                        value = strict_json_loads(raw, max_bytes=MAX_SOURCE_BYTES)
+                    with timings.producers[service].measure("producer_io"):
+                        with client.stream(
+                            "GET" if body is None else "POST",
+                            self.origins[service] + path,
+                            headers=headers,
+                            timeout=httpx.Timeout(min(4.0, read_budget), read=read_budget),
+                            extensions={"trace": timings.producers[service].trace},
+                            **kwargs,
+                        ) as response:
+                            stage = "response_status"
+                            if response.status_code != 200:
+                                # Never read, persist or forward a producer's error body.
+                                raise _ProducerRefusal(response.status_code)
+                            stage = "response_media_type"
+                            if (
+                                response.headers.get("content-type", "").split(";", 1)[0]
+                                != "application/json"
+                            ):
+                                raise ContractError("source_unavailable")
+                            stage = "response_bytes"
+                            raw = bounded_bytes(response, deadline, self.clock)
+                            stage = "response_json"
+                            value = strict_json_loads(raw, max_bytes=MAX_SOURCE_BYTES)
                     return value
                 except Exception as error:
                     _refusal(service, stage, error)

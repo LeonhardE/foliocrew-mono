@@ -183,6 +183,25 @@ identities, resource references, credentials, response bodies and exception mess
 Closed `uvicorn.error.hub_catalogue` timing diagnostics report source count, completion and before/
 discovery/after/total durations, including failed reads, without adding identifiers or content.
 
+Two additional fixed `uvicorn.error.hub_catalogue_producer` INFO observations aggregate `user`
+and `portfolio` work per discovery. They report `token_ms`, `sign_ms`,
+`shared_client_setup_ms`, `producer_io_ms`, `connect_tcp_ms`, `start_tls_ms` and capped call
+counts. The shared client setup duration is repeated in both rows and must not be summed.
+Token time includes its existing fresh metadata HTTP/client work; signing includes the existing
+signer/public-key checks. Producer I/O covers the original response stream, bounded bytes and
+strict JSON decoding, not just remote-server time. No request, credential, identity, resource,
+URL, response header/body or exception value is inspected or retained by the observer.
+
+The [HTTPX trace extension](https://www.python-httpx.org/advanced/extensions/) is used only on
+the original producer requests. Exactly six
+`connection.{connect_tcp,start_tls}.{started,complete,failed}` events contribute durations;
+their `info` arguments are ignored entirely. HTTPX/HTTPcore event names can vary by version;
+missing events/transports produce `not_observed`, not a measured zero. Invalid clocks,
+unfinished events or more than 64 samples produce `unknown`; logger/observer failures drop
+only diagnostics. The existing deadline clock, credentials, retries, requests, response limits,
+fallback and DTOs are unchanged. No HTTP debug logging, new request, cache or connection pool
+is enabled. These observations justify later measurement, not a latency or two-second claim.
+
 Hub verifies its current vault, signed registry checkpoint/key epoch, source refs and source fences
 before RPCs and again afterward in separate read transactions. Changes return a conflict rather than
 old active discovery. Each context batches its source fences using the existing store adapter.
