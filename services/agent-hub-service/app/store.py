@@ -22,6 +22,7 @@ from folioview_shared.encrypted.reference_history_v2 import (
     decode_storage_history_v2,
 )
 
+from .catalogue_paths import FenceKeyHints
 from .registry_reads import RegistryPrefixCache
 
 COLLECTIONS = frozenset(
@@ -346,6 +347,7 @@ class SQLiteHubStore:
         self.path = str(path)
         self.project = project
         self.database = database
+        self._catalogue_fence_keys = FenceKeyHints()
         if self.path == ":memory:":
             raise ValueError("Use a private file for transactional local storage.")
         Path(self.path).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -484,6 +486,7 @@ class FirestoreHubStore:
             raise StoreUnavailable
         self.project = project
         self.database = database
+        self._catalogue_fence_keys = FenceKeyHints()
         self.client = (
             client if client is not None else firestore.Client(project=project, database=database)
         )
