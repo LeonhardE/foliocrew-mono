@@ -610,12 +610,20 @@ that skips the failed Portfolio read. A failed retry remains a failure; the lock
 recovery path is unchanged.
 
 A visible writable shared-unlock resume can restore source selection before source metadata or
-content has been read. In that state Resources performs one `readStored` per Owner/vault generation
-and canonical selected source, through the existing fresh-vault and Portfolio authority path. It
-requires complete writable unlock, an existing source, and no content/metadata, preview, new-source
-flow, unfinished mutation, busy state or error. Hidden pages, read-only/device-approval sessions,
-legitimate empty sources and already-restored content do not trigger this recovery. Failure stays
-on the existing explicit retry path; route reentry does not create an automatic retry loop.
+content has been read. Resources also clears the selected head metadata along with plaintext when
+the document becomes hidden: an old empty head is not evidence that the source is still empty after
+returning. For an unread selected source or a saved head whose content is missing, Resources performs
+one `readStored` per Owner/vault/display-cache generation and canonical selected source, through the
+existing fresh-vault and Portfolio authority path. Complete writable unlock is required; previews,
+new-source flows, unfinished mutations or uploads, busy state and errors keep their original guards.
+Hidden/inactive pages and read-only/device-approval sessions do not start this recovery. A successful
+empty head in the current display generation and already-restored content do not trigger another
+read. Failure stays on the explicit retry path; route reentry and repeated visibility events do not
+create an automatic retry loop. Unknown or unread saved holdings show the existing delayed loading
+status and cannot expose an actionable empty importer or position editor; only a confirmed empty
+head or an explicit new-source flow can start from empty. The source caption waits for actual
+content instead of guessing a CSV source. Local pending-operation recovery records remain intact,
+and this read never replays a save or source mutation.
 
 Task homepage automatic reads use one fixed Owner-only
 `POST /api/v3/tasks/{vault}/overview/query` shared by task metadata, task-center capabilities,

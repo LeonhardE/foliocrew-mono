@@ -296,6 +296,156 @@ const managed = {
   },
 };
 
+test("unknown or unloaded saved holdings render checking or error, not an actionable empty importer", () => {
+  for (const locale of ["en", "zh", "zh-Hant"]) {
+    const labels = require(`../messages/${locale}.json`).resources;
+    for (const sourceMetadata of [null, managed.sourceMetadata]) {
+      const html = render({ ...managed, sourceMetadata, busy: null }, locale);
+      assert.ok(!html.includes('type="file"'));
+      assert.ok(
+        !/<p class="note">Wealthsimple[\s\S]*?<\/p>/.test(html),
+        "unknown contents do not guess a CSV source caption",
+      );
+      const view = interactiveWorkspace({ ...managed, sourceMetadata, busy: null }, locale);
+      const loading = view.all(
+        view.draw(),
+        (node) => node.type?.name === "LoadingIndicator" && node.props.label === labels.loading,
+      );
+      assert.equal(loading.length, 1);
+      assert.equal(
+        loading[0].props.busy,
+        true,
+        "the existing delayed status indicator receives the real unresolved state",
+      );
+      view.close();
+    }
+    const failed = render(
+      { ...managed, sourceMetadata: null, error: "service_unavailable" },
+      locale,
+    );
+    assert.ok(failed.includes(labels.errors.service_unavailable));
+    assert.ok(!failed.includes('type="file"'));
+    const empty = render(
+      {
+        ...managed,
+        sourceMetadata: {
+          ...managed.sourceMetadata,
+          snapshotId: null,
+          revision: 0,
+          snapshotSourceEpoch: null,
+        },
+      },
+      locale,
+    );
+    assert.ok(
+      empty.includes('type="file"'),
+      "only a confirmed empty head exposes the empty importer",
+    );
+    const emptyView = interactiveWorkspace(
+      {
+        ...managed,
+        sourceMetadata: {
+          ...managed.sourceMetadata,
+          snapshotId: null,
+          revision: 0,
+          snapshotSourceEpoch: null,
+        },
+      },
+      locale,
+    );
+    assert.ok(
+      emptyView
+        .all(
+          emptyView.draw(),
+          (node) => node.type?.name === "LoadingIndicator" && node.props.label === labels.loading,
+        )
+        .every((node) => !node.props.busy),
+    );
+    emptyView.close();
+  }
+});
+
+test("loaded source captions use actual manual or imported content and keep selection controls", () => {
+  const manual = resourceTest.compile("../lib/holdings-facts.ts").asFacts(content);
+  manual.data.importSnapshot = null;
+  manual.data.editKind = "manual";
+  for (const locale of ["en", "zh", "zh-Hant"]) {
+    const messages = require(`../messages/${locale}.json`).resources;
+    assert.ok(
+      render({ ...managed, content: manual }, locale).includes(messages.editing.manualSource),
+    );
+    assert.match(render({ ...managed, content }, locale), /<p class="note">Wealthsimple/);
+    assert.ok(
+      render({ ...managed, sourceMetadata: null }, locale).includes(messages.lifecycle.settings),
+    );
+  }
+});
+
+function interactiveWorkspace(model, locale = "en") {
+  const { hooks, jsx, all } = require("./resource-ui-harness.cjs"),
+    ui = hooks(),
+    Editor = () => null;
+  const mod = resourceTest.compile("../components/ResourcesPanel.tsx", {
+    react: ui.react,
+    "react/jsx-runtime": { jsx, jsxs: jsx },
+    "next-intl": {
+      useTranslations: (namespace) =>
+        createTranslator({ locale, messages: require(`../messages/${locale}.json`), namespace }),
+    },
+    "next/dynamic": { __esModule: true, default: () => () => null },
+    "@/components/useHoldingsWorkspace": {},
+    "@/lib/holdings-facts": resourceTest.compile("../lib/holdings-facts.ts"),
+    "./HoldingsEditor": { __esModule: true, default: Editor },
+    "./ResourceLibrary": { __esModule: true, default: () => null },
+    "./PasskeyHelp": {},
+    "./HoldingsSourceBar": {},
+    "./useDisplayNames": { useDisplayNames: () => ({ scope: "names" }) },
+    "./ResourcesPanel.module.css": { __esModule: true, default: {} },
+  });
+  return {
+    draw: () =>
+      ui.render(() => {
+        const panel = mod.default({ workspace: model });
+        const view = panel.type(panel.props);
+        const library = all(view, (node) => typeof node.props?.children === "function")[0];
+        const layout = library.props.children({ catalogue: { data: null, loading: false } });
+        const workspace = all(layout, (node) => node.type?.name === "Workspace")[0];
+        return workspace.type(workspace.props);
+      }),
+    all,
+    Editor,
+    close: ui.close,
+  };
+}
+
+test("unloaded or failed heads cannot open an editing preview; confirmed empty and explicit new-source paths remain usable", () => {
+  for (const patch of [
+    { sourceMetadata: null },
+    { sourceMetadata: managed.sourceMetadata },
+    { sourceMetadata: null, error: "service_unavailable" },
+    { sourceMetadata: { ...managed.sourceMetadata, snapshotId: null, revision: 0 }, empty: true },
+    { newSource: true, sourceMetadata: null, empty: true },
+  ]) {
+    let imports = 0;
+    const view = interactiveWorkspace({ ...managed, ...patch, importFile: () => imports++ });
+    let tree = view.draw();
+    const add = view.all(
+      tree,
+      (node) => node.type === "button" && node.props.children === "Add position",
+    )[0];
+    const inputs = view.all(tree, (node) => node.type === "input" && node.props.type === "file");
+    assert.equal(add.props.disabled, !patch.empty);
+    if (!add.props.disabled) add.props.onClick(); // Match native disabled-button event behavior.
+    tree = view.draw();
+    assert.equal(view.all(tree, (node) => node.type === view.Editor).length, patch.empty ? 1 : 0);
+    assert.equal(inputs.length, patch.empty ? 1 : 0);
+    if (inputs.length)
+      inputs[0].props.onChange({ target: { files: [{ name: "synthetic.csv" }], value: "" } });
+    assert.equal(imports, patch.empty ? 1 : 0);
+    view.close();
+  }
+});
+
 test("source controls explain actual access effects without exposing internal source IDs", () => {
   for (const locale of ["en", "zh"]) {
     const html = render(managed, locale, true);
@@ -385,5 +535,9 @@ test("uncertain creation offers original-result recovery without declaring a com
   assert.ok(recovery.includes("without creating a duplicate"));
   assert.ok(recovery.includes("Only a request that can no longer be submitted"));
   assert.ok(!html.includes("snapshot was saved"));
-  assert.match(html, /<input[^>]*type="file"[^>]*disabled/);
+  assert.ok(
+    !html.includes('type="file"'),
+    "unread existing holdings stay hidden behind creation recovery",
+  );
+  assert.match(html, /<button[^>]*disabled[^>]*>Add position<\/button>/);
 });

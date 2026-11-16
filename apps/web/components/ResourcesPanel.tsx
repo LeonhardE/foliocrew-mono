@@ -19,6 +19,14 @@ import { workspaceHoldingsPublication } from "@/lib/holdings-publication";
 
 const GUIDE =
   "https://help.wealthsimple.com/hc/en-ca/articles/35654428540571-Request-a-custom-statement";
+function storedContentMissing(model: HoldingsWorkspace) {
+  return (
+    !model.newSource &&
+    (model.sources ?? []).length > 0 &&
+    !model.content &&
+    (!model.sourceMetadata || model.sourceMetadata.snapshotId !== null)
+  );
+}
 function ValuationLoading() {
   const t = useTranslations("holdingsValuation");
   return <LoadingIndicator busy label={t("loadingPrices")} />;
@@ -321,6 +329,7 @@ function Workspace({
   const hiddenHistory =
     model.sourceMetadata?.state === "deleted" || model.sourceMutation?.action === "delete";
   const preview = hiddenHistory ? null : model.preview;
+  const missingStoredContent = storedContentMissing(model);
   const canImport =
     model.authenticated &&
     model.configured &&
@@ -331,11 +340,13 @@ function Workspace({
     !model.hasPending &&
     !model.sourceMutation &&
     !model.sourceCreationId &&
+    !missingStoredContent &&
     (!model.preview || model.preview.intent === "import") &&
     (model.newSource ||
       (model.sources ?? []).length === 0 ||
       model.sourceMetadata?.state === "active");
   const importVisible =
+    !missingStoredContent &&
     (importOpen || !model.content || Boolean(model.preview) || model.newSource) &&
     !["edit", "manual"].includes(model.preview?.intent ?? "");
   const errorKey = `errors.${model.error}`;
@@ -782,7 +793,19 @@ function Workspace({
             </section>
           )}
           <LoadingIndicator
-            busy={Boolean(model.busy === "reading")}
+            busy={Boolean(
+              model.busy === "reading" ||
+              (missingStoredContent &&
+                model.canWriteState &&
+                !model.needsDeviceApproval &&
+                !model.error &&
+                !model.preview &&
+                !model.hasPending &&
+                !model.sourceMutation &&
+                !model.sourceCreationId &&
+                (!model.sourceMetadata ||
+                  ["active", "disconnected"].includes(model.sourceMetadata.state))),
+            )}
             hasContent={Boolean(model.content)}
             label={t("loading")}
           />
@@ -880,7 +903,12 @@ function ResourcesView({
 }: ResourcesProps & { model: HoldingsWorkspace }) {
   const t = useTranslations("resources"),
     names = useDisplayNames(model, active);
-  const recoveryScope = JSON.stringify([model.owner, model.vault?.vaultId, model.vaultGeneration]);
+  const recoveryScope = JSON.stringify([
+    model.owner,
+    model.vault?.vaultId,
+    model.vaultGeneration,
+    model.displayCache?.revision,
+  ]);
   const recovered = useRef({ scope: recoveryScope, sources: new Set<string>() });
   if (recovered.current.scope !== recoveryScope)
     recovered.current = { scope: recoveryScope, sources: new Set<string>() };
@@ -898,6 +926,7 @@ function ResourcesView({
   useEffect(() => {
     if (
       !active ||
+      (typeof document !== "undefined" && document.visibilityState === "hidden") ||
       !model.authenticated ||
       !model.owner ||
       !model.configured ||
@@ -906,7 +935,8 @@ function ResourcesView({
       !model.canWriteState ||
       model.needsDeviceApproval ||
       !sourceKey ||
-      model.sourceMetadata ||
+      !storedContentMissing(model) ||
+      (model.sourceMetadata && !["active", "disconnected"].includes(model.sourceMetadata.state)) ||
       model.content ||
       model.preview ||
       model.importPreview ||
@@ -924,8 +954,8 @@ function ResourcesView({
       recovered.current.sources.has(sourceKey)
     )
       return;
-    // Shared unlock restores authority, not the selected Portfolio source. Read it once on
-    // visible entry, through the existing fresh-vault/authority path; failures need explicit retry.
+    // Shared unlock restores authority, not Portfolio content cleared on visibility loss.
+    // Recover once per display generation through the unchanged fresh-authority path.
     recovered.current.sources.add(sourceKey);
     void model.readStored();
   }, [active, model, recoveryScope, sourceKey]);

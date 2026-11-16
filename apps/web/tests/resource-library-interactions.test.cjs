@@ -516,7 +516,7 @@ test("visible writable resource recovery reads one missing selected source per O
     { canWriteState: false },
     { needsDeviceApproval: true },
     { configured: false },
-    { sourceMetadata: { state: "active" } },
+    { sourceMetadata: { state: "active", snapshotId: null } },
     { content: { data: { snapshotId: "cached" } } },
     { preview: {} },
     { importPreview: {} },
