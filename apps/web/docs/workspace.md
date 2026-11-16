@@ -632,8 +632,13 @@ original 32-task list, 20-row report limits and independent cursors. Up to four 
 task packets may be included; successful cached name versions are only bandwidth hints. All
 composition and original nested DTO parsing finishes before any part publishes, and the original
 two-worker name queue still verifies each uncached task. A null packet section does not complete
-missing names: only those names use the original packet query. Partial feeds retain real partial
-unread counts and cannot mark the homepage ready.
+missing names: only those names use the original packet query. Visibility restoration may retain
+metadata rows while clearing decrypted names. Name backfill waits for that read's validated metadata
+receipt and adopts its inline packets before using the original packet query. A superseded receipt
+cannot publish a late name or failure, and failed metadata reads require explicit retry. Receipt
+replay keeps the original timestamp; this coordination does not extend the 30-second freshness or
+remove the existing two-worker verification bound. Partial feeds retain real partial unread counts
+and cannot mark the homepage ready.
 
 The single overview cache is local to the task-page hooks and keyed by Owner login, vault,
 unlock generation and vault version. Its 30-second freshness uses the original receipt time,
