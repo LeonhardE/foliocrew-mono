@@ -201,3 +201,59 @@ compatible image/configuration while preserving current credential generations,
 revocations, Root history, original receipts and encrypted reports. Do not reopen
 the retired browser/financial paths or restore revoked credentials. Historical
 Owner reading remains available; explicit user reauthorization recovers access.
+
+## Explicit task-center gates and full-input operator guard
+
+`provider_connection_slots_enabled` and `task_center_enabled` are independent
+boolean inputs, both defaulting to `false`. They emit only their corresponding
+`HUB_PROVIDER_CONNECTION_SLOTS_ENABLED` and `HUB_TASK_CENTER_ENABLED` values as
+`0`/`1`. Slots require personal Agent mode; task center also requires slots.
+Personal Agent mode alone never enables either gate. Existing OAuth, producer
+trust and Owner admission requirements remain in force.
+
+Use the existing supervised **complete Hub tfvars / saved-plan administrator**
+path. The ordinary Hub pipeline remains disabled `inactive-v1`; this source
+change neither extends the closed deployment profile nor activates CI execution.
+Do not insert these fields into the active profile or use an ad hoc environment
+map or Console/gcloud toggle. Merging this source performs no configuration apply.
+
+Before a separately authorized real plan, privately copy the complete current
+reviewed Hub input. Retain every existing value, list and creation-only image pin;
+add only the two explicitly chosen booleans. Run the pure local guard first:
+
+```bash
+python3 infra/gcp/terraform/envs/prod/agent-hub/operator_inputs.py \
+  --baseline /absolute/private/current-hub-inputs.json \
+  --candidate /absolute/private/reviewed-hub-inputs.json \
+  --expected-baseline-sha256 <independently-reviewed-original-file-sha256>
+```
+
+The digest binds the **original bytes**, including formatting, not a reserialized
+object. Both inputs are validated before comparison. Unknown top-level/nested
+members, duplicate JSON members, non-finite JSON, null/string-coerced booleans and
+changes outside these two flags are refused. In particular, Terraform's handling
+of unknown or coercible tfvars values is not a substitute for this guard. Optional
+legacy fields and nullable optional verifier values retain their supported shape.
+Existing Terraform validation still checks its full origin/callback/registration
+contract. The guard emits only hashes, fixed type/equality flags, the two gate
+values and an optional local Owner-membership boolean; it never grants activation
+or claims current production membership. It does not run Terraform or cloud APIs.
+
+Verify current prerequisites and protected configuration through a separately
+approved safe source; a historical local input is insufficient. Freeze the
+current source/toolchain/lock/input hashes and correct **Hub target** GCS backend,
+then obtain an exclusive Hub state/configuration/image writer window. Bootstrap
+state is not Hub target state. Review a complete saved plan with normal locking:
+only the existing `module.agent_hub.terraform_data.configuration` controller and
+its dependent read may change, with exactly these two environment entries as the
+logical delta. Reject any other configuration, resource, IAM, storage, image,
+traffic, capacity or billing change. Apply only that exact reviewed binary after
+a separate cue. Preserve the existing conditional configuration writer.
+
+Enabling gates can increase ordinary request, database, signing and external
+provider usage despite unchanged fixed capacity. Obtain the user's required cost
+confirmation and approve a bounded acceptance workload before activation; source
+or PR-merge approval is not that confirmation. Do not add warming or a runner.
+Verify same-image Ready100 and all six identity/capacity/fee boundaries afterward.
+Rollback needs a fresh complete reviewed plan setting only these two gates false;
+it cannot erase signed operations, outstanding intents or retained receipts.

@@ -17,6 +17,8 @@ locals {
     secretSha256            = client.secret_sha256
   }])
   agent_owned_environment = {
+    HUB_PROVIDER_CONNECTION_SLOTS_ENABLED       = var.provider_connection_slots_enabled ? "1" : "0"
+    HUB_TASK_CENTER_ENABLED                     = var.task_center_enabled ? "1" : "0"
     HUB_AGENT_OWNED_ALLOWED_OWNER_SUBJECTS_JSON = jsonencode(var.agent_owned_allowed_owner_subjects)
     HUB_AGENT_OWNED_CREDENTIALS_ENABLED         = var.agent_owned_mode_enabled ? "1" : "0"
     HUB_AGENT_OWNER_URL                         = var.agent_owned_mode_enabled ? "${local.web_origin}/agents" : ""

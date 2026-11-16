@@ -189,6 +189,9 @@ run "personal_mode_is_closed_and_scale_to_zero_by_default" {
   command = plan
   assert {
     condition = (!var.agent_owned_mode_enabled && !var.persistent_mode_enabled &&
+      !var.provider_connection_slots_enabled && !var.task_center_enabled &&
+      output.creation_configuration.environment.HUB_PROVIDER_CONNECTION_SLOTS_ENABLED == "0" &&
+      output.creation_configuration.environment.HUB_TASK_CENTER_ENABLED == "0" &&
       output.creation_configuration.environment.HUB_AGENT_OWNED_CREDENTIALS_ENABLED == "0" &&
       output.creation_configuration.environment.HUB_AGENT_OWNED_ALLOWED_OWNER_SUBJECTS_JSON == "[]" &&
       output.creation_configuration.environment.HUB_AGENT_OWNER_URL == "" &&
@@ -211,6 +214,8 @@ run "explicit_personal_mode_uses_existing_hub_and_preregistered_providers" {
   }
   assert {
     condition = (output.creation_configuration.environment.HUB_AGENT_OWNED_CREDENTIALS_ENABLED == "1" &&
+      output.creation_configuration.environment.HUB_PROVIDER_CONNECTION_SLOTS_ENABLED == "0" &&
+      output.creation_configuration.environment.HUB_TASK_CENTER_ENABLED == "0" &&
       output.creation_configuration.environment.HUB_AGENT_OWNED_ALLOWED_OWNER_SUBJECTS_JSON == jsonencode(var.agent_owned_allowed_owner_subjects) &&
       output.creation_configuration.environment.HUB_AGENT_OWNER_URL == "https://web.example.invalid/agents" &&
       length([for name in keys(output.creation_configuration.environment) : name if startswith(name, "HUB_PERSISTENT_")]) == 6 &&
@@ -288,4 +293,70 @@ run "reject_combined_registration_over_application_budget" {
     agent_clients = [for i in range(2) : { provider = "chatgpt", client_id = "chatgpt-${i}", redirect_uris = [for j in range(4) : "https://other-agent.example.invalid/${i}/${j}/${join("", [for k in range(120) : "abcdefghij"])}"] }]
   }
   expect_failures = [var.agent_clients]
+}
+
+run "reject_slots_without_personal_mode" {
+  command = plan
+  variables { provider_connection_slots_enabled = true }
+  expect_failures = [var.provider_connection_slots_enabled]
+}
+run "reject_task_center_without_both_prerequisites" {
+  command = plan
+  variables { task_center_enabled = true }
+  expect_failures = [var.task_center_enabled]
+}
+run "reject_both_new_gates_without_personal_mode" {
+  command = plan
+  variables {
+    provider_connection_slots_enabled = true
+    task_center_enabled               = true
+  }
+  # An invalid prerequisite blocks downstream variable validation in Terraform.
+  expect_failures = [var.provider_connection_slots_enabled]
+}
+run "explicit_task_gates_change_only_two_existing_environment_entries" {
+  command = plan
+  variables {
+    agent_owned_mode_enabled           = true
+    agent_owned_allowed_owner_subjects = [sha256("synthetic-owner")]
+    connector                          = { oauth_enabled = true, muse_clients = [{ client_id = "synthetic-muse", redirect_uris = ["https://agent.example.invalid/callback"] }] }
+    agent_clients                      = [{ provider = "chatgpt", client_id = "synthetic-chatgpt", redirect_uris = ["https://other-agent.example.invalid/callback"] }]
+    sources                            = { user_origin = "https://user.example.invalid", portfolio_origin = "https://portfolio.example.invalid", portfolio_caller_email = "example-portfolio@example-project-1234.iam.gserviceaccount.com", trusted_portfolio_callers = { "112010400000000710080" = "example-portfolio@example-project-1234.iam.gserviceaccount.com" } }
+    provider_connection_slots_enabled  = true
+    task_center_enabled                = true
+  }
+  assert {
+    condition = output.creation_configuration == merge(run.explicit_personal_mode_uses_existing_hub_and_preregistered_providers.creation_configuration, {
+      environment = merge(run.explicit_personal_mode_uses_existing_hub_and_preregistered_providers.creation_configuration.environment, {
+        HUB_PROVIDER_CONNECTION_SLOTS_ENABLED = "1"
+        HUB_TASK_CENTER_ENABLED               = "1"
+      })
+    })
+    error_message = "Only the two independently selected flags may change; existing admission, trust, OAuth and all capacity fields remain exact."
+  }
+}
+run "slots_do_not_implicitly_enable_task_center" {
+  command = plan
+  variables {
+    agent_owned_mode_enabled           = true
+    agent_owned_allowed_owner_subjects = [sha256("synthetic-owner")]
+    connector                          = { oauth_enabled = true, muse_clients = [{ client_id = "synthetic-muse", redirect_uris = ["https://agent.example.invalid/callback"] }] }
+    sources                            = { user_origin = "https://user.example.invalid", portfolio_origin = "https://portfolio.example.invalid", portfolio_caller_email = "example-portfolio@example-project-1234.iam.gserviceaccount.com", trusted_portfolio_callers = { "112010400000000710080" = "example-portfolio@example-project-1234.iam.gserviceaccount.com" } }
+    provider_connection_slots_enabled  = true
+  }
+  assert {
+    condition     = output.creation_configuration.environment.HUB_PROVIDER_CONNECTION_SLOTS_ENABLED == "1" && output.creation_configuration.environment.HUB_TASK_CENTER_ENABLED == "0"
+    error_message = "Provider-slot selection must not activate task center."
+  }
+}
+run "reject_task_center_without_explicit_slots_in_valid_personal_mode" {
+  command = plan
+  variables {
+    agent_owned_mode_enabled           = true
+    agent_owned_allowed_owner_subjects = [sha256("synthetic-owner")]
+    connector                          = { oauth_enabled = true, muse_clients = [{ client_id = "synthetic-muse", redirect_uris = ["https://agent.example.invalid/callback"] }] }
+    sources                            = { user_origin = "https://user.example.invalid", portfolio_origin = "https://portfolio.example.invalid", portfolio_caller_email = "example-portfolio@example-project-1234.iam.gserviceaccount.com", trusted_portfolio_callers = { "112010400000000710080" = "example-portfolio@example-project-1234.iam.gserviceaccount.com" } }
+    task_center_enabled                = true
+  }
+  expect_failures = [var.task_center_enabled]
 }
