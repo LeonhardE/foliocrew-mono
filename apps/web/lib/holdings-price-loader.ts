@@ -72,7 +72,8 @@ export async function loadHoldingsPrices(args: {
   publish: (prices: PriceSet, progress: PriceProgress) => void;
   now?: () => number;
 }): Promise<{ prices: PriceSet; error: boolean }> {
-  const now = args.now ?? Date.now,
+  const request = args.fetch,
+    now = args.now ?? Date.now,
     at = new Date(now()).toISOString(),
     all = instruments(args.facts),
     wantedFx = fxLegs(args.facts, args.currency),
@@ -107,7 +108,7 @@ export async function loadHoldingsPrices(args: {
         cancelled,
         (async () =>
           readPublicValuation(
-            await args.fetch(args.origin + path, {
+            await request(args.origin + path, {
               method: "POST",
               credentials: "omit",
               cache: "no-store",

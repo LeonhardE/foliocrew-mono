@@ -295,6 +295,102 @@ test("fresh cached prices use two query-only transports at most, reuse the visit
   assert.equal(same.error, false);
   assert.equal(api.valuePortfolio(f, same.prices, "CAD").subtotal, "50");
 });
+test("native-style fetch receiver supports manual holdings cache reads and quote/FX refreshes", async () => {
+  for (const [quantity, unitCost, subtotal] of [
+    ["2", "150", "560"],
+    ["3", "155", "840"],
+  ]) {
+    const f = factsApi.editHoldings({
+      content: null,
+      base: null,
+      snapshotId: "snapshot_SYNTHETIC",
+      at,
+      newAccount: { accountId: "manual_account", displayName: "Synthetic manual account" },
+      edit: {
+        accountId: "manual_account",
+        assetId: null,
+        instrument: {
+          symbol: "AAPL",
+          market: "XNAS",
+          currency: "USD",
+          name: "Synthetic fixture",
+          assetType: "stock",
+        },
+        quantity,
+        unitCost,
+      },
+    });
+    const calls = [];
+    const result = await loader.loadHoldingsPrices({
+      facts: f,
+      currency: "CAD",
+      refresh: false,
+      origin: "https://market.invalid",
+      signal: new AbortController().signal,
+      now: () => Date.parse(at),
+      publish() {},
+      fetch: function (url, init) {
+        "use strict";
+        // A browser native fetch rejects the loader's arbitrary options object as its receiver.
+        assert.equal(this, undefined);
+        calls.push({ url, body: JSON.parse(init.body), credentials: init.credentials });
+        const cached = url.endsWith("cached=true"),
+          fx = url.includes("/fx");
+        return Promise.resolve(
+          reply(
+            fx
+              ? cached
+                ? batch(
+                    [
+                      {
+                        base: "USD",
+                        quote: "CAD",
+                        rate: null,
+                        status: "missing",
+                        source: "none",
+                        sourceAsOf: null,
+                        sourceDate: null,
+                        fetchedAt: at,
+                        reason: "upstream_unavailable",
+                        route: null,
+                      },
+                    ],
+                    "folioview.fx-batch.v1",
+                  )
+                : batch([rate("USD", "1.4")], "folioview.fx-batch.v1")
+              : cached
+                ? api.missingQuotes(api.instruments(f), at)
+                : batch(api.instruments(f).map((i) => quote(i, "200"))),
+          ),
+        );
+      },
+    });
+    assert.equal(result.error, false, JSON.stringify(calls));
+    assert.equal(calls.length, 4);
+    assert.deepEqual(
+      calls.map((c) => c.url),
+      [
+        "/api/valuation/quotes?cached=true",
+        "/api/valuation/fx?cached=true",
+        "/api/valuation/quotes",
+        "/api/valuation/fx",
+      ].map((p) => "https://market.invalid" + p),
+    );
+    for (const call of calls) {
+      assert.equal(call.credentials, "omit");
+      assert.deepEqual(
+        call.body,
+        call.url.includes("/quotes")
+          ? { instruments: [{ symbol: "AAPL", market: "XNAS", currency: "USD" }] }
+          : { pairs: [{ base: "USD", quote: "CAD" }] },
+      );
+    }
+    const valued = api.valuePortfolio(f, result.prices, "CAD");
+    assert.equal(valued.valuedCount, 1);
+    assert.equal(valued.complete, true);
+    assert.equal(valued.subtotal, subtotal);
+  }
+});
 test("large cold sources receive all cache batches but a refresh pass never expands the producer quota or loops on missing quotes", async () => {
   const f = facts(),
     seed = f.data.accounts[0].positions[0];
@@ -699,6 +795,125 @@ test("inactive pages make no price requests and valid display selection survives
   await tick();
   assert.equal(calls, 2);
   b.close();
+});
+test("resetting a restored source currency schedules the actual component and hides reset without fetching", async () => {
+  const Cache = compile("../lib/workspace-cache.ts").WorkspaceDisplayCache,
+    displayCache = new Cache();
+  displayCache.bind("owner:1");
+  const f = facts(),
+    model = {
+      owner: "owner",
+      authenticated: true,
+      phase: "unlocked",
+      selectedSourceId: "source_A",
+      editScope: "edit_A",
+      displayCache,
+      content: f,
+      sourceMetadata: {
+        state: "active",
+        source: { resourceRef: { incarnation: "inc_A" }, sourceEpoch: 1 },
+        authorityVersion: 1,
+      },
+    };
+  let calls = 0;
+  function mount() {
+    const h = hooks();
+    let scheduled = true,
+      tree;
+    const react = {
+      ...h.react,
+      useMemo: (fn) => fn(),
+      useState(initial) {
+        const [value, update] = h.react.useState(initial);
+        return [
+          value,
+          (next) =>
+            update((before) => {
+              const after = typeof next === "function" ? next(before) : next;
+              if (!Object.is(before, after)) scheduled = true;
+              return after;
+            }),
+        ];
+      },
+    };
+    const hook = compile(
+      "../components/useHoldingsValuation.ts",
+      {
+        react,
+        "@/lib/holdings-facts": factsApi,
+        "@/lib/holdings-valuation": api,
+        "@/lib/holdings-price-loader": loader,
+      },
+      {
+        process: { env: {} },
+        fetch: async (url) => {
+          calls++;
+          return reply(url.includes("/fx") ? prices(f).fx : prices(f).quotes[0]);
+        },
+      },
+    );
+    const component = compile("../components/HoldingsValuation.tsx", {
+      react,
+      "react/jsx-runtime": { jsx, jsxs: jsx, Fragment: "fragment" },
+      "next-intl": { useTranslations: () => (key) => key, useLocale: () => "en" },
+      "./CurrencyPreferencesProvider": {
+        useCurrencyPreferences: () => ({ defaultPortfolioCurrency: "CAD", loaded: true }),
+      },
+      "./useHoldingsValuation": hook,
+      "@/lib/holdings-facts": factsApi,
+      "@/lib/holdings-valuation": api,
+      "./HoldingsValuation.module.css": { default: {} },
+    });
+    return {
+      close: h.close,
+      flush() {
+        if (scheduled) tree = h.render(() => component.default({ model }));
+        scheduled = false;
+        return tree;
+      },
+    };
+  }
+  const first = mount();
+  first.flush();
+  await tick();
+  await tick();
+  all(first.flush(), (n) => n.type === "select")[0].props.onChange({ target: { value: "USD" } });
+  assert.equal(all(first.flush(), (n) => n.type === "select")[0].props.value, "USD");
+  first.close();
+
+  const empty = copy(f);
+  empty.state = "empty";
+  empty.data.snapshotId = "snapshot_EMPTY";
+  empty.data.accounts.forEach((account) => {
+    account.positions = [];
+    account.balances = [];
+  });
+  model.selectedSourceId = "source_B";
+  model.content = empty;
+  const other = mount();
+  other.flush();
+  await tick();
+  await tick();
+  other.close();
+  model.selectedSourceId = "source_A";
+  model.content = f;
+
+  const restored = mount();
+  restored.flush();
+  await tick();
+  await tick();
+  let tree = restored.flush();
+  assert.equal(all(tree, (n) => n.type === "select")[0].props.value, "USD");
+  const before = calls,
+    reset = all(tree, (n) => n.type === "button" && n.props.children === "reset");
+  assert.equal(reset.length, 1);
+  reset[0].props.onClick();
+  tree = restored.flush();
+  assert.equal(all(tree, (n) => n.type === "select")[0].props.value, "CAD");
+  assert.equal(all(tree, (n) => n.type === "button" && n.props.children === "reset").length, 0);
+  await tick();
+  assert.equal(calls, before);
+  restored.close();
 });
 test("leaving the active page aborts pending quote transports without losing already cached display data", async () => {
   const h = hooks(),
