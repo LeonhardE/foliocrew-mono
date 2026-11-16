@@ -522,6 +522,9 @@ Manual/Scheduled modes, user-selected days/time/IANA zone, task-local manual
 requests, and Trash/restore. Schedule previews skip DST gaps and choose the first
 fold occurrence. An Agent-reported enabled plan is distinct from a proven native
 schedule or a completed Run. Existing rollout gates remain unchanged.
+After capabilities load successfully, task details explain when immediate execution is not
+enabled for the account. Loading or failed capability reads do not show that conclusion;
+existing run/delete guards and Agent confirmation requirements remain unchanged.
 
 Root-bound controls are signed only in the Worker and sealed into a separate
 IndexedDB outbox before transport. Unknown saves retrieve the original receipt,

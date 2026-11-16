@@ -1569,6 +1569,7 @@
     "delete": "Delete task",
     "viewProgress": "View progress",
     "runNow": "Run now",
+    "runNotEnabled": "Run now is not enabled for this account.",
     "selectTask": "Choose a task",
     "selectTaskHint": "Or create a task to get started.",
     "progress": "Run progress",

@@ -1138,6 +1138,9 @@ export function TaskCenterView({
                         </button>
                       </p>
                     )}
+                    {center.capabilityState === "ready" && !center.enabled && (
+                      <p className={styles.hint}>{t("runNotEnabled")}</p>
+                    )}
                     <footer className={styles.footer}>
                       <button
                         className={styles.textButton}

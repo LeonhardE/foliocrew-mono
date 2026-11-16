@@ -123,6 +123,22 @@ for (const locale of ["en", "zh", "zh-Hant"]) {
     assert.ok(html.includes(messages.selectTaskHint));
     assert.doesNotMatch(html, /MISSING_MESSAGE|taskCenter\.|_PRIVATE/);
   });
+  test(`the actual ${locale} task shows account run availability only after capabilities are confirmed`, () => {
+    const messages = require(`../messages/${locale}.json`).taskCenter;
+    const html = render({ locale, centerPatch: { enabled: false, capabilityState: "ready" } });
+    assert.ok(html.includes(messages.runNotEnabled));
+    for (const label of [messages.delete, messages.runNow])
+      assert.ok(html.includes(`disabled="">${label}</button>`), label);
+    for (const capabilityState of ["loading", "error"])
+      assert.ok(
+        !render({ locale, centerPatch: { enabled: false, capabilityState } }).includes(
+          messages.runNotEnabled,
+        ),
+        capabilityState,
+      );
+    assert.ok(!render({ locale }).includes(messages.runNotEnabled));
+    assert.doesNotMatch(html, /MISSING_MESSAGE|taskCenter\.|HUB_|_PRIVATE/);
+  });
   test(`the actual ${locale} task view localizes unavailable names, original-save notices, drafts and unknown-error fallback`, () => {
     const messages = require(`../messages/${locale}.json`).taskCenter;
     const html = render({

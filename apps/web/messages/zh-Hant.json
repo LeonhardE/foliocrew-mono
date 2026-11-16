@@ -1569,6 +1569,7 @@
     "delete": "刪除任務",
     "viewProgress": "檢視進度",
     "runNow": "立即執行",
+    "runNotEnabled": "此帳戶暫未啟用立即執行。",
     "selectTask": "選擇一項任務",
     "selectTaskHint": "也可以新建任務，從一個目標開始。",
     "progress": "執行進度",
