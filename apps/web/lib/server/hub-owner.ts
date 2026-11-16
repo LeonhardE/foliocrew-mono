@@ -37,7 +37,6 @@ import {
   signedObject,
   record,
   createFirebaseVerifier,
-  createAdmission,
   forwardResponse,
   proxyClock,
   timeProxyResponse,
@@ -584,16 +583,13 @@ export function createHubProxy(options: Options = {}) {
   const env = options.env ?? process.env,
     send = options.fetch ?? fetch,
     now = options.now ?? Date.now;
-  const verifyOwner = createFirebaseVerifier(send, now),
-    admission = createAdmission(now);
+  const verifyOwner = createFirebaseVerifier(send, now);
   return async function hubProxy(request: Request): Promise<Response> {
     const started = proxyClock();
-    let releaseGlobal: (() => void) | undefined, releaseOwner: (() => void) | undefined;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), options.deadlineMs ?? 12000);
     const signal = AbortSignal.any([request.signal, controller.signal]);
     try {
-      releaseGlobal = admission.enter();
       const config = hubConfiguration(env);
       if (!config) fail("authorization_unavailable");
       const { path, rule } = route(request);
@@ -603,7 +599,6 @@ export function createHubProxy(options: Options = {}) {
         signal,
       );
       const uid = await verifyOwner(token, config!.project, signal);
-      releaseOwner = admission.owner(uid);
       const response = await until(
         send(config!.origin + path, {
           method: request.method,
@@ -681,14 +676,11 @@ export function createHubProxy(options: Options = {}) {
     } catch (error) {
       const response = errorResponse(
         error instanceof Failure ? error.code : "authorization_unavailable",
-        error instanceof Failure ? error.admissionRetrySeconds : undefined,
       );
       if (request.method === "GET" && controller.signal.aborted && !request.signal.aborted)
         response.headers.set("X-FolioView-Read-Failure", "deadline");
       return timeProxyResponse(response, started);
     } finally {
-      releaseOwner?.();
-      releaseGlobal?.();
       clearTimeout(timer);
     }
   };

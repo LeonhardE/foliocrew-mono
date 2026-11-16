@@ -42,15 +42,19 @@ and 1 KiB authority limits; responses are bounded to 1 MiB. Duplicate JSON keys,
 and unsafe numbers are rejected. Valid ciphertext/signature bytes and operation identifiers are
 forwarded unchanged; the proxy never retries an upstream write. The total deadline is 12 seconds including bodies,
 verification and identity fetches; each shared identity/key fetch has its own 4-second ceiling.
-For each target, per-process admission is bounded to 16 requests, four active requests and 30 attempts per minute
-per verified UID, with at most 1,024 tracked UID windows. These local bounds do not replace
-separate deployment-wide cost controls. A rejected admission carries the remaining
-bounded cooldown and a first-party marker proving that nothing was forwarded. The
-Agent connection UI waits once (at most 60 seconds) and retries the same read or
-operation-ID-bound sealed write within its existing 120-second action deadline.
-Lock, hiding, account changes or cancellation abort that wait. Generic service
-errors and unknown commits never qualify; upstream headers cannot supply the marker.
-The original admission limits and all authority checks remain unchanged.
+The owner forwarders apply no application-specific per-UID request/minute quotas,
+active-request ceilings or tracked-UID admission map. Ordinary multi-tab reads and
+explicit writes still pass every original authentication and protocol check, with
+bounded request/response bytes, cancellation and the same 12-second deadline.
+The proxy no longer emits its former admission-retry marker. Upstream error headers
+cannot create that marker or authorize automatic replay of an unknown write.
+
+This code does not change Cloud Run concurrency, min/max instances, CPU, memory,
+billing mode, IAM, APIs, resources or budget configuration. Actual requests and
+backend work continue to incur the existing usage-based charges; removing the
+application quota does not make that work free. Any cloud capacity or billing
+configuration change requires a separate budget-impact decision and user approval.
+
 Only fixed formal application errors cross the boundary;
 metadata/IAM/network/key-fetch failures become retryable service errors, not a user logout.
 

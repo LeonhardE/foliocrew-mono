@@ -829,11 +829,9 @@ test("caller cancellation fences a pending upstream response without waiting for
   pending.resolve(jsonResponse());
 });
 
-test("per-owner concurrency denial cannot release another live slot and independent owners remain usable", async () => {
+test("multiple tabs for one verified Owner are not rejected by application active slots", async () => {
   const pending = [];
   const h = harness({
-    // This case holds requests to test admission, rather than elapsed time. Use
-    // the production ceiling so concurrent crypto/build workers cannot expire it.
     deadlineMs: 12000,
     upstream: () => {
       const reply = deferred();
@@ -841,26 +839,18 @@ test("per-owner concurrency denial cannot release another live slot and independ
       return reply.promise;
     },
   });
-  const running = Array.from({ length: 4 }, () => h.proxy(request()));
-  await waitFor(() => pending.length === 4);
-  for (let i = 0; i < 3; i++)
-    await expectError(await h.proxy(request()), 503, "authorization_unavailable");
-  assert.equal(pending.length, 4, "denied requests never free somebody else's owner slot");
+  const running = Array.from({ length: 12 }, () => h.proxy(request()));
+  await waitFor(() => pending.length === 12);
   const tokenB = await googleToken({ sub: "owner_B" });
   const independent = h.proxy(request(SOURCE, { token: tokenB }));
-  await waitFor(() => pending.length === 5);
-  pending[0].resolve(jsonResponse());
-  // Signature verification can finish in a different order under concurrent
-  // crypto tests. The first upstream request need not belong to running[0].
-  assert.equal((await Promise.race(running)).status, 200);
-  const replacement = h.proxy(request());
-  await waitFor(() => pending.length === 6);
-  pending.slice(1).forEach((reply) => reply.resolve(jsonResponse()));
-  const results = await Promise.all([...running, independent, replacement]);
-  assert.ok(results.every((response) => response.status === 200));
+  await waitFor(() => pending.length === 13);
+  pending.forEach((reply) => reply.resolve(jsonResponse()));
+  const results = await Promise.all([...running, independent]);
+  assert.ok(results.every((reply) => reply.status === 200));
+  assert.ok(results.every((reply) => reply.headers.get("x-folioview-admission-retry") === null));
 });
 
-test("factory global concurrency is bounded at16 and slots are released after requests finish", async () => {
+test("platform-bound concurrent requests beyond the old global16 reach upstream and settle", async () => {
   const pending = [];
   const h = harness({
     deadlineMs: 12000,
@@ -871,34 +861,33 @@ test("factory global concurrency is bounded at16 and slots are released after re
     },
   });
   const tokens = await Promise.all(
-    ["A", "B", "C", "D"].map((owner) => googleToken({ sub: "parallel_" + owner })),
+    ["A", "B", "C", "D", "E", "F"].map((owner) => googleToken({ sub: "parallel_" + owner })),
   );
   const running = tokens.flatMap((token) =>
     Array.from({ length: 4 }, () => h.proxy(request(SOURCE, { token }))),
   );
-  await waitFor(() => pending.length === 16);
-  const calls = h.calls.length;
-  await expectError(await h.proxy(request()), 503, "authorization_unavailable");
-  assert.equal(h.calls.length, calls);
+  await waitFor(() => pending.length === 24);
   pending.forEach((reply) => reply.resolve(jsonResponse()));
-  assert.ok((await Promise.all(running)).every((response) => response.status === 200));
-  const next = h.proxy(request());
-  await waitFor(() => pending.length === 17);
-  pending[16].resolve(jsonResponse());
-  assert.equal((await next).status, 200);
+  assert.ok((await Promise.all(running)).every((reply) => reply.status === 200));
+  assert.equal(h.upstream().length, 24);
+  const extra = h.proxy(request());
+  await waitFor(() => pending.length === 25);
+  pending[24].resolve(jsonResponse());
+  assert.equal((await extra).status, 200);
 });
 
-test("owner minute budget limits30 attempts and an idle elapsed window permits another request", async () => {
+test("120 Portfolio reads keep verification without a synthetic minute quota", async () => {
   let current = NOW;
   const h = harness({ clock: () => current });
-  for (let i = 0; i < 30; i++) assert.equal((await h.proxy(request())).status, 200);
-  await expectError(await h.proxy(request()), 503, "authorization_unavailable");
-  assert.equal(h.upstream().length, 30);
+  for (let i = 0; i < 120; i++) {
+    current = NOW + i * 200;
+    assert.equal((await h.proxy(request())).status, 200);
+  }
   const tokenB = await googleToken({ sub: "independent_owner" });
   assert.equal((await h.proxy(request(SOURCE, { token: tokenB }))).status, 200);
   current += 60001;
   assert.equal((await h.proxy(request())).status, 200);
-  assert.equal(h.upstream().length, 32);
+  assert.equal(h.upstream().length, 122);
 });
 
 const sourceMutationAck = (operationId = OPERATION) => ({
