@@ -100,6 +100,14 @@ than24 hours old or an expired900-second cache are marked stale. A later fetch c
 a known newer observation with an older one. Negative results can be cached for300 seconds.
 These snapshots remain latest available provider data, without a real-time/executable-price claim.
 
+Cache validation binds the internal precise update time to the same second as the public
+`fetchedAt` timestamp, then bounds `_refreshAfter` by that precise update time plus 900 seconds.
+Existing fractional-second entries remain usable without rounding or extending their expiry.
+Missing, inconsistent or non-finite update times are rejected. A concurrent write newer than the
+request's original clock is conservatively unavailable in that request; validation does not
+re-read or retry it, and a later normal request may accept it. Writer, lease and provider budgets
+remain unchanged.
+
 The pinned provider formats its observation time as a timezone-aware datetime. The quote child
 converts an aware whole-second value back to UTC epoch seconds before JSON serialization;
 naive datetimes and fractional seconds are not assigned a timezone or rounded. The original
