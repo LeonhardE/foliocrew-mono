@@ -348,6 +348,13 @@ async function result(f, options = {}) {
     binding,
     payload: options.content ?? content(),
   };
+  if (options.privateBytes !== undefined) {
+    const last = payload.payload.sections.at(-1);
+    const padding = options.privateBytes - Buffer.byteLength(core.canonical(payload));
+    assert.ok(padding >= 0 && last.markdown.length + padding <= 16384);
+    last.markdown += "a".repeat(padding);
+    assert.equal(Buffer.byteLength(core.canonical(payload)), options.privateBytes);
+  }
   const encrypt = new jose.GeneralEncrypt(new TextEncoder().encode(core.canonical(payload)))
     .setProtectedHeader({
       alg: "ECDH-ES+A256KW",
@@ -613,6 +620,47 @@ test("encrypted reports retain ordinary HTTPS query ampersands and harmless name
     "A &amp; B &copy; 2026. [Source](https://example.test/path?one=1&two=2&list=all&tab=report).";
   c.citations[0].url = "https://example.test/path?one=1&two=2&list=all&tab=report";
   assert.deepEqual(await f.session.openResult(await result(f, { content: c })), c);
+});
+
+test("historical report parsing retains its original196608-byte private limit and authenticated opening", async () => {
+  const f = await fixture();
+  function maximumContent() {
+    const c = content();
+    c.sections = [
+      ...Array.from({ length: 5 }, (_, i) => ({
+        sectionId: "blank_" + i,
+        markdown: "\n".repeat(16384),
+      })),
+      { sectionId: "ascii", markdown: "a".repeat(16384) },
+      { sectionId: "padding", markdown: "" },
+    ];
+    return c;
+  }
+  const c = maximumContent(),
+    args = await result(f, { content: c, privateBytes: 196608 });
+  assert.equal(
+    Buffer.from(value(args.result.signedObject).jwe.ciphertext, "base64url").length,
+    196608,
+  );
+  assert.deepEqual(await f.session.openResult(args), c);
+  const overflow = await result(f, { content: maximumContent(), privateBytes: 196609 });
+  await assert.rejects(f.session.openResult(overflow), /invalid_data/);
+});
+
+test("historical maximum sections retain Unicode and original count and character boundaries", async () => {
+  const f = await fixture(),
+    c = content();
+  c.sections = Array.from({ length: 8 }, (_, i) => ({
+    sectionId: "s" + i,
+    markdown: i ? " " : "😀".repeat(16384),
+  }));
+  assert.deepEqual(await f.session.openResult(await result(f, { content: c })), c);
+  const tooLong = clone(c);
+  tooLong.sections[0].markdown += "😀";
+  await assert.rejects(f.session.openResult(await result(f, { content: tooLong })), /invalid_data/);
+  const tooMany = clone(c);
+  tooMany.sections.push({ sectionId: "extra", markdown: " " });
+  await assert.rejects(f.session.openResult(await result(f, { content: tooMany })), /invalid_data/);
 });
 
 test("private schema, HTML, images, entity-hidden protocols and unsafe citation URLs never escape the Worker", async () => {

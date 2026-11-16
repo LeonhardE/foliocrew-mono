@@ -1,5 +1,8 @@
 /** Trusted browser worker crypto. No network, logging, or plaintext persistence. */
-import { createRegistryCertificateVerifier } from "../../../packages/encrypted-workspace/dist/core.mjs";
+import {
+  createRegistryCertificateVerifier,
+  markdownDestinations,
+} from "../../../packages/encrypted-workspace/dist/core.mjs";
 import {
   GeneralEncrypt,
   FlattenedSign,
@@ -710,11 +713,7 @@ function resultMarkdown(value: string) {
   }
   if (/<\s*(?:\/?[A-Za-z][A-Za-z0-9-]*(?:\s|\/?>)|!|\?)/.test(text) || /!\s*\[/.test(text))
     throw new VaultError("unsafe_content");
-  const urls = [
-    ...[...text.matchAll(/\]\(\s*(<[^>]+>|[^\s)]+)/g)].map((m) => m[1]),
-    ...[...text.matchAll(/^\s*\[[^\]]+\]:\s*(\S+)/gm)].map((m) => m[1]),
-    ...[...text.matchAll(/<([^<>\s]+:[^<>\s]*)>/g)].map((m) => m[1]),
-  ];
+  const urls = markdownDestinations(text);
   if (urls.some((url) => !safeResultUrl(url.replace(/^<|>$/g, ""))))
     throw new VaultError("unsafe_content");
 }

@@ -365,6 +365,12 @@ revisions remain read only; old scheduling claims display Unknown unless the
 producer supplies verified trigger provenance. Current assignment does not infer
 which Agent produced a historical report.
 
+The historical report adapter uses the released shared linear link collector,
+while retaining its original entity decoding, content refusal and URL policy.
+Its decrypted private wrapper remains bounded to 196,608 bytes, with up to eight
+16,384-character sections; it does not inherit the persistent adapter's smaller
+private limit. Root, evidence, receipt, recipient and AEAD checks remain separate.
+
 Metadata loads independently with visible progress, bounded pagination and local
 retry. Each global source loads one page initially; further pages require Load more.
 The selected task reads one task-history page and reuses its already verified Task Center state,
