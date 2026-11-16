@@ -209,3 +209,25 @@ variable "agent_clients" {
     error_message = "The combined preregistration JSON must fit the existing 16 KiB application limit."
   }
 }
+
+variable "provider_connection_slots_enabled" {
+  description = "Explicit provider-slot rollout gate. Default closed; source publication never activates it."
+  type        = bool
+  default     = false
+  nullable    = false
+  validation {
+    condition     = !var.provider_connection_slots_enabled || var.agent_owned_mode_enabled
+    error_message = "Provider slots require the separately reviewed personal Agent mode."
+  }
+}
+
+variable "task_center_enabled" {
+  description = "Explicit task-center rollout gate. Requires a separately approved full saved plan and usage-cost decision."
+  type        = bool
+  default     = false
+  nullable    = false
+  validation {
+    condition     = !var.task_center_enabled || (var.provider_connection_slots_enabled && var.agent_owned_mode_enabled)
+    error_message = "Task center requires explicit provider slots and personal Agent mode."
+  }
+}
