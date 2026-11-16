@@ -947,6 +947,7 @@ function ResourcesView({
         workspaceScope={workspaceScope}
         holdingsPublication={publication}
         holdingsCatalogueNeeded={Boolean(names.scope)}
+        resourceDisplay={model.resourceDisplay}
         active={active}
         watchlist={watchlist}
         onOpenWatchlist={onOpenWatchlist}

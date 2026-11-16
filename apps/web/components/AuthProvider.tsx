@@ -44,6 +44,7 @@ export type PrivateService = "user" | "config" | "portfolio" | "agent-hub";
 type PrivateMethod = "GET" | "PUT" | "DELETE" | "POST" | "PATCH";
 type PrivateRequestOptions = {
   coalesceDisplay?: boolean;
+  coalesceDisplayScope?: string;
   method?: PrivateMethod;
   signal?: AbortSignal;
   json?: unknown;
@@ -872,6 +873,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     ): Promise<Response> => {
       // Only a fixed route on its owning service may receive a Firebase token.
       const method = options.method ?? "GET";
+      if (
+        options.coalesceDisplayScope !== undefined &&
+        (!options.coalesceDisplay ||
+          method !== "GET" ||
+          service !== "agent-hub" ||
+          path !== "/api/v3/resources/display" ||
+          typeof options.coalesceDisplayScope !== "string" ||
+          !options.coalesceDisplayScope ||
+          new TextEncoder().encode(options.coalesceDisplayScope).byteLength > 8192)
+      )
+        throw new Error("Invalid private API request");
       let origin: string;
       let contractHeaders: Record<string, string> = {};
       let maxBodyBytes = 589824;
@@ -1048,7 +1060,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const response =
         options.coalesceDisplay && method === "GET"
           ? await displayReads.current.run(
-              JSON.stringify([sessionKey, service, path, contractHeaders]),
+              JSON.stringify(
+                options.coalesceDisplayScope === undefined
+                  ? [sessionKey, service, path, contractHeaders]
+                  : [sessionKey, service, path, contractHeaders, options.coalesceDisplayScope],
+              ),
               send,
               options.signal,
             )

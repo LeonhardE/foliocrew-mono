@@ -557,6 +557,26 @@ context; it does not cancel User list reads or follow-list writes. Watchlist and
 retain their original catalogue and Google-only list behavior. Explicit retry and task selection
 also require the current catalogue demand. Legacy library callers retain their default discovery.
 
+Eligible automatic resource discovery and private-name reads share one
+`GET /api/v3/resources/display` through the existing in-flight display pool. A private host
+association records the exact public Vault snapshot already accepted by an existing Worker call;
+normal unlock and shared resume publish that association atomically with the unlocked state.
+Read-only access remains eligible. Optional association failure preserves the successful original
+operation and its independent read paths. Unaccepted replacement objects do not inherit a proof.
+The association keeps private copies of the Owner/vault/Root/version/checkpoint/epoch fields and
+source refs/epochs; it correlates display data and never installs authority. Original alias
+signature/decryption, pending-operation recovery, fresh action checks and write eligibility remain.
+
+Both subscribers validate the complete bounded response before extracting their existing DTO and
+require all seven returned scope fields to match. Only the exact `separate/aggregate_too_large`
+hint uses the old catalogue/capabilities/list reads. Errors, 404 and malformed or stale-scope replies
+stay errors. The optional bounded coalescing scope is local to the existing pool and never enters
+URL, headers or body. It prevents a new scope joining an old in-flight read; each subscriber retains
+its own cancellation. Read-context changes affect only read lanes, preserving User writes and alias
+journals. Explicit catalogue/name refreshes and write acknowledgements keep their original fresh
+read paths. Existing independent 30-second receipts are retained, and catalogue-only demand does
+not start a name Worker chain. No completed compound response is cached or replayed.
+
 The first verified holdings snapshot can reuse a fresh catalogue or wait for its current read.
 Reuse requires the same Auth session and workspace scope, all four source-reference fields,
 source epoch and snapshot ID to match the fully validated catalogue. This comparison retains the

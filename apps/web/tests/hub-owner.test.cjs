@@ -143,6 +143,11 @@ function compile(name, imports, globals = {}) {
     module,
     exports: module.exports,
     require: (name) => {
+      if (name === "node:crypto") return require("node:crypto");
+      if (["@/lib/resource-display", "../resource-display"].includes(name))
+        return require("./resource-library-helpers.cjs").compile("../lib/resource-display.ts");
+      if (name === "../display-name-contract")
+        return require("./resource-library-helpers.cjs").compile("../lib/display-name-contract.ts");
       if (name === "../holdings-view") return require("./holdings-view-helpers.cjs");
       assert.ok(Object.hasOwn(imports, name), "Unexpected import " + name);
       return imports[name];
@@ -207,9 +212,13 @@ function harness({ env = ENV, upstream, jwks, now = () => NOW, deadlineMs = 1000
     if (url === JWKS) return jwks ? jwks(init) : response({ keys: [jwk] });
     assert.ok(
       url.startsWith(ORIGIN + "/api/v2/") ||
-        ["agent-credentials", "task-center", "provider-connections", "private-display-names"].some(
-          (kind) => url.startsWith(ORIGIN + "/api/v3/" + kind + "/"),
-        ),
+        [
+          "agent-credentials",
+          "task-center",
+          "provider-connections",
+          "private-display-names",
+          "resources",
+        ].some((kind) => url.startsWith(ORIGIN + "/api/v3/" + kind + "/")),
       "Hub cannot acquire metadata identity or select a different upstream",
     );
     return upstream ? upstream(url, init) : response();
@@ -1725,4 +1734,79 @@ test("Owner batch query refuses oversized bodies, selectors, native identity and
     "payload_too_large",
   );
   assert.equal(h.calls.length, 0);
+});
+
+test("actual BFF compound GET is closed and validates the complete nested response with its Firebase Owner", async () => {
+  const f = await require("./resource-display-fixtures.cjs").fixture("owner_A");
+  try {
+    const path = "/api/v3/resources/display";
+    for (const [route, options] of [
+      [path + "?", {}],
+      [path + "?scope=A", {}],
+      [path, { method: "POST", json: { contractVersion: CONTRACT } }],
+      ...[
+        "X-Serverless-Authorization",
+        "X-FolioView-Authority-Delegation",
+        "X-FolioView-Delegation",
+        "X-FolioView-Author-Key",
+        "Idempotency-Key",
+      ].map((k) => [path, { headers: { [k]: "forged" } }]),
+      [path, { headers: { Origin: "https://foreign.test" } }],
+    ]) {
+      const h = harness();
+      const result = await h.proxy(request(route, options));
+      assert.ok([400, 403].includes(result.status));
+      assert.equal(h.calls.length, 0);
+    }
+    for (const body of [
+      f.body(),
+      {
+        contractVersion: CONTRACT,
+        profile: "folioview.owner-resource-display.v1",
+        mode: "separate",
+        reason: "aggregate_too_large",
+      },
+    ]) {
+      const h = harness({ upstream: () => response(body) });
+      const result = await h.proxy(request(path));
+      assert.equal(result.status, 200);
+      assert.deepEqual(await result.json(), body);
+      assert.equal(result.headers.get("cache-control"), "no-store");
+      assert.equal(h.hub().length, 1);
+      assert.equal(h.hub()[0].url, ORIGIN + path);
+      assert.equal(h.hub()[0].init.method, "GET");
+      assert.equal(h.hub()[0].init.body, undefined);
+    }
+    for (const mutate of [
+      (v) => (v.scope.extra = true),
+      (v) => {
+        v.scope.ownerSubject = "b".repeat(64);
+        v.displayNames.items[0].state.ownerSubject = "b".repeat(64);
+      },
+      (v) => (v.scope.keyEpoch = 0),
+      (v) => (v.displayNames.items[0].state.rootKeyId = "B".repeat(43)),
+      (v) => (v.displayNameCapabilities.extra = true),
+      (v) => (v.catalogue.groups[0].items[0].sourceEpoch = -1),
+    ]) {
+      const bad = f.body();
+      mutate(bad);
+      const h = harness({ upstream: () => response(bad) });
+      await error(await h.proxy(request(path)), 503, "authorization_unavailable");
+      assert.equal(h.hub().length, 1);
+    }
+    const h = harness({
+      upstream: () =>
+        response(
+          {
+            contractVersion: CONTRACT,
+            error: { code: "not_found", retryable: false, requestId: "synthetic_missing" },
+          },
+          404,
+        ),
+    });
+    await error(await h.proxy(request(path)), 404, "not_found");
+    assert.equal(h.hub().length, 1);
+  } finally {
+    await f.close();
+  }
 });

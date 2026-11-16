@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "./AuthProvider";
 import type { HoldingsWorkspace } from "./useHoldingsWorkspace";
+import { RESOURCE_DISPLAY_PATH } from "@/lib/resource-display";
 import { untilSignal } from "@/lib/workspace-cache";
 type J = Record<string, any>;
 type ReadGuard = { signal: AbortSignal; assert: () => void };
@@ -103,6 +104,7 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
         if (abort.signal.aborted || live.current.scope !== expected)
           throw Error(timedOut ? "timeout" : "cancelled");
         read?.assert();
+        options.display?.assertCurrent();
       };
       try {
         check();
@@ -111,6 +113,7 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
             method: options.packet ? "POST" : "GET",
             signal: abort.signal,
             coalesceDisplay: !options.packet && !options.fresh,
+            ...(options.display ? { coalesceDisplayScope: options.display.coalesceScope } : {}),
             ...(options.packet ? { json: options.packet.body } : {}),
             headers: {
               "X-FolioView-Contract": C,
@@ -137,6 +140,7 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
                   : "request_failed",
           );
         }
+        if (options.display && response.status !== 200) throw Error("invalid_response");
         if (
           !response.body ||
           response.headers.get("content-type")?.split(";")[0] !== "application/json"
@@ -155,7 +159,7 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
             check();
             if (part.done) break;
             size += part.value.length;
-            if (size > 262144) throw Error("invalid_response");
+            if (size > (options.display ? 1048576 : 262144)) throw Error("invalid_response");
             chunks.push(part.value);
           }
           const bytes = new Uint8Array(size);
@@ -166,6 +170,7 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
           }
           const data = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
           check();
+          if (options.display) return options.display.read(data);
           if (
             !data ||
             typeof data !== "object" ||
@@ -223,16 +228,27 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
       jobs.current.add(controller);
       const context = (w: HoldingsWorkspace) =>
         JSON.stringify([
+          w.resourceDisplay?.readKey,
           w.vault?.version,
           w.sources.map((s) => [displayRefKey(s.resourceRef), s.sourceEpoch]).sort(),
         ]);
       const version = context(start.workspace);
+      const display = !refreshRoot ? start.workspace.resourceDisplay?.prepare() : null;
+      const displayCurrent = () => {
+        try {
+          display?.assertCurrent();
+          return true;
+        } catch {
+          return false;
+        }
+      };
       const current = () =>
         !controller.signal.aborted &&
         readLane.current === controller &&
         serial === readSerial.current &&
         live.current.scope === expected &&
         live.current.active &&
+        displayCurrent() &&
         context(live.current.workspace) === version;
       const read: ReadGuard = {
         signal: controller.signal,
@@ -259,19 +275,29 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
           }
         }
         read.assert();
-        const caps = await api(
-          "/api/v3/private-display-names/capabilities",
-          { missing: true },
-          expected,
-          read,
-        );
+        const combined = display
+          ? await api(RESOURCE_DISPLAY_PATH, { display }, expected, read)
+          : null;
+        read.assert();
+        const caps =
+          combined?.mode === "full"
+            ? combined.displayNameCapabilities
+            : await api(
+                "/api/v3/private-display-names/capabilities",
+                { missing: true },
+                expected,
+                read,
+              );
         read.assert();
         if (!caps || caps.enabled !== true) {
           update({ enabled: false, ready: true, loading: false }, expected);
           return;
         }
         if (caps.maxNameLength !== 80 || caps.maxSources !== 10) throw Error("invalid_response");
-        const data = await api(base(start.workspace.vault!.vaultId), {}, expected, read);
+        const data =
+          combined?.mode === "full"
+            ? combined.displayNames
+            : await api(base(start.workspace.vault!.vaultId), {}, expected, read);
         read.assert();
         if (!data || !Array.isArray(data.items) || data.items.length > 10)
           throw Error("invalid_response");
@@ -523,7 +549,13 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
     if (scope && active) {
       void load(true);
     }
-  }, [scope, refsVersion, workspace.vault?.version, cancelRead]);
+  }, [
+    scope,
+    refsVersion,
+    workspace.vault?.version,
+    workspace.resourceDisplay?.readKey,
+    cancelRead,
+  ]);
   useEffect(() => {
     if (scope && active) void load();
     else cancelRead();

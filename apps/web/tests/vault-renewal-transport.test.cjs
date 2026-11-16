@@ -125,6 +125,11 @@ function compile(name, imports) {
     module,
     exports: module.exports,
     require: (name) => {
+      if (name === "node:crypto") return require("node:crypto");
+      if (["@/lib/resource-display", "../resource-display"].includes(name))
+        return require("./resource-library-helpers.cjs").compile("../lib/resource-display.ts");
+      if (name === "../display-name-contract")
+        return require("./resource-library-helpers.cjs").compile("../lib/display-name-contract.ts");
       if (name === "../task-overview") return require("./task-overview-helpers.cjs").overview;
       if (name === "../task-overview-request")
         return require("./task-overview-helpers.cjs").request;

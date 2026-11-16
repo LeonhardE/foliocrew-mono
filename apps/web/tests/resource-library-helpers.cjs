@@ -18,6 +18,13 @@ function compile(file, imports = {}, globals = {}) {
     module,
     exports: module.exports,
     require: (name) => {
+      if (name === "node:crypto") return require("node:crypto");
+      if (["@/lib/resource-display", "../resource-display", "./resource-display"].includes(name))
+        return compile("../lib/resource-display.ts", {}, globals);
+      if (["../display-name-contract", "./display-name-contract"].includes(name))
+        return compile("../lib/display-name-contract.ts");
+      if (name === "./task-types") return compile("../lib/task-types.ts");
+      if (name === "./resource-library") return contracts;
       if (
         !Object.hasOwn(imports, name) &&
         ["@/lib/holdings-view", "../holdings-view"].includes(name)
@@ -46,6 +53,9 @@ function compile(file, imports = {}, globals = {}) {
       assert.ok(Object.hasOwn(imports, name), name);
       return imports[name];
     },
+    crypto: require("node:crypto").webcrypto,
+    atob,
+    btoa,
     TextEncoder,
     TextDecoder,
     AbortController,

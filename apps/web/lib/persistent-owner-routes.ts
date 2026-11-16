@@ -71,7 +71,8 @@ export function persistentOwnerRoute(path: string, method: string): PersistentOw
 export function taskCenterRoute(path: string, method: string) {
   if (
     method === "GET" &&
-    (path === "/api/v3/private-display-names/capabilities" ||
+    (path === "/api/v3/resources/display" ||
+      path === "/api/v3/private-display-names/capabilities" ||
       new RegExp(
         `^/api/v3/private-display-names/${ID}/holdings(?:/${ID}(?:/operations/${OP})?)?$`,
       ).test(path))

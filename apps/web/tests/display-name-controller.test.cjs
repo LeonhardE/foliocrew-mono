@@ -492,3 +492,55 @@ test("explicit local recovery checks original result first, clears only that pac
     h.close();
   }
 });
+
+test("display read-context changes leave rename and unknown-ACK journal recovery on their original operation lane", async () => {
+  const ack = deferred(),
+    lookup = deferred();
+  const h = harness((call) =>
+    call.path.endsWith("commands")
+      ? ack.promise
+      : call.path.includes("/operations/")
+        ? lookup.promise
+        : undefined,
+  );
+  try {
+    h.workspace({ resourceDisplay: { readKey: "context_A", prepare: () => null } });
+    await h.ready();
+    const scope = h.render().scope;
+    const write = h.render().rename(h.r, "NEW");
+    await settle();
+    const command = h.calls.find((c) => c.path?.endsWith("commands"));
+    assert.ok(command);
+    const packet = h.packets.get("A"),
+      before = h.calls.length;
+    h.workspace({ resourceDisplay: { readKey: "context_B", prepare: () => null } });
+    h.render();
+    await settle();
+    assert.equal(h.render().scope, scope);
+    assert.equal(h.render().busy, true);
+    assert.equal(h.render().pending(h.r), true);
+    assert.equal(h.packets.get("A"), packet);
+    assert.equal(command.options.signal.aborted, false);
+    assert.equal(h.calls.length, before);
+    ack.resolve(response({}, 503));
+    assert.equal(await write, false);
+    const recovering = h.render().recover(h.r);
+    await settle();
+    const original = h.calls.find((c) => c.path?.includes("/operations/"));
+    assert.ok(original);
+    h.workspace({ resourceDisplay: { readKey: "context_C", prepare: () => null } });
+    h.render();
+    await settle();
+    assert.equal(original.options.signal.aborted, false);
+    assert.equal(h.packets.get("A"), packet);
+    lookup.resolve(response({}, 404));
+    assert.equal(await recovering, false);
+    assert.equal(h.render().error, "operation_pending");
+    assert.equal(h.render().pending(h.r), true);
+    assert.equal(h.calls.filter((c) => c.options?.method === "POST").length, 1);
+  } finally {
+    ack.resolve(response({}, 503));
+    lookup.resolve(response({}, 404));
+    h.close();
+  }
+});
