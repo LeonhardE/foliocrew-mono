@@ -13,7 +13,7 @@ from app import catalogue
 from app.catalogue import CatalogueService
 from app.catalogue_paths import FenceKeyHints
 from app.fences import FenceService, fence_path
-from app.store import FirestoreHubStore, FirestoreTransaction, StoreUnavailable, document_path
+from app.store import FirestoreHubStore, StoreUnavailable, document_path
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.identity import owner_key
@@ -123,7 +123,7 @@ class CataloguePathHintTests(unittest.TestCase):
             warm = self.support.service(self.store).read(UID)
             self.assertEqual(self.sizes(), [1 + count, 1 + 2 * count])
             self.assertEqual(warm, cold)
-            self.assertEqual(sum(kind == "begin" for kind, _ in self.rpc.calls), 2)
+            self.assertEqual(sum(kind == "begin" for kind, _ in self.rpc.calls), 0)
             self.assert_no_writes()
 
     def test_changed_keys_read_missing_paths_and_discard_old_schema_invalid_fence(self):
@@ -343,16 +343,14 @@ class CataloguePathHintTests(unittest.TestCase):
 
     def test_partial_hint_batch_remains_fail_closed(self):
         self.directory().context(UID)
-        original = FirestoreTransaction.get_many
+        original = self.rpc.batch_get_documents
 
-        def partial(unit, paths, **kwargs):
-            result = original(unit, paths, **kwargs)
-            if len(paths) == 2:
-                result.pop(paths[-1])
-            return result
+        def partial(**kwargs):
+            rows = list(original(**kwargs))
+            return iter(rows[:-1]) if len(kwargs["request"]["documents"]) == 2 else iter(rows)
 
         with (
-            patch.object(FirestoreTransaction, "get_many", partial),
+            patch.object(self.rpc, "batch_get_documents", partial),
             self.assertRaises(StoreUnavailable),
         ):
             self.directory().context(UID)

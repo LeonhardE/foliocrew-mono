@@ -634,27 +634,21 @@ class CatalogueService:
             hints = None
         vault_path = document_path("hub_vaults", owner)
 
-        def read(unit):
-            # Hints contain paths only. Every retry starts with a new SDK unit
-            # and reads these documents again in that attempt's fresh snapshot.
+        def initial_paths():
             known = hints.get(owner) if hints is not None else None
-            loaded = unit.get_many([vault_path, *known]) if known is not None else {}
-            if known is not None and any(path not in loaded for path in (vault_path, *known)):
-                raise StoreUnavailable
-            row = loaded[vault_path] if known is not None else unit.get(vault_path)
+            return [vault_path, *known] if known is not None else [vault_path]
+
+        def read(unit):
+            row = unit.get(vault_path)
             if row is None:
                 return ({"vault": None, "sources": []}, None, False), None
             registry = _verify_row(
                 row, owner, self.vaults.now(), unit=unit, registry_cache=registry_cache
             )
             paths = tuple(fence_path(owner, source["resourceRef"]) for source in row["sources"])
-            missing = [path for path in paths if path not in loaded]
-            if missing:
-                loaded.update(unit.get_many(missing))
-            if any(path not in loaded for path in paths):
+            fences = unit.get_many(paths)
+            if set(fences) != set(paths):
                 raise StoreUnavailable
-            # Old hints never influence actual scope or returned source data.
-            fences = {path: loaded[path] for path in paths}
 
             return (
                 (
@@ -666,7 +660,10 @@ class CatalogueService:
             )
 
         try:
-            result, paths = store.transact(read)
+            snapshot = getattr(store, "read_snapshot", None)
+            result, paths = (
+                snapshot(initial_paths, read) if callable(snapshot) else store.transact(read)
+            )
         except Exception:
             # An obsolete hinted document may itself be physically corrupt.
             # Keep this failure closed, but let the next explicit retry start

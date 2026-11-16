@@ -269,6 +269,22 @@ With matching Store-local path hints, the same two transactions use two BatchGet
 transaction; the union of initial Vault/fence keys and missing real fence keys is at most 21.
 Existing archive-removal lifecycle verification is unchanged and can require its original
 separate lifecycle read. No lifecycle row is placed in the path-hint cache.
+
+Catalogue's initial snapshot and this composition's final snapshot opt into a bounded
+read-callback adapter. Their first BatchGet starts an explicitly read-write transaction using
+Firestore's `new_transaction`; a real zero-write Commit still completes each snapshot. For
+matching path hints this removes the two separate Begin RPCs, changing the two snapshots from
+six lifecycle/read RPCs to four, without removing a BatchGet, Commit or final fence check.
+The initial path factory and all current-row checks run again on a commit conflict retry.
+Only Commit `ABORTED` retries, at most three times with the original first transaction ID;
+read/callback errors fail without retry. Known-ID failures cancel the stream and attempt the
+original bounded rollback. A failed response with no received ID cannot release an unknown
+server transaction and does not issue a rollback with a fabricated ID. Every RPC retains the
+four-second timeout and disables transport retries. Initial preload is limited to 21 paths,
+not the whole transaction: legitimate supplemental fence/lifecycle reads retain their original
+bounds. SQLite retains its ordinary transaction. Other callers' write transactions, response
+budgets and the existing request-local static registry-verification memo are unchanged.
+
 This reduces repeated Hub reads and HTTP calls; it does not establish a two-second UI result or
 remove external producer latency. The original cooperative deadline and blocking-SDK cancellation
 limits above still apply. No detached worker, producer prewarm, write, increased byte budget or

@@ -372,6 +372,11 @@ class SQLiteHubStore:
                 connection.rollback()
                 raise
 
+    def read_snapshot(self, initial_paths, callback):
+        from .snapshot_reads import sqlite_snapshot
+
+        return sqlite_snapshot(self, initial_paths, callback)
+
 
 class FirestoreTransaction:
     def __init__(self, transaction, store):
@@ -504,6 +509,11 @@ class FirestoreHubStore:
             return result
 
         return run(BoundedTransaction(self.client, max_attempts=3))
+
+    def read_snapshot(self, initial_paths, callback):
+        from .snapshot_reads import firestore_snapshot
+
+        return firestore_snapshot(self, initial_paths, callback)
 
 
 @lru_cache(maxsize=1)
