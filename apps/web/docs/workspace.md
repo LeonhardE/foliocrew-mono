@@ -70,6 +70,13 @@ display hint. Blocked storage does not prevent rendering or preference loading.
 The shell and sidebar keep their DOM during navigation. Private panels mount on first visit and
 then keep their DOM, including Settings. Their local code and chart code load in separate chunks;
 a stalled or failed chunk offers an in-place retry without reloading the unlocked workspace.
+Task code alone loads through a normal effect: while it is pending, the existing loading layout
+remains visible; a successful module renders its component directly with current props. This avoids
+using parent Suspense solely to wait for the task module. The outer Suspense still protects genuinely
+suspending children, and asynchronous failures throw a fixed render error into the same local retry
+boundary. Only public component code and its bounded in-flight load are shared; mounted instances,
+Owner props and business data are not cached. No task code or hooks start before the task panel is
+visited, and the original 15-second module deadline is unchanged.
 An initial private route does not start the Market overview/chart requests. A single account-area
 Lock action replaces the full-width unlock banner and repeated page controls. Agent navigation is
 labelled Agent management. Holdings lifecycle actions and device/key controls use native expandable
