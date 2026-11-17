@@ -11,6 +11,7 @@ export type TaskResourceOption = {
   kind: "holdings" | "watchlist" | "channel_follows";
   groupStatus: string;
   state: string;
+  ref: ResourceBindingMetadata["ref"] | null;
   binding: ResourceBindingMetadata | null;
   revision: number | null;
   selectable: boolean;
@@ -28,7 +29,7 @@ const integer = (value: unknown, min = 1) =>
   Number.isSafeInteger(value) && (value as number) >= min;
 const date = (value: unknown) =>
   typeof value === "string" && /Z$/.test(value) && Number.isFinite(Date.parse(value));
-export const bindingKey = (binding: ResourceBindingMetadata) =>
+export const bindingKey = (binding: Pick<ResourceBindingMetadata, "ref">) =>
   [
     binding.ref.kind,
     binding.ref.sourceService,
@@ -240,6 +241,7 @@ export function taskCatalogue(value: unknown): TaskResourceOption[] {
         kind: kind as TaskResourceOption["kind"],
         groupStatus: group.status,
         state: item.state,
+        ref: item.ref,
         binding,
         revision: item.revision,
         selectable,

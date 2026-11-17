@@ -533,6 +533,12 @@ After capabilities load successfully, task details explain when immediate execut
 enabled for the account. Loading or failed capability reads do not show that conclusion;
 existing run/delete guards and Agent confirmation requirements remain unchanged.
 
+The resource picker retains unavailable discovery rows as disabled choices and provides a local
+retry for partial discovery. An existing selection can remain checked by its validated display
+reference while its current epoch is unknown; this does not create a selectable binding or grant.
+Only the original fresh catalogue and Worker checks can authorize a saved change. Loading and
+failed reads do not enable choices, and retry does not clear the editor's retained bindings.
+
 Root-bound controls are signed only in the Worker and sealed into a separate
 IndexedDB outbox before transport. Unknown saves retrieve the original receipt,
 replay the identical request, or explicitly cancel a never-submitted operation

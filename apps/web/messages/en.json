@@ -1535,6 +1535,8 @@
     "advanced": "More options",
     "reportLanguage": "Report language",
     "resources": "Resources",
+    "resourceCataloguePartial": "Some resources are unavailable. Existing selections are kept. Retry to check their status.",
+    "resourceNotSelectable": "Not selectable",
     "executors": "Agents",
     "manageAgents": "Manage Agent connections",
     "runMode": "Run mode",

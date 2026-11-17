@@ -808,37 +808,59 @@ export function TaskCenterView({
                           label={t("loading")}
                         />
                       )}{" "}
-                      {model.catalogue
-                        .filter((o) => o.binding)
-                        .map((o, i) => (
-                          <label
-                            className={styles.check}
-                            key={o.binding ? bindingKey(o.binding) : i}
-                          >
+                      {!model.catalogueLoading &&
+                        !model.catalogueError &&
+                        model.catalogue.some(
+                          (o) =>
+                            ["partial", "unavailable"].includes(o.groupStatus) ||
+                            o.state === "unavailable",
+                        ) && (
+                          <InlineError
+                            message={t("resourceCataloguePartial")}
+                            retryLabel={t("retry")}
+                            onRetry={() => void model.reloadCatalogue()}
+                          />
+                        )}
+                      {model.catalogue.map((o, i) => {
+                        const binding = o.binding;
+                        // A display reference identifies a retained choice, never a new grant.
+                        const ref = o.ref ?? binding?.ref;
+                        const disabled = Boolean(
+                          model.catalogueLoading ||
+                          model.catalogueError ||
+                          !binding ||
+                          !o.selectable,
+                        );
+                        return (
+                          <label className={styles.check} key={o.key}>
                             <input
                               type="checkbox"
-                              disabled={!o.selectable}
-                              checked={model.bindings.some(
-                                (b) => bindingKey(b) === bindingKey(o.binding!),
+                              disabled={disabled}
+                              checked={Boolean(
+                                ref &&
+                                model.bindings.some((b) => bindingKey(b) === bindingKey({ ref })),
                               )}
-                              onChange={(e) =>
+                              onChange={(e) => {
+                                if (disabled || !binding) return;
                                 model.setBindings(
                                   e.target.checked
-                                    ? [...model.bindings, o.binding!]
+                                    ? [...model.bindings, binding]
                                     : model.bindings.filter(
-                                        (b) => bindingKey(b) !== bindingKey(o.binding!),
+                                        (b) => bindingKey(b) !== bindingKey(binding),
                                       ),
-                                )
-                              }
+                                );
+                              }}
                             />
-                            {t(`kinds.${o.binding!.ref.kind}`)}
-                            {model.catalogue.filter(
-                              (x) => x.binding?.ref.kind === o.binding?.ref.kind,
-                            ).length > 1
+                            {t(`kinds.${o.kind}`)}
+                            {model.catalogue.filter((x) => x.kind === o.kind).length > 1
                               ? ` ${i + 1}`
                               : ""}
+                            {!binding || !o.selectable ? (
+                              <small>{t("resourceNotSelectable")}</small>
+                            ) : null}
                           </label>
-                        ))}
+                        );
+                      })}
                     </fieldset>
                     <fieldset>
                       <legend>{t("executors")}</legend>
