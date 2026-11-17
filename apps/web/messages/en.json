@@ -1727,7 +1727,7 @@
     "retry": "Retry",
     "updating": "Updating prices",
     "refreshError": "Some prices could not be updated. Available values are retained.",
-    "stale": "Some values use older quotes or reference rates.",
+    "stale": "Some values or gains/losses use older quotes or reference FX.",
     "table": "Holdings and valuation",
     "security": "Security",
     "quantity": "Quantity",
@@ -1754,7 +1754,17 @@
     "unknown": "Unknown",
     "partialCash": "Partial",
     "cashHelp": "Reported cash is not a confirmed withdrawable balance or buying power.",
-    "loadingPrices": "Loading prices"
+    "loadingPrices": "Loading prices",
+    "profitLoss": "Unrealized gain / loss",
+    "profitMode": "Gain / loss display",
+    "profitPercent": "Percentage",
+    "profitAmount": "Amount",
+    "profitCoverage": "Gain/loss available for {known} / {total} positions; total unavailable.",
+    "profitMissingCost": "Cost unavailable",
+    "profitMissingFx": "Cost conversion unavailable",
+    "profitMissingValue": "Valuation unavailable",
+    "profitZeroCost": "Percentage unavailable: zero cost",
+    "profitHelp": "Cumulative unrealized gain/loss on current positions: market value minus recorded cost, not daily change. Cash and sold positions are excluded; dividends and fees are not added separately. Conversions use the same current reference FX as valuation; historical FX is not reconstructed."
   },
   "fx": {
     "title": "Exchange rates",

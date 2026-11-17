@@ -1727,7 +1727,7 @@
     "retry": "重试",
     "updating": "正在更新报价",
     "refreshError": "部分报价未能更新，已有数据已保留。",
-    "stale": "部分市值使用较早的报价或参考汇率。",
+    "stale": "部分市值或盈亏使用较早的报价或参考汇率。",
     "table": "持仓与市值",
     "security": "证券",
     "quantity": "数量",
@@ -1754,7 +1754,17 @@
     "unknown": "未知",
     "partialCash": "部分已报告",
     "cashHelp": "已报告现金不代表可提现余额或购买力。",
-    "loadingPrices": "正在读取报价"
+    "loadingPrices": "正在读取报价",
+    "profitLoss": "累计盈亏",
+    "profitMode": "盈亏显示",
+    "profitPercent": "比例",
+    "profitAmount": "金额",
+    "profitCoverage": "仅 {known} / {total} 项可计算盈亏，暂无法计算整体盈亏。",
+    "profitMissingCost": "暂无成本",
+    "profitMissingFx": "暂无成本换算汇率",
+    "profitMissingValue": "暂无完整估值",
+    "profitZeroCost": "成本为零，无法计算比例",
+    "profitHelp": "当前持仓的累计未实现盈亏＝市值－已记录成本，不是当日涨跌。不包含现金和已卖出持仓，分红和费用不另行计入。换算使用与估值相同的当前参考汇率，不重建未记录的历史汇率。"
   },
   "fx": {
     "title": "汇率",

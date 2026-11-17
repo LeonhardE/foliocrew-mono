@@ -320,6 +320,21 @@ separate. Older quotes/reference rates are identified, and failed refreshes reta
 with an error rather than replacing them with zero. Source dates and attribution live in a closed
 details section. Daily reference FX is not advertised as real-time or as an execution rate.
 
+Cumulative unrealized gain/loss is shown for each position and the whole selected holdings source.
+One local percentage/amount control changes all displays together and defaults to percentage. It
+uses current market value minus recorded cost, not daily change or realized returns. Aggregate
+percentage divides the sum of gains/losses by the sum of costs, rather than averaging percentages.
+Recorded native book cost takes priority over quantity times average unit cost; recorded CAD book
+cost is a fallback when neither native cost is available. Costs use the same current reference FX
+observation as valuation; missing historical FX is not reconstructed. Cash and sold positions are
+excluded, and dividends/fees are not separately added. Costs and gains stay in browser memory.
+
+Missing costs, prices or required cost FX show an unavailable row and suppress the overall return
+with N/M coverage; a partial return is never presented as the whole portfolio. Zero cost allows an
+amount but no percentage. Signed exact decimal arithmetic is rounded only for display. Switching
+percentage/amount or display currency does not fetch. CAD-only cost conversion adds a CAD leg to
+the existing batched FX read only when needed; ordinary single-currency positions need none.
+
 The animated allocation dialog switches between accessible pie/bar views without network work.
 Dense legends group the tail after eleven positions while the table retains every position. Tiny,
 zero and unpriced rows have explicit displays. Narrow tables scroll internally with the security

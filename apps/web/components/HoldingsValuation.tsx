@@ -15,8 +15,12 @@ import {
   decimalLabel,
   weightLabel,
   sumAmounts,
+  portfolioProfitLoss,
+  profitLossLabel,
   type AllocationSlice,
   type Currency,
+  type ProfitLoss,
+  type ProfitLossMode,
   type HoldingsFacts,
   type HoldingsValuation as Valuation,
 } from "@/lib/holdings-valuation";
@@ -162,6 +166,14 @@ export default function HoldingsValuation({
     preferences = useCurrencyPreferences();
   const view = useHoldingsValuation(model, preferences.defaultPortfolioCurrency, active);
   const [chart, setChart] = useState<string | null>(null);
+  const [profitMode, setProfitMode] = useState<ProfitLossMode>("percent");
+  const profit = useMemo(
+    () =>
+      view.facts && view.valuation && view.prices
+        ? portfolioProfitLoss(view.facts, view.valuation, view.prices)
+        : null,
+    [view.facts, view.valuation, view.prices],
+  );
   const identity = model.editScope;
   useEffect(() => setChart(null), [identity]);
   const quoteMap = useMemo(
@@ -195,6 +207,35 @@ export default function HoldingsValuation({
   if (!view.facts) return null;
   const times = [...quoteMap.values()].flatMap((q) => (q.sourceAsOf ? [q.sourceAsOf] : [])).sort();
   const fxDate = view.prices?.fx.items.find((i) => i.sourceDate)?.sourceDate;
+  const showProfit = (value: ProfitLoss | undefined) => {
+    const amount = value?.[profitMode] ?? null,
+      tone =
+        !value?.amount || !/[1-9]/.test(value.amount)
+          ? ""
+          : value.amount.startsWith("-")
+            ? "negative"
+            : "positive",
+      help =
+        value?.reason === "zero_cost"
+          ? profitMode === "percent"
+            ? "profitZeroCost"
+            : null
+          : value?.reason === "missing_cost"
+            ? "profitMissingCost"
+            : value?.reason === "missing_cost_fx"
+              ? "profitMissingFx"
+              : value?.reason === "missing_value"
+                ? "profitMissingValue"
+                : null;
+    return (
+      <span className={styles.profit}>
+        <strong className={tone}>
+          {view.currency ? profitLossLabel(amount, profitMode, view.currency) : "—"}
+        </strong>
+        {help && <small>{t(help)}</small>}
+      </span>
+    );
+  };
   return (
     <div className={styles.workspace}>
       <div className={styles.summary}>
@@ -205,6 +246,18 @@ export default function HoldingsValuation({
           <strong className={styles.total}>
             {view.currency ? money(view.valuation?.subtotal ?? null, view.currency) : "—"}
           </strong>
+          <div className={styles.summaryProfit}>
+            <span className={styles.caption}>{t("profitLoss")}</span>
+            {showProfit(profit?.total)}
+          </div>
+          {profit && !profit.complete && (
+            <span className={styles.coverage}>
+              {t("profitCoverage", {
+                known: profit.knownCount,
+                total: view.valuation!.positionCount,
+              })}
+            </span>
+          )}
           {view.valuation && !view.valuation.complete && (
             <span className={styles.coverage}>
               {t("coverage", {
@@ -234,6 +287,22 @@ export default function HoldingsValuation({
               {t("reset")}
             </button>
           )}
+          <div className={styles.segmented} role="group" aria-label={t("profitMode")}>
+            <button
+              type="button"
+              aria-pressed={profitMode === "percent"}
+              onClick={() => setProfitMode("percent")}
+            >
+              {t("profitPercent")}
+            </button>
+            <button
+              type="button"
+              aria-pressed={profitMode === "amount"}
+              onClick={() => setProfitMode("amount")}
+            >
+              {t("profitAmount")}
+            </button>
+          </div>
           <button type="button" onClick={() => setChart(identity)} disabled={!view.valuation}>
             {t("visualize")}
           </button>
@@ -266,7 +335,7 @@ export default function HoldingsValuation({
       {view.error && (
         <InlineError message={t("refreshError")} onRetry={view.refresh} retryLabel={t("retry")} />
       )}
-      {view.valuation?.stale && (
+      {(view.valuation?.stale || profit?.stale) && (
         <p className={styles.note} role="status">
           {t("stale")}
         </p>
@@ -289,6 +358,7 @@ export default function HoldingsValuation({
                   <tr>
                     <th>{t("security")}</th>
                     <th>{t("value")}</th>
+                    <th>{t("profitLoss")}</th>
                     <th>{t("weight")}</th>
                     <th>{t("quantity")}</th>
                     <th>{t("quote")}</th>
@@ -315,6 +385,11 @@ export default function HoldingsValuation({
                             {view.currency ? money(row?.value ?? null, view.currency) : "—"}
                           </strong>
                           {row && row.status !== "valued" && <small>{t(row.status)}</small>}
+                        </td>
+                        <td className={styles.number}>
+                          {showProfit(
+                            profit?.rows.get(JSON.stringify([account.accountId, p.assetId])),
+                          )}
                         </td>
                         <td className={styles.number}>{weightLabel(row?.weightPercent)}</td>
                         <td className={styles.number}>{decimalLabel(p.quantity)}</td>
@@ -386,6 +461,7 @@ export default function HoldingsValuation({
           </div>
         </dl>
         <p>{t("costHelp")}</p>
+        <p>{t("profitHelp")}</p>
         <p>{t("quoteSource")}</p>
         {cash.length > 0 && <p>{t("cashHelp")}</p>}
         {fxDate && (
