@@ -10,6 +10,7 @@ from app.api import require_owner
 from app.errors import HubErrors
 from app.private_display_name_routes import get_display_names, router
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
+from folioview_shared.encrypted.schema import validate_schema
 
 
 class DisplayNameRoutesTests(unittest.TestCase):
@@ -100,7 +101,10 @@ class DisplayNameRoutesTests(unittest.TestCase):
             dict(url=self.path, headers=self.headers, content=b"{}"),
         ]:
             self.assertEqual(self.client.request("GET", **kwargs).status_code, 400)
-        self.assertEqual(self.client.delete(self.path, headers=self.headers).status_code, 405)
+        rejected = self.client.delete(self.path, headers=self.headers)
+        self.assertEqual(rejected.status_code, 400)
+        validate_schema("Error", rejected.json())
+        self.assertEqual(rejected.json()["error"]["code"], "malformed_request")
         self.assertEqual(self.calls, [])
 
     def test_unverified_identity_never_reaches_alias_service(self):
