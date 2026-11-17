@@ -1727,7 +1727,7 @@
     "retry": "重試",
     "updating": "正在更新報價",
     "refreshError": "部分報價未能更新，已有資料已保留。",
-    "stale": "部分市值使用較早的報價或參考匯率。",
+    "stale": "部分市值或盈虧使用較早的報價或參考匯率。",
     "table": "持倉與市值",
     "security": "證券",
     "quantity": "數量",
@@ -1754,7 +1754,17 @@
     "unknown": "未知",
     "partialCash": "部分已報告",
     "cashHelp": "已報告現金不代表可提現餘額或購買力。",
-    "loadingPrices": "正在讀取報價"
+    "loadingPrices": "正在讀取報價",
+    "profitLoss": "累計盈虧",
+    "profitMode": "盈虧顯示",
+    "profitPercent": "比例",
+    "profitAmount": "金額",
+    "profitCoverage": "僅 {known} / {total} 項可計算盈虧，暫無法計算整體盈虧。",
+    "profitMissingCost": "暫無成本",
+    "profitMissingFx": "暫無成本換算匯率",
+    "profitMissingValue": "暫無完整估值",
+    "profitZeroCost": "成本為零，無法計算比例",
+    "profitHelp": "目前持倉的累計未實現盈虧＝市值－已記錄成本，不是當日漲跌。不包含現金和已賣出持倉，股息和費用不另行計入。換算使用與估值相同的目前參考匯率，不重建未記錄的歷史匯率。"
   },
   "fx": {
     "title": "匯率",

@@ -26,6 +26,26 @@ export type PriceSet = {
 export type HoldingsValuation = Omit<Valuation, "quoteSnapshotId"> & {
   quoteSnapshotIds: string[];
 };
+export type ProfitLossMode = "percent" | "amount";
+export type ProfitLoss = {
+  amount: string | null;
+  percent: string | null;
+  reason: "missing_value" | "missing_cost" | "missing_cost_fx" | "zero_cost" | null;
+};
+type Position = HoldingsFacts["data"]["accounts"][number]["positions"][number];
+function costBasis(position: Position) {
+  if (decimal(position.quantity).n === BigInt(0))
+    return { currency: position.instrument.currency, amount: "0" };
+  return (
+    position.bookCost ??
+    (position.unitCost
+      ? {
+          currency: position.unitCost.currency,
+          amount: multiplyAmounts(position.quantity, position.unitCost.amount),
+        }
+      : position.bookCostCad)
+  );
+}
 export const instrumentKey = (
   i: Instrument | { symbol: string | null; market: string; currency: Currency },
 ) => JSON.stringify([i.symbol, i.market, i.currency]);
@@ -43,7 +63,17 @@ export function chunks<T>(rows: T[], size: number): T[][] {
   );
 }
 export function fxLegs(facts: HoldingsFacts, currency: Currency): Pair[] {
-  const currencies = displayCurrencies(facts, currency);
+  const currencies = [
+    ...new Set([
+      ...displayCurrencies(facts, currency),
+      ...facts.data.accounts.flatMap((a) =>
+        a.positions.flatMap((p) => {
+          const cost = costBasis(p);
+          return cost && decimal(cost.amount).n !== BigInt(0) ? [cost.currency] : [];
+        }),
+      ),
+    ]),
+  ];
   return currencies.length < 2
     ? []
     : currencies.filter((c) => c !== "CAD").map((base) => ({ base, quote: "CAD" }));
@@ -163,6 +193,89 @@ export function sumAmounts(values: string[]): string {
     rows.reduce((n, r) => n + r.n * BigInt(10) ** BigInt(scale - r.scale), BigInt(0)),
     scale,
   );
+}
+function multiplyAmounts(left: string, right: string): string {
+  const a = decimal(left),
+    b = decimal(right);
+  return plain(a.n * b.n, a.scale + b.scale);
+}
+function difference(value: string, cost: string): string {
+  return sumAmounts([value, decimal(cost).n === BigInt(0) ? "0" : `-${cost}`]);
+}
+function returnPercent(amount: string, cost: string): string | null {
+  const negative = amount.startsWith("-"),
+    result = percentage(negative ? amount.slice(1) : amount, cost);
+  return result === null || result === "0" ? result : `${negative ? "-" : ""}${result}`;
+}
+/** Unrealized return on current positions, never daily change or an average of row returns. */
+export function portfolioProfitLoss(
+  facts: HoldingsFacts,
+  valuation: HoldingsValuation,
+  prices: PriceSet,
+) {
+  const positions = new Map(
+      facts.data.accounts.flatMap((a) =>
+        a.positions.map((p) => [JSON.stringify([a.accountId, p.assetId]), p] as const),
+      ),
+    ),
+    costs = new Map([...positions].map(([key, p]) => [key, costBasis(p)])),
+    fx = displayFx(
+      prices.fx,
+      [...costs.values()].flatMap((cost) => (cost ? [cost.currency] : [])),
+      valuation.currency,
+    ),
+    rates = new Map(fx.items.map((item) => [item.base, item])),
+    rows = new Map<string, ProfitLoss>(),
+    knownCosts: string[] = [],
+    knownReturns: string[] = [];
+  let stale = false;
+  for (const row of valuation.rows) {
+    const key = JSON.stringify([row.accountId, row.assetId]),
+      cost = costs.get(key),
+      rate = cost ? rates.get(cost.currency) : undefined,
+      zeroCost = cost && decimal(cost.amount).n === BigInt(0);
+    let reason: ProfitLoss["reason"] = null,
+      amount: string | null = null,
+      percent: string | null = null;
+    if (row.value === null) reason = "missing_value";
+    else if (!cost) reason = "missing_cost";
+    else if (!zeroCost && cost.currency !== valuation.currency && !rate?.rate)
+      reason = "missing_cost_fx";
+    else {
+      const converted = zeroCost
+        ? "0"
+        : cost.currency === valuation.currency
+          ? cost.amount
+          : multiplyAmounts(cost.amount, rate!.rate!);
+      amount = difference(row.value, converted);
+      percent = returnPercent(amount, converted);
+      if (percent === null) reason = "zero_cost";
+      knownCosts.push(converted);
+      knownReturns.push(amount);
+      stale ||= row.stale || (!zeroCost && rate?.status === "stale");
+    }
+    rows.set(key, { amount, percent, reason });
+  }
+  const complete = knownReturns.length === valuation.positionCount,
+    amount = complete ? sumAmounts(knownReturns) : null,
+    cost = complete ? sumAmounts(knownCosts) : null;
+  const total: ProfitLoss = {
+    amount,
+    percent: amount !== null && cost !== null ? returnPercent(amount, cost) : null,
+    reason: complete && cost === "0" ? "zero_cost" : null,
+  };
+  return { rows, total, complete, knownCount: knownReturns.length, stale };
+}
+
+export function profitLossLabel(value: string | null, mode: ProfitLossMode, currency: Currency) {
+  if (value === null) return "—";
+  const n = decimal(value, true).n,
+    sign = n < BigInt(0) ? "−" : n > BigInt(0) ? "+" : "",
+    magnitude = value.startsWith("-") ? value.slice(1) : value,
+    rounded = roundDisplayAmount(magnitude, mode === "percent" ? "USD" : currency),
+    tiny = n !== BigInt(0) && !/[1-9]/.test(rounded);
+  if (mode === "percent") return `${sign}${tiny ? "<0.01" : rounded}%`;
+  return `${sign}${tiny ? `${currency} <${currency === "JPY" ? "1" : "0.01"}` : money(magnitude, currency)}`;
 }
 export function percentage(value: string, total: string): string | null {
   const a = decimal(value),

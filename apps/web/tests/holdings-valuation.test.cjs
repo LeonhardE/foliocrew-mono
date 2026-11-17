@@ -848,7 +848,11 @@ test("resetting a restored source currency schedules the actual component and hi
         process: { env: {} },
         fetch: async (url) => {
           calls++;
-          return reply(url.includes("/fx") ? prices(f).fx : prices(f).quotes[0]);
+          return reply(
+            url.includes("/fx")
+              ? batch([rate("USD", "2")], "folioview.fx-batch.v1")
+              : prices(f).quotes[0],
+          );
         },
       },
     );
@@ -913,6 +917,16 @@ test("resetting a restored source currency schedules the actual component and hi
   assert.equal(all(tree, (n) => n.type === "button" && n.props.children === "reset").length, 0);
   await tick();
   assert.equal(calls, before);
+  all(tree, (n) => n.type === "button" && n.props.children === "profitAmount")[0].props.onClick();
+  tree = restored.flush();
+  assert.ok(JSON.stringify(tree).includes("+CAD 17.00"));
+  await tick();
+  assert.equal(calls, before, "the real price hook does not refetch for amount mode");
+  all(tree, (n) => n.type === "button" && n.props.children === "profitPercent")[0].props.onClick();
+  tree = restored.flush();
+  assert.ok(JSON.stringify(tree).includes("+51.52%"));
+  await tick();
+  assert.equal(calls, before, "the real price hook does not refetch for percentage mode");
   restored.close();
 });
 test("leaving the active page aborts pending quote transports without losing already cached display data", async () => {
@@ -957,5 +971,191 @@ test("leaving the active page aborts pending quote transports without losing alr
   assert.equal(view.busy, false);
   assert.ok(signals.every((s) => s.aborted));
   assert.equal(c.valuations.size, 1);
+  h.close();
+});
+
+test("cumulative returns use exact recorded costs and a weighted portfolio denominator, never daily fields", () => {
+  const f = facts(),
+    p = prices(f),
+    before = JSON.stringify({ f, p });
+  const cad = api.portfolioProfitLoss(f, api.valuePortfolio(f, p, "CAD"), p);
+  assert.deepEqual(copy([...cad.rows.values()]), [
+    { amount: "12", percent: "42.857143", reason: null },
+    { amount: "5", percent: "100", reason: null },
+  ]);
+  assert.deepEqual(copy(cad.total), { amount: "17", percent: "51.515152", reason: null });
+  assert.equal(cad.complete, true);
+  const cny = api.portfolioProfitLoss(f, api.valuePortfolio(f, p, "CNY"), p);
+  assert.equal(cny.total.amount, "34");
+  assert.equal(cny.total.percent, cad.total.percent);
+  assert.equal(api.sumAmounts([...cny.rows.values()].map((r) => r.amount)), cny.total.amount);
+  assert.equal(JSON.stringify({ f, p }), before);
+  // The imported broker return is not reused as a current or daily return.
+  f.data.editKind = "import";
+  f.data.importSnapshot = { snapshotId: f.data.snapshotId, sourceRevision: 1 };
+  f.data.accounts[0].positions[0].reportedValues = {
+    unitPrice: null,
+    marketValue: null,
+    unrealizedReturn: { currency: "USD", amount: "999" },
+  };
+  assert.equal(api.portfolioProfitLoss(f, api.valuePortfolio(f, p, "CAD"), p).total.amount, "17");
+});
+
+test("losses, zero quantity, zero cost and empty holdings remain signed and never divide by zero", () => {
+  const f = facts(),
+    p = prices(f);
+  p.quotes[0].items[0].price = "1";
+  let profit = api.portfolioProfitLoss(f, api.valuePortfolio(f, p, "CAD"), p);
+  assert.equal([...profit.rows.values()][0].amount, "-24");
+  assert.equal([...profit.rows.values()][0].percent, "-85.714286");
+  assert.deepEqual(copy(profit.total), { amount: "-19", percent: "-57.575758", reason: null });
+  for (const position of f.data.accounts[0].positions) position.bookCost.amount = "0";
+  profit = api.portfolioProfitLoss(f, api.valuePortfolio(f, p, "CAD"), p);
+  assert.deepEqual(copy(profit.total), { amount: "14", percent: null, reason: "zero_cost" });
+  assert.equal([...profit.rows.values()][0].amount, "4");
+  assert.equal(profit.complete, true);
+  f.data.accounts[0].positions[0].quantity = "0";
+  profit = api.portfolioProfitLoss(f, api.valuePortfolio(f, p, "CAD"), p);
+  assert.equal([...profit.rows.values()][0].amount, "0");
+  f.data.accounts[0].positions = [];
+  profit = api.portfolioProfitLoss(f, api.valuePortfolio(f, p, "CAD"), p);
+  assert.deepEqual(copy(profit.total), { amount: "0", percent: null, reason: "zero_cost" });
+});
+
+test("book cost outranks rounded unit cost; unit cost and recorded CAD cost are coherent fallbacks", () => {
+  const f = facts(),
+    p = prices(f),
+    position = f.data.accounts[0].positions[0];
+  position.bookCost.amount = "13.99";
+  let profit = api.portfolioProfitLoss(f, api.valuePortfolio(f, p, "CAD"), p);
+  assert.equal([...profit.rows.values()][0].amount, "12.02");
+  position.bookCost = null;
+  profit = api.portfolioProfitLoss(f, api.valuePortfolio(f, p, "CAD"), p);
+  assert.equal([...profit.rows.values()][0].amount, "12");
+  position.unitCost = null;
+  position.bookCostCad = { currency: "CAD", amount: "30" };
+  position.provenance.bookCostCad = factsApi.provenance("manual", at);
+  f.data.accounts[0].positions = [position];
+  assert.deepEqual(copy(api.fxLegs(f, "USD")), [{ base: "USD", quote: "CAD" }]);
+  profit = api.portfolioProfitLoss(f, api.valuePortfolio(f, p, "USD"), p);
+  assert.deepEqual(copy(profit.total), { amount: "5", percent: "33.333333", reason: null });
+  const unavailable = { ...p, fx: api.missingFx(at) };
+  profit = api.portfolioProfitLoss(f, api.valuePortfolio(f, unavailable, "USD"), unavailable);
+  assert.equal(profit.complete, false);
+  assert.equal(profit.total.amount, null);
+  assert.equal([...profit.rows.values()][0].reason, "missing_cost_fx");
+  const stale = copy(p);
+  stale.fx.items[0].status = "stale";
+  assert.equal(api.portfolioProfitLoss(f, api.valuePortfolio(f, stale, "USD"), stale).stale, true);
+  position.bookCostCad.amount = "0";
+  assert.deepEqual(copy(api.fxLegs(f, "USD")), [], "zero cost needs no conversion request");
+  profit = api.portfolioProfitLoss(f, api.valuePortfolio(f, unavailable, "USD"), unavailable);
+  assert.deepEqual(copy(profit.total), { amount: "20", percent: null, reason: "zero_cost" });
+  position.quantity = "0";
+  profit = api.portfolioProfitLoss(f, api.valuePortfolio(f, unavailable, "CAD"), unavailable);
+  assert.deepEqual(copy(profit.total), { amount: "0", percent: null, reason: "zero_cost" });
+});
+
+test("unknown costs, missing quotes or FX suppress the overall return instead of reporting a partial total as complete", () => {
+  const f = facts(),
+    p = prices(f),
+    position = f.data.accounts[0].positions[0];
+  position.bookCost = position.unitCost = null;
+  let profit = api.portfolioProfitLoss(f, api.valuePortfolio(f, p, "CAD"), p);
+  assert.equal([...profit.rows.values()][0].reason, "missing_cost");
+  assert.equal(profit.total.amount, null);
+  assert.equal(profit.total.percent, null);
+  assert.equal(profit.knownCount, 1);
+  assert.equal(profit.complete, false);
+  p.quotes[0] = api.missingQuotes(api.instruments(f), at);
+  profit = api.portfolioProfitLoss(f, api.valuePortfolio(f, p, "CAD"), p);
+  assert.equal(profit.knownCount, 0);
+  assert.ok([...profit.rows.values()].every((r) => r.reason === "missing_value"));
+  const noFx = { ...prices(f), fx: api.missingFx(at) };
+  profit = api.portfolioProfitLoss(f, api.valuePortfolio(f, noFx, "CNY"), noFx);
+  assert.equal(profit.total.amount, null);
+});
+
+test("large fractional costs and display rounding retain exact signed returns", () => {
+  const f = facts(),
+    p = prices(f),
+    position = f.data.accounts[0].positions[0];
+  f.data.accounts[0].positions = [position];
+  position.quantity = "9007199254740993.125";
+  position.bookCost = null;
+  position.unitCost.amount = "1.00000001";
+  p.quotes[0].items[0].price = "1";
+  const profit = api.portfolioProfitLoss(f, api.valuePortfolio(f, p, "USD"), p);
+  assert.equal(profit.total.amount, "-90071992.54740993125");
+  assert.equal(api.profitLossLabel(profit.total.amount, "amount", "USD"), "−USD 90,071,992.55");
+  assert.equal(api.profitLossLabel("-0.001", "percent", "CAD"), "−<0.01%");
+  assert.equal(api.profitLossLabel("0.001", "amount", "CAD"), "+CAD <0.01");
+  assert.equal(api.profitLossLabel("-0.1", "amount", "JPY"), "−JPY <1");
+  assert.equal(api.profitLossLabel("0", "percent", "CAD"), "0.00%");
+  assert.equal(api.profitLossLabel(null, "amount", "CAD"), "—");
+});
+
+test("one default-percentage control switches every position and the overall return together, preserving mode across currency changes", () => {
+  const h = hooks(),
+    f = facts(),
+    p = prices(f),
+    view = {
+      facts: f,
+      prices: p,
+      currency: "CAD",
+      options: ["CAD", "USD"],
+      isDefault: true,
+      valuation: api.valuePortfolio(f, p, "CAD"),
+      select(currency) {
+        this.currency = currency;
+        this.valuation = api.valuePortfolio(f, p, currency);
+      },
+    };
+  const component = compile(
+    "../components/HoldingsValuation.tsx",
+    {
+      react: { ...h.react, useMemo: (fn) => fn() },
+      "react/jsx-runtime": { jsx, jsxs: jsx, Fragment: "fragment" },
+      "next-intl": { useTranslations: () => (key) => key, useLocale: () => "en" },
+      "./CurrencyPreferencesProvider": {
+        useCurrencyPreferences: () => ({ defaultPortfolioCurrency: "CAD", loaded: true }),
+      },
+      "./useHoldingsValuation": { useHoldingsValuation: () => view },
+      "@/lib/holdings-facts": factsApi,
+      "@/lib/holdings-valuation": api,
+      "./HoldingsValuation.module.css": { default: {} },
+    },
+    {
+      fetch() {
+        assert.fail("display toggles must not fetch");
+      },
+    },
+  );
+  const render = () => h.render(() => component.default({ model: { editScope: "scope" } }));
+  let tree = render(),
+    text = JSON.stringify(tree);
+  assert.equal(all(tree, (n) => n.props?.["aria-label"] === "profitMode").length, 1);
+  assert.equal(
+    all(tree, (n) => n.type === "button" && n.props.children === "profitPercent")[0].props[
+      "aria-pressed"
+    ],
+    true,
+  );
+  for (const result of ["+51.52%", "+42.86%", "+100.00%"]) assert.ok(text.includes(result), result);
+  all(tree, (n) => n.type === "button" && n.props.children === "profitAmount")[0].props.onClick();
+  tree = render();
+  text = JSON.stringify(tree);
+  for (const result of ["+CAD 17.00", "+CAD 12.00", "+CAD 5.00"])
+    assert.ok(text.includes(result), result);
+  assert.ok(!text.includes("+42.86%"));
+  all(tree, (n) => n.type === "select")[0].props.onChange({ target: { value: "USD" } });
+  text = JSON.stringify(render());
+  for (const result of ["+USD 8.50", "+USD 6.00", "+USD 2.50"])
+    assert.ok(text.includes(result), result);
+  all(
+    render(),
+    (n) => n.type === "button" && n.props.children === "profitPercent",
+  )[0].props.onClick();
+  assert.ok(JSON.stringify(render()).includes("+51.52%"));
   h.close();
 });

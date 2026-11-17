@@ -29,6 +29,30 @@
   margin: 6px 0;
   overflow-wrap: anywhere;
 }
+.summaryProfit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 12px;
+  margin: 8px 0;
+}
+.summaryProfit strong {
+  font-size: 20px;
+  overflow-wrap: anywhere;
+}
+.profit {
+  display: inline-grid;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+  min-width: 0;
+  max-width: 100%;
+}
+.profit small {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .actions {
   display: flex;
   gap: 8px;
@@ -96,7 +120,7 @@
 .table {
   border-collapse: collapse;
   width: 100%;
-  min-width: 700px;
+  min-width: 800px;
   font-size: 13px;
 }
 .table th {
