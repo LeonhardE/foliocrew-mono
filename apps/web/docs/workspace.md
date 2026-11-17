@@ -650,7 +650,9 @@ metadata rows while clearing decrypted names. Name backfill waits for that read'
 receipt and adopts its inline packets before using the original packet query. A superseded receipt
 cannot publish a late name or failure, and failed metadata reads require explicit retry. Receipt
 replay keeps the original timestamp; this coordination does not extend the 30-second freshness or
-remove the existing two-worker verification bound. Partial feeds retain real partial unread counts
+remove the existing two-worker verification bound. Restoring an authenticated locked workspace binds
+new metadata reads to the current unlock scope, so their receipts can start the original name
+verification queue. Owner, lock and unlock-generation changes still discard late receipts and names. Partial feeds retain real partial unread counts
 and cannot mark the homepage ready.
 
 The single overview cache is local to the task-page hooks and keyed by Owner login, vault,
