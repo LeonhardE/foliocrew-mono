@@ -70,6 +70,11 @@ display hint. Blocked storage does not prevent rendering or preference loading.
 The shell and sidebar keep their DOM during navigation. Private panels mount on first visit and
 then keep their DOM, including Settings. Their local code and chart code load in separate chunks;
 a stalled or failed chunk offers an in-place retry without reloading the unlocked workspace.
+The same failure view also offers an explicit Reload page button. Its localized notice asks users to
+save unfinished edits on other pages first and explains that another unlock may be needed. Only a
+user click reloads the document; failure and the deadline never do. This recovery entry does not
+detect a deployment or a missing chunk, preserve old static assets, or repair documents that loaded
+an earlier version of the failure view.
 Task code alone loads through a normal effect: while it is pending, the existing loading layout
 remains visible; a successful module renders its component directly with current props. This avoids
 using parent Suspense solely to wait for the task module. The outer Suspense still protects genuinely

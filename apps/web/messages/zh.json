@@ -1785,6 +1785,8 @@
   "workspaceFeedback": {
     "loading": "正在加载…",
     "retry": "重试",
-    "moduleUnavailable": "页面暂时无法加载。"
+    "moduleUnavailable": "页面暂时无法加载。",
+    "reloadPage": "重新载入页面",
+    "moduleReloadHelp": "重新载入前，请先保存其他页面尚未完成的编辑；之后可能需要重新解锁。"
   }
 }
