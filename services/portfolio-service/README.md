@@ -185,16 +185,33 @@ explain the current read budgets and freshness boundaries.
 ## Internal source metadata producer
 
 The existing bounded reads prefetch authority, head and lifecycle for up to ten sources in one
-transaction (one SDK batch, at most thirty documents). Identical root-signed registry history is
-verified once per transaction attempt, keyed by exact history digest, owner, vault and root.
-Crossing a clock second does not repeat static history verification: each reuse still checks a
-strict current time and rejects a final checkpoint issued in the future. Every current root JWK,
-source row, epoch, incarnation, head and lifecycle fence is checked individually.
-Each history verification also uses a new bounded `RegistryCertificateMemo` to avoid repeating
-identical certificate signature checks across its consecutive bundles; checkpoint signatures and
-all schema, identity, authorization, revocation and epoch checks continue to run.
-The verification memo never survives a transaction retry or request. Response DTOs and failure
-semantics are unchanged, so existing consumers can deploy independently.
+transaction (one SDK batch, at most thirty documents). Metadata reads may reuse a private,
+fully verified public registry history across requests in the same worker process. `get_service()` still creates a fresh service for
+every HTTP request; only public proofs have process lifetime, not services, stores or rows. The key
+contains the exact Root JWK bytes, owner, vault, root ID and complete canonical history digest.
+Only the original full consecutive-history verifier can publish a proof; a changed history or
+Root takes that original verifier. Each miss uses its own bounded `RegistryCertificateMemo`.
+
+The proof contains only facts established by that exact signed directory, including its signed
+active/revoked sets and epochs. Every read still fetches fresh complete rows and checks storage
+budgets, Root/schema/binding, current source fields, strict time, final checkpoint time, head and
+lifecycle. Transaction retries repeat those reads and checks. No source row, Authority object,
+current permission, DTO or database result is retained. Metadata does not newly require an old
+writer's key to remain unexpired; writes still perform their original live key checks.
+
+A sealed, single-use metadata input factory performs the original independent row copy before
+keying or verification. It exposes no raw-row getter; after verification it consumes the input
+before an Authority document can become visible. Per-attempt proof state also has an empty-only
+factory, with no caller-provided registry entries. Complete history keys are computed once.
+
+The memo keeps at most eight entries and 4 MiB of logical proof weight, not a claim that Python
+RAM equals the logical size. Capacity eviction causes normal verification. Exact static proofs
+need no elapsed-time TTL: fresh current time/checkpoint checks still run for every HTTP request
+and retry. Returned registry wrappers are detached from retained proof state.
+All installation, synchronization, write, snapshot and receipt paths retain their original
+verification and do not use this metadata memo. Response DTOs and failure semantics are unchanged.
+First reads and misses still count toward latency acceptance; local timing is not an end-to-end
+or production latency guarantee.
 
 The `uvicorn.error.portfolio_metadata` logger records closed counts and stage durations for
 storage, authority verification, head/lifecycle validation and total transaction time. It emits
