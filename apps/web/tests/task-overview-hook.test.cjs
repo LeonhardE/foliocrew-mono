@@ -740,3 +740,114 @@ test("an old packet failure cannot mark names unavailable under a newer metadata
     h.close();
   }
 });
+
+test("shared unlock restoration after an authenticated locked mount verifies current inline task names", async () => {
+  for (const phase of ["checking", "locked"]) {
+    const h = harness({ count: 3 });
+    try {
+      h.workspace.phase = phase;
+      h.workspace.vault = null;
+      const locked = await h.ready();
+      assert.equal(locked.m.listReady, false);
+      assert.equal(h.opens.length, 0);
+      h.workspace.phase = "unlocked";
+      h.workspace.vault = { vaultId: "vault_A", version: 1 };
+      const restored = await h.ready();
+      assert.equal(h.calls.length, 1);
+      assert.ok(h.calls[0].path.endsWith("/overview/query"));
+      assert.equal(restored.m.items.length, 3);
+      assert.equal(restored.m.listReady, true);
+      assert.equal(h.opens.length, 3, "names still require each original Worker proof");
+      assert.equal(Object.keys(restored.m.taskNames).length, 3);
+      assert.equal(Object.keys(restored.m.nameErrors).length, 0);
+      assert.equal(restored.tree.props["data-load-state"], "ready");
+      assert.equal(restored.tree.props["aria-busy"], false);
+    } finally {
+      h.close();
+    }
+  }
+});
+
+test("an obsolete overview cannot satisfy a new unlock generation or publish while locked", async () => {
+  let release,
+    attempts = 0;
+  const gate = new Promise((resolve) => (release = resolve));
+  const h = harness({
+    count: 3,
+    respond: (path) => (path.endsWith("/overview/query") && ++attempts === 1 ? gate : undefined),
+  });
+  try {
+    h.render();
+    await tick();
+    assert.equal(h.calls.length, 1);
+    h.workspace.phase = "locked";
+    h.workspace.vault = null;
+    let current = await h.ready();
+    release(Response.json(fixtures.body(undefined, 3)));
+    current = await h.ready();
+    assert.equal(current.m.listReady, false);
+    assert.equal(Object.keys(current.m.taskNames).length, 0);
+    assert.equal(h.opens.length, 0);
+    h.workspace.phase = "unlocked";
+    h.workspace.vault = { vaultId: "vault_A", version: 1 };
+    h.workspace.vaultGeneration++;
+    current = await h.ready();
+    assert.equal(h.calls.length, 2);
+    assert.equal(current.m.listReady, true);
+    assert.equal(h.opens.length, 3);
+    assert.equal(Object.keys(current.m.taskNames).length, 3);
+    assert.equal(current.tree.props["data-load-state"], "ready");
+  } finally {
+    release(Response.json(fixtures.body(undefined, 3)));
+    h.close();
+  }
+});
+
+test("late Worker success or failure cannot cross an Owner or unlock generation change", async () => {
+  for (const boundary of ["owner", "generation", "lock"]) {
+    for (const failure of [false, true]) {
+      let release,
+        attempt = 0;
+      const gate = new Promise((resolve, reject) => {
+        release = () =>
+          failure ? reject(Error("invalid_response")) : resolve({ name: "Obsolete name" });
+      });
+      const h = harness({
+        count: 1,
+        open: () => (++attempt === 1 ? gate : { name: "Current name" }),
+      });
+      try {
+        const waiting = await h.ready();
+        assert.equal(h.opens.length, 1);
+        assert.notEqual(waiting.tree.props["data-load-state"], "ready");
+        if (boundary === "owner") h.owner("owner_B");
+        else if (boundary === "generation") h.workspace.vaultGeneration++;
+        else {
+          h.workspace.phase = "locked";
+          h.workspace.vault = null;
+        }
+        let current = await h.ready();
+        assert.equal(Object.values(current.m.taskNames).includes("Obsolete name"), false);
+        release();
+        current = await h.ready();
+        if (boundary === "lock") {
+          assert.equal(current.m.listReady, false);
+          assert.equal(Object.keys(current.m.taskNames).length, 0);
+          assert.equal(Object.keys(current.m.nameErrors).length, 0);
+          h.workspace.phase = "unlocked";
+          h.workspace.vault = { vaultId: "vault_A", version: 1 };
+          h.workspace.vaultGeneration++;
+          current = await h.ready();
+        }
+        assert.equal(current.m.listReady, true);
+        assert.equal(current.m.taskNames.task_1, "Current name");
+        assert.equal(Object.keys(current.m.nameErrors).length, 0);
+        assert.equal(Object.values(current.m.taskNames).includes("Obsolete name"), false);
+        assert.equal(h.calls.filter((call) => call.path.endsWith("/overview/query")).length, 2);
+      } finally {
+        release();
+        h.close();
+      }
+    }
+  }
+});

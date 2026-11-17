@@ -541,7 +541,7 @@ export function useTasks(
           setState((previous) => ({ ...previous, [loading]: false }));
       }
     },
-    [api, configured, operation, owner, updatePrivate, overviewEnabled],
+    [api, configured, operation, owner, scope, updatePrivate, overviewEnabled],
   );
   const reloadTasks = useCallback(() => loadRead("tasks", true), [loadRead]);
   const reloadCatalogue = useCallback(() => loadRead("catalogue", true), [loadRead]);
