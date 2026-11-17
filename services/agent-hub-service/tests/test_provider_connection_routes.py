@@ -7,16 +7,24 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import test_provider_slot_store as providers
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from fixtures import UID
 
 from app.agent_credential_routes import router as credentials_router
 from app.api import require_owner
 from app.errors import HubErrors
 from app.native_transport_routes import owner_router as account_router
 from app.persistent_routes import router as agents_router
+from app.private_display_name_routes import get_display_names
+from app.private_display_name_routes import router as display_names_router
 from app.provider_connection_routes import get_provider_service, router
+from app.task_center_routes import get_owner_center
+from app.task_center_routes import owner_router as task_center_router
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
+from folioview_shared.encrypted.errors import ContractError
+from folioview_shared.encrypted.schema import validate_schema
 from folioview_shared.http import PrivateResponseHeaders
 
 
@@ -29,6 +37,7 @@ class ProviderConnectionRouteTests(unittest.TestCase):
         app.include_router(agents_router)
         app.add_middleware(HubErrors)
         app.add_middleware(PrivateResponseHeaders)
+        self.app = app
         app.dependency_overrides[require_owner] = lambda: SimpleNamespace(uid="synthetic_owner")
         self.calls = []
 
@@ -44,11 +53,115 @@ class ProviderConnectionRouteTests(unittest.TestCase):
             command=lambda *args: call("command", *args),
         )
         self.client = TestClient(app)
+        self.addCleanup(self.client.close)
         self.headers = {"X-FolioView-Contract": CONTRACT_VERSION}
         self.operation = "synthetic_provider_operation_0001"
         self.write_headers = {**self.headers, "Idempotency-Key": self.operation}
         self.path = "/api/v3/provider-connections/vault_A/muse"
         self.body = {"contractVersion": CONTRACT_VERSION, "command": {"approval": {}}}
+
+    def formal_error(self, response, status, code):
+        self.assertEqual(response.status_code, status)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        validate_schema("Error", response.json())
+        self.assertEqual(response.json()["error"]["code"], code)
+        self.assertEqual(response.json()["error"]["retryable"], status == 503)
+
+    def owner_receipts(self):
+        self.app.include_router(display_names_router)
+        self.app.include_router(task_center_router)
+        return (
+            (get_provider_service, self.path + "/operations/" + self.operation),
+            (
+                get_display_names,
+                "/api/v3/private-display-names/vault_A/holdings/source_A/operations/"
+                + self.operation,
+            ),
+            (
+                get_owner_center,
+                "/api/v3/task-center/vault_A/tasks/task_A/operations/" + self.operation,
+            ),
+        )
+
+    def test_missing_receipt_is_formal_before_signed_activation_and_replay(self):
+        fixture = providers.ProviderConnectionTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        self.app.dependency_overrides[require_owner] = lambda: SimpleNamespace(uid=UID)
+        self.app.dependency_overrides[get_provider_service] = lambda: fixture.service
+        command, operation = fixture.packet()
+        path = f"/api/v3/provider-connections/{fixture.f.vault}/muse"
+        receipt_path = path + "/operations/" + operation
+        self.formal_error(self.client.get(receipt_path, headers=self.headers), 404, "not_found")
+        self.assertIsNone(fixture.state()["slot"])
+        with patch("app.provider_connection_routes.provider_slots_enabled", return_value=True):
+            approved = self.client.post(
+                path + "/commands",
+                headers={**self.headers, "Idempotency-Key": operation},
+                json={"contractVersion": CONTRACT_VERSION, "command": command},
+            )
+            self.assertEqual(approved.status_code, 201, approved.text)
+            replay = self.client.post(
+                path + "/commands",
+                headers={**self.headers, "Idempotency-Key": operation},
+                json={"contractVersion": CONTRACT_VERSION, "command": command},
+            )
+        self.assertEqual(replay.status_code, 201)
+        self.assertEqual(replay.json(), approved.json())
+        receipt = self.client.get(receipt_path, headers=self.headers)
+        self.assertEqual(receipt.status_code, 200)
+        self.assertEqual(receipt.headers["cache-control"], "no-store")
+        self.assertEqual(receipt.json(), approved.json())
+
+    def test_owner_v3_receipts_normalize_missing_authorization_and_integrity_errors(self):
+        receipts = self.owner_receipts()
+        for code, status in (
+            ("not_found", 404),
+            ("insufficient_scope", 403),
+            ("version_conflict", 409),
+            ("recipient_binding_mismatch", 422),
+        ):
+            with self.subTest(code=code):
+
+                def fail(*args, failure_code=code):
+                    raise ContractError(failure_code)
+
+                for dependency, path in receipts:
+                    self.app.dependency_overrides[dependency] = lambda: SimpleNamespace(
+                        read=fail, receipt=fail
+                    )
+                    self.formal_error(self.client.get(path, headers=self.headers), status, code)
+        self.app.dependency_overrides.pop(require_owner)
+        with patch.dict(os.environ, {}, clear=True):
+            for _, path in receipts:
+                self.formal_error(self.client.get(path, headers=self.headers), 401, "invalid_token")
+
+    def test_provider_transport_gate_and_internal_errors_are_closed_without_details(self):
+        self.formal_error(
+            self.client.get(self.path + "?owner=other", headers=self.headers),
+            400,
+            "unsupported_query",
+        )
+        with patch("app.provider_connection_routes.provider_slots_enabled", return_value=False):
+            self.formal_error(
+                self.client.post(
+                    self.path + "/commands", headers=self.write_headers, json=self.body
+                ),
+                503,
+                "authorization_unavailable",
+            )
+        self.assertEqual(self.calls, [])
+
+        def unavailable(*args):
+            raise RuntimeError("SYNTHETIC_PRIVATE_ERROR_CANARY")
+
+        for dependency, path in self.owner_receipts():
+            self.app.dependency_overrides[dependency] = lambda: SimpleNamespace(
+                read=unavailable, receipt=unavailable
+            )
+            response = self.client.get(path, headers=self.headers)
+            self.formal_error(response, 503, "authorization_unavailable")
+            self.assertNotIn("SYNTHETIC_PRIVATE_ERROR_CANARY", response.text)
 
     def test_display_reuses_all_three_original_owner_capability_projections(self):
         path = "/api/v3/provider-connections/vault_A/display"
@@ -82,7 +195,8 @@ class ProviderConnectionRouteTests(unittest.TestCase):
         self.assertEqual(
             self.client.request("GET", path, headers=self.headers, json={}).status_code, 400
         )
-        self.assertEqual(self.client.post(path, headers=self.headers).status_code, 405)
+        # Existing HubErrors maps unsupported methods to its closed 400 vocabulary.
+        self.formal_error(self.client.post(path, headers=self.headers), 400, "malformed_request")
         self.assertEqual(self.calls, [])
 
     def test_summary_is_owner_only_read_transport_and_survives_disabled_write_gate(self):
@@ -107,7 +221,7 @@ class ProviderConnectionRouteTests(unittest.TestCase):
             ).status_code,
             400,
         )
-        self.assertEqual(self.client.post(path, headers=self.headers).status_code, 405)
+        self.formal_error(self.client.post(path, headers=self.headers), 400, "malformed_request")
         self.assertEqual(self.calls, [])
 
     def test_off_gate_keeps_read_and_original_receipt_available_and_does_not_write(self):
