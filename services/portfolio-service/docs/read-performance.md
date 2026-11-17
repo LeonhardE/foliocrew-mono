@@ -24,6 +24,23 @@ API500ms/UI2s remain upper acceptance bounds to measure end to end in a later
 user-authorized window. No background worker, keep-warm, resource or capacity
 change is needed.
 
+## Metadata history proof reuse
+
+`metadata_many` retains its original fresh authority/head/lifecycle batch for every request
+and SDK conflict retry. Only a complete, exactly matching signed history can reuse a verified
+registry from the process-owned bounded proof memo. The actual service dependency still creates
+a fresh `PortfolioService` for every HTTP request; no service or store is cached by this change. It always rechecks the current complete Root,
+row identity/epoch/version/active fields, strict current time and final checkpoint time before
+using fresh head/lifecycle data. Its key includes complete Root bytes and full canonical history
+hash, never only a key ID or latest checkpoint. Failed history verification cannot publish an
+entry or turn into a partial result.
+
+The eight-entry/4 MiB logical LRU limit only determines whether proof verification repeats.
+There is no cache TTL or cached authorization time: every request still checks current time. They do not reject requests, cache current permission, change a read or
+response budget, or alter platform resources. Fully verified immutable signed-directory facts
+may outlive a request; current source state and transaction rows never do. The original owner
+snapshot/view/receipt and all authority installation/write paths do not opt in.
+
 ## Combined owner read with matching public preconditions
 
 `POST /api/v3/holdings/sources/{sourceId}/view/query` combines the original owner

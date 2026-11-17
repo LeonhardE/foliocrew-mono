@@ -28,6 +28,13 @@ from folioview_shared.encrypted.jsonutil import b64url_decode, canonical_json, s
 from folioview_shared.encrypted.schema import validate_schema
 from folioview_shared.identity import owner_key
 
+from ._metadata_history import (
+    _metadata_history_proofs,
+    _MetadataAttempt,
+    _MetadataHistoryProofs,
+    _own_authority,
+    _OwnedAuthority,
+)
 from .lifecycle import (
     ACTIONS,
     MAX_SOURCE_MUTATIONS,
@@ -137,12 +144,30 @@ class _ReadSnapshot:
         # Copying avoids accidental mutation of a prefetched row by a verifier.
         return copy.deepcopy(self.rows[path]) if path in self.rows else self.unit.get(path)
 
+    def _metadata_authority(self, owner, source, now, proofs, registry_cache):
+        # Metadata alone gives the cloning factory the raw attempt-local value,
+        # replacing (not removing) the normal get()'s single independent copy.
+        path = document_path("portfolio_authorities", owner, source)
+        value = self.rows[path] if path in self.rows else self.unit.get(path)
+        if value is None:
+            raise PortfolioError(
+                "authorization_unavailable", 503, "Trusted Portfolio authority is not available."
+            )
+        return _own_authority(value)._authorize(owner, source, now, proofs, registry_cache)
+
     def __getattr__(self, name):
         return getattr(self.unit, name)
 
 
 def _authority(
-    document: dict, owner: str, source: str, now: int, *, registry_cache=None
+    document: dict,
+    owner: str,
+    source: str,
+    now: int,
+    *,
+    registry_cache=None,
+    metadata_history_proofs=None,
+    owned_authority=None,
 ) -> Authority:
     """Verify a replica against its separately provisioned root pin and history.
 
@@ -174,6 +199,20 @@ def _authority(
         raise StoreUnavailable
     # Reuse only identical public signature history within one read attempt.
     # Each source still validates its own current row, root, epoch and lifecycle.
+    if (
+        metadata_history_proofs is not None
+        and type(metadata_history_proofs) is not _MetadataHistoryProofs
+    ):
+        raise ContractError("malformed_request")
+    if metadata_history_proofs is not None:
+        if (
+            type(owned_authority) is not _OwnedAuthority
+            or not owned_authority._owns(document)
+            or type(registry_cache) is not _MetadataAttempt
+        ):
+            raise ContractError("malformed_request")
+        registry = registry_cache._resolve(metadata_history_proofs, owned_authority, now)
+        return Authority(document, registry)
     key = None
     registry = None
     if registry_cache is not None:
@@ -211,15 +250,36 @@ def _authority(
 
 
 def _current_authority(
-    unit, owner: str, source: str, now: int, *, registry_cache=None
+    unit, owner: str, source: str, now: int, *, registry_cache=None, metadata_history_proofs=None
 ) -> Authority:
+    if metadata_history_proofs is not None:
+        if type(unit) is not _ReadSnapshot:
+            raise StoreUnavailable
+        try:
+            authority = unit._metadata_authority(
+                owner, source, now, metadata_history_proofs, registry_cache
+            )
+        except PortfolioError:
+            raise
+        except (ContractError, ValueError, KeyError, TypeError):
+            raise StoreUnavailable from None
+        if not authority.document["active"]:
+            raise PortfolioError("insufficient_scope", 403, "This source is not authorized.")
+        return authority
     row = unit.get(document_path("portfolio_authorities", owner, source))
     if row is None:
         raise PortfolioError(
             "authorization_unavailable", 503, "Trusted Portfolio authority is not available."
         )
     try:
-        authority = _authority(row, owner, source, now, registry_cache=registry_cache)
+        authority = _authority(
+            row,
+            owner,
+            source,
+            now,
+            registry_cache=registry_cache,
+            metadata_history_proofs=metadata_history_proofs,
+        )
     except (ContractError, ValueError, KeyError, TypeError):
         raise StoreUnavailable from None
     if not row["active"]:
@@ -314,6 +374,7 @@ class PortfolioService:
     def __init__(self, store, *, clock=time.time):
         self.store = store
         self.clock = clock
+        self.__metadata_history_proofs = _metadata_history_proofs()
 
     def now(self):
         value = self.clock()
@@ -499,12 +560,19 @@ class PortfolioService:
             timing["storage"] += time.perf_counter() - stage
 
             snapshot = _ReadSnapshot(unit, rows)
-            registry_cache = {}  # Never reused across requests or transaction retries.
+            registry_cache = (
+                self.__metadata_history_proofs._attempt()
+            )  # New for every callback/retry.
             result = []
             for source in sources:
                 stage = time.perf_counter()
                 authority = _current_authority(
-                    snapshot, owner, source, self.now(), registry_cache=registry_cache
+                    snapshot,
+                    owner,
+                    source,
+                    self.now(),
+                    registry_cache=registry_cache,
+                    metadata_history_proofs=self.__metadata_history_proofs,
                 )
                 timing["authority"] += time.perf_counter() - stage
                 stage = time.perf_counter()

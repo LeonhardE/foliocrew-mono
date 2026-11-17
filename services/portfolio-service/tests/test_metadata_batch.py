@@ -79,12 +79,12 @@ class MetadataBatchTests(unittest.TestCase):
             )
         return sources, history
 
-    def test_long_history_reuses_signatures_across_seconds_but_not_requests(self):
+    def test_long_history_reuses_static_proof_across_requests_with_fresh_reads(self):
         sources, _ = self.long_history()
         self.service.clock = iter((1000, 1001, 1002, 1003)).__next__
         self.rpc.calls.clear()
         with (
-            patch("app.holdings.verify_registry", wraps=verify_registry) as histories,
+            patch("app._metadata_history.verify_registry", wraps=verify_registry) as histories,
             patch(
                 "folioview_shared.encrypted.authority.verify_jws", wraps=verify_jws
             ) as signatures,
@@ -93,8 +93,8 @@ class MetadataBatchTests(unittest.TestCase):
             self.assertEqual(histories.call_count, 23)
             self.assertEqual(signatures.call_count, 70)  # 23 checkpoints plus 47 certificates.
             self.assertEqual(self.service.metadata_many(UID, sources), first)
-            self.assertEqual(histories.call_count, 46)
-            self.assertEqual(signatures.call_count, 140)
+            self.assertEqual(histories.call_count, 23)
+            self.assertEqual(signatures.call_count, 70)
         self.assertEqual(sum(kind == "get" for kind, _ in self.rpc.calls), 2)
         self.assertTrue(
             all(not kw["request"]["writes"] for kind, kw in self.rpc.calls if kind == "commit")
@@ -104,7 +104,7 @@ class MetadataBatchTests(unittest.TestCase):
         sources, history = self.long_history()
         self.service.clock = iter((1000, 521)).__next__  # Last checkpoint was issued at 522.
         with (
-            patch("app.holdings.verify_registry", wraps=verify_registry) as verify,
+            patch("app._metadata_history.verify_registry", wraps=verify_registry) as verify,
             self.assertRaises(StoreUnavailable),
         ):
             self.service.metadata_many(UID, sources)
@@ -132,7 +132,7 @@ class MetadataBatchTests(unittest.TestCase):
             history[:-1]
         )
         self.service.clock = iter((1000, 1001)).__next__
-        with patch("app.holdings.verify_registry", wraps=verify_registry) as verify:
+        with patch("app._metadata_history.verify_registry", wraps=verify_registry) as verify:
             self.service.metadata_many(UID, sources)
         self.assertEqual(verify.call_count, 45)
 
@@ -147,7 +147,7 @@ class MetadataBatchTests(unittest.TestCase):
             writerKeyIds=[other.kid("device_sig")],
             recipientKeyIds=sorted([other.kid("device_enc"), other.kid("recovery_enc")]),
         )
-        with patch("app.holdings.verify_registry", wraps=verify_registry) as verify:
+        with patch("app._metadata_history.verify_registry", wraps=verify_registry) as verify:
             self.service.metadata_many(UID, sources)
         self.assertEqual(verify.call_count, 2)
         # Replacing only the public key while keeping the old pin also fails.
@@ -184,29 +184,33 @@ class MetadataBatchTests(unittest.TestCase):
                 "snapshotId": "snapshot_A",
             }
 
-        for mutate in (
-            lambda row: row.update(active=False),
-            lambda row: row.update(sourceEpoch=True),
-            bad_state,
-            bad_head,
+        for index, mutate in enumerate(
+            (
+                lambda row: row.update(active=False),
+                lambda row: row.update(sourceEpoch=True),
+                bad_state,
+                bad_head,
+            )
         ):
+            self.service = PortfolioService(self.store, clock=lambda: 1000)
             self.rpc.documents = copy.deepcopy(original)
             second = self.rpc.documents[self.authority_name(sources[1])]
             self.service.clock = iter((1000, 1001)).__next__
             mutate(second)
             with (
-                patch("app.holdings.verify_registry", wraps=verify_registry) as verify,
+                patch("app._metadata_history.verify_registry", wraps=verify_registry) as verify,
                 self.assertRaises((StoreUnavailable, PortfolioError)),
             ):
                 self.service.metadata_many(UID, sources)
-            self.assertEqual(verify.call_count, 1)
+            self.assertEqual(verify.call_count, 1 if index == 0 else 0)
 
     def test_one_two_ten_sources_use_one_sdk_read_and_one_identical_history_verification(self):
         for count in (1, 2, 10):
+            self.service = PortfolioService(self.store, clock=lambda: 1000)
             sources = self.sources(count)
             with (
                 self.subTest(count=count),
-                patch("app.holdings.verify_registry", wraps=verify_registry) as verify,
+                patch("app._metadata_history.verify_registry", wraps=verify_registry) as verify,
             ):
                 values = self.service.metadata_many(UID, list(reversed(sources)))
             self.assertEqual([value["sourceId"] for value in values], list(reversed(sources)))
@@ -214,9 +218,9 @@ class MetadataBatchTests(unittest.TestCase):
             reads = [args for kind, args in self.rpc.calls if kind == "get"]
             self.assertEqual(len(reads), 1)
             self.assertEqual(len(reads[0]["request"]["documents"]), 3 * count)
-            self.assertEqual(verify.call_count, 1)
+            self.assertEqual(verify.call_count, 1 if count == 1 else 0)
 
-    def test_retry_rereads_revocation_and_does_not_reuse_previous_attempt_verification(self):
+    def test_retry_rereads_revocation_despite_static_history_proof_reuse(self):
         sources = self.sources(2)
 
         def revoke():
@@ -225,12 +229,12 @@ class MetadataBatchTests(unittest.TestCase):
         self.rpc.aborts = 1
         self.rpc.before_abort = revoke
         with (
-            patch("app.holdings.verify_registry", wraps=verify_registry) as verify,
+            patch("app._metadata_history.verify_registry", wraps=verify_registry) as verify,
             self.assertRaises(PortfolioError) as error,
         ):
             self.service.metadata_many(UID, sources)
         self.assertEqual(error.exception.code, "insufficient_scope")
-        self.assertEqual(verify.call_count, 2)
+        self.assertEqual(verify.call_count, 1)
         self.assertEqual(sum(kind == "get" for kind, _ in self.rpc.calls), 2)
 
     def test_tampered_second_history_is_not_hidden_by_first_source_cache(self):
