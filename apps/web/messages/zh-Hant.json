@@ -1785,6 +1785,8 @@
   "workspaceFeedback": {
     "loading": "正在載入…",
     "retry": "重試",
-    "moduleUnavailable": "頁面暫時無法載入。"
+    "moduleUnavailable": "頁面暫時無法載入。",
+    "reloadPage": "重新載入頁面",
+    "moduleReloadHelp": "重新載入前，請先儲存其他頁面尚未完成的編輯；之後可能需要重新解鎖。"
   }
 }

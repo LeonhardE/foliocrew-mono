@@ -129,11 +129,21 @@ function Panel({
     <WorkspaceModuleBoundary
       key={`${name}:${attempt}`}
       fallback={
-        <InlineError
-          message={t("moduleUnavailable")}
-          retryLabel={t("retry")}
-          onRetry={() => setAttempt((n) => n + 1)}
-        />
+        <div>
+          <InlineError
+            message={t("moduleUnavailable")}
+            retryLabel={t("retry")}
+            onRetry={() => setAttempt((n) => n + 1)}
+          />
+          <p>{t("moduleReloadHelp")}</p>
+          <button
+            type="button"
+            className="account-button secondary"
+            onClick={() => window.location.reload()}
+          >
+            {t("reloadPage")}
+          </button>
+        </div>
       }
     >
       <Suspense

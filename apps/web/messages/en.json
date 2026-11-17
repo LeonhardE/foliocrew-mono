@@ -1785,6 +1785,8 @@
   "workspaceFeedback": {
     "loading": "Loading…",
     "retry": "Try again",
-    "moduleUnavailable": "This page could not be loaded."
+    "moduleUnavailable": "This page could not be loaded.",
+    "reloadPage": "Reload page",
+    "moduleReloadHelp": "Before reloading, save unfinished edits on other pages. You may need to unlock again."
   }
 }

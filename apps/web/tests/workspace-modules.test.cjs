@@ -3,7 +3,7 @@ const test = require("node:test"),
 const React = require("react"),
   jsx = require("react/jsx-runtime");
 const { compile, deferred, settle } = require("./resource-library-helpers.cjs");
-const { hooks } = require("./resource-ui-harness.cjs");
+const { hooks, all } = require("./resource-ui-harness.cjs");
 
 function modules(timers = new Map()) {
   return {
@@ -167,7 +167,7 @@ test("public Agent config deadline and hidden late reply cannot create an unveri
 });
 
 // Actual component code and React elements; deterministic lifecycle only for the DOM-free host.
-function taskModuleHost(load) {
+function taskModuleHost(load, locale) {
   const { readFileSync } = require("node:fs"),
     path = require("node:path"),
     vm = require("node:vm");
@@ -177,6 +177,7 @@ function taskModuleHost(load) {
     childKey,
     writes = 0,
     imports = 0,
+    reloads = 0,
     last;
   let panel = hooks();
   const timers = new Map();
@@ -216,11 +217,26 @@ function taskModuleHost(load) {
     },
   };
   const Loading = () => null,
-    ErrorView = () => null;
+    ErrorView = require("./workspace-feedback-helpers.cjs").component(
+      "./WorkspaceFeedback",
+    ).InlineError;
+  const translate = locale
+    ? require("next-intl").createTranslator({
+        locale,
+        messages: require(`../messages/${locale}.json`),
+        namespace: "workspaceFeedback",
+      })
+    : (key) => key;
+  const location = {
+    reload() {
+      assert.equal(this, location, "use the native location receiver");
+      reloads++;
+    },
+  };
   const provided = {
     react: r,
     "react/jsx-runtime": jsx,
-    "next-intl": { useTranslations: () => (key) => key },
+    "next-intl": { useTranslations: () => translate },
     "./WorkspaceFeedback": { InlineError: ErrorView, LoadingIndicator: Loading },
   };
   const module = { exports: {} };
@@ -230,6 +246,10 @@ function taskModuleHost(load) {
     require: (name) => {
       assert.ok(name in provided, name);
       return provided[name];
+    },
+    window: { location },
+    fetch() {
+      assert.fail("module recovery must not issue business or public probes");
     },
     __taskImport: () => {
       imports++;
@@ -271,7 +291,10 @@ function taskModuleHost(load) {
     Loading,
     imports: () => imports,
     writes: () => writes,
-    retry: () => last.boundary.props.fallback.props.onRetry(),
+    reloads: () => reloads,
+    error: () => all(last.boundary.props.fallback, (node) => node.type === ErrorView)[0],
+    retry: () =>
+      all(last.boundary.props.fallback, (node) => node.type === ErrorView)[0].props.onRetry(),
     describe(name, props = {}) {
       activeHooks = panel;
       const entry = module.exports[name](props);
@@ -349,7 +372,7 @@ test("Task module rejection renders the fixed boundary error and retry remounts 
       Error("module_unavailable"),
     );
     assert.equal(boundary.render(), initial.boundary.props.fallback);
-    assert.equal(boundary.render().props.message, "moduleUnavailable");
+    assert.equal(h.error().props.message, "moduleUnavailable");
     h.retry();
     const retry = h.draw({ session: "SAME_SESSION" });
     assert.notEqual(retry.boundary.key, initial.boundary.key);
@@ -498,6 +521,75 @@ test("a fulfilled Task module without a default component fails closed to the sa
     assert.equal(h.draw().body.type, Task);
     assert.equal(h.imports(), 2);
   } finally {
+    h.close();
+  }
+});
+
+test("failed modules offer localized retry and page reload only after explicit user activation", async () => {
+  const { renderToStaticMarkup } = require("react-dom/server");
+  for (const locale of ["en", "zh", "zh-Hant"]) {
+    const messages = require(`../messages/${locale}.json`).workspaceFeedback;
+    const h = taskModuleHost(async () => {
+      throw Error("RAW_FAILURE_SENTINEL");
+    }, locale);
+    try {
+      const initial = h.draw({ session: "PRESERVED_SESSION" });
+      assert.equal(h.reloads(), 0);
+      await settle();
+      assert.throws(
+        () => h.draw(),
+        (error) => error.message === "module_unavailable",
+      );
+      const boundary = new h.api.WorkspaceModuleBoundary(initial.boundary.props);
+      assert.equal(boundary.render(), initial.boundary.props.children);
+      boundary.state = h.api.WorkspaceModuleBoundary.getDerivedStateFromError(Error("unknown"));
+      const recovery = boundary.render();
+      const html = renderToStaticMarkup(recovery);
+      assert.equal((html.match(/<button /g) || []).length, 2, locale);
+      assert.ok(html.includes(messages.moduleUnavailable), locale);
+      assert.ok(html.includes(messages.retry), locale);
+      assert.ok(html.includes(messages.reloadPage), locale);
+      assert.ok(html.includes(messages.moduleReloadHelp), locale);
+      assert.ok(!html.includes("RAW_FAILURE_SENTINEL"));
+      assert.equal(h.imports(), 1);
+      assert.equal(h.timers.size, 0);
+      assert.equal(h.reloads(), 0, "failure and rendering must not navigate");
+      const reload = all(recovery, (node) => node.type === "button")[0];
+      assert.equal(reload.props.type, "button");
+      reload.props.onClick();
+      assert.equal(h.reloads(), 1, "only a deliberate click invokes normal location.reload");
+      assert.equal(h.imports(), 1, "page reload must not create an in-place module retry or probe");
+    } finally {
+      h.close();
+    }
+  }
+});
+
+test("the original module deadline keeps both recovery choices local until the user reloads", async () => {
+  const gate = deferred();
+  const h = taskModuleHost(() => gate.promise);
+  try {
+    const initial = h.draw({ session: "UNCHANGED_SESSION" });
+    assert.equal([...h.timers.values()][0].ms, 15000);
+    assert.equal(h.reloads(), 0);
+    [...h.timers.values()][0].fn();
+    await settle();
+    assert.throws(
+      () => h.draw(),
+      (error) => error.message === "module_unavailable",
+    );
+    const fallback = initial.boundary.props.fallback;
+    assert.equal(all(fallback, (node) => node.type === "button").length, 1);
+    assert.equal(h.reloads(), 0, "the deadline must never reload an unlocked document");
+    h.retry();
+    const retried = h.draw({ session: "UNCHANGED_SESSION" });
+    assert.notEqual(retried.boundary.key, initial.boundary.key);
+    assert.equal(retried.loader.props.session, "UNCHANGED_SESSION");
+    assert.equal(h.imports(), 2);
+    assert.equal(h.reloads(), 0, "the original retry remains in place");
+  } finally {
+    gate.resolve({ default: () => null });
+    await settle();
     h.close();
   }
 });
