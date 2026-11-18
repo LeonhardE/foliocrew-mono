@@ -6,6 +6,7 @@ from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.schema import validate_schema
 from folioview_shared.identity import owner_key
 
+from .fences import fence_path
 from .native_transport import PROFILE as ACCOUNT_PROFILE
 from .native_transport import NativeConnectionOwnerService
 from .persistent_publications import stored_task_state
@@ -14,6 +15,7 @@ from .task_center import task_metadata, task_path
 from .task_lifecycle import lifecycle_path, require_visible
 from .tasks import _paths, _response, _TaskReadView
 from .vaults import _current
+from .vaults import _response as _vault_response
 
 PROFILE = "folioview.owner-task-detail.v1"
 
@@ -63,26 +65,39 @@ def _current_packet(unit, owner, vault, task, meta):
 
 
 def _fit(result):
-    # Prefer the original executor evidence when the two independent carriers do not fit together.
-    for field in ("packet", "legacy"):
+    # A vault fallback must not displace existing task or executor evidence.
+    for field in ("vaultResponse", "packet", "legacy"):
+        if not result.get(field) or result[field]["status"] != "ready":
+            continue
         try:
             check_read_response(result)
             return result
         except ContractError as error:
             if error.code != "payload_too_large":
                 raise
-        if result[field] and result[field]["status"] == "ready":
-            result[field] = {"status": "unavailable"}
-            if field == "legacy":
-                result["attribution"] = None
+        result[field] = {"status": "unavailable"}
+        if field == "legacy":
+            result["attribution"] = None
     check_read_response(result)
     return result
+
+
+def _detail_rows(unit, paths, fences):
+    try:
+        return _TaskReadView(unit, unit.get_many(paths + fences)), True
+    except StoreUnavailable:
+        if not fences:
+            raise
+        # A malformed optional fence must not hide an otherwise readable task.
+        return _TaskReadView(unit, unit.get_many(paths)), False
 
 
 def read_task_detail(service, uid, vault, task, options):
     if (
         type(options) is not dict
-        or set(options) != {"contractVersion", "includePacket", "includeAttribution"}
+        or set(options) - {"includeVault"}
+        != {"contractVersion", "includePacket", "includeAttribution"}
+        or options.get("includeVault", True) is not True
         or options["contractVersion"] != CONTRACT_VERSION
         or type(options["includePacket"]) is not bool
         or type(options["includeAttribution"]) is not bool
@@ -100,7 +115,11 @@ def read_task_detail(service, uid, vault, task, options):
             lifecycle_path(owner, vault),
             task_path(owner, vault, task),
         ]
-        view = _TaskReadView(unit, unit.get_many(paths))
+        include_vault = "includeVault" in options
+        fences = (
+            [fence_path(owner, s["resourceRef"]) for s in v["sources"]] if include_vault else []
+        )
+        view, fences_read = _detail_rows(unit, paths, fences)
         require_visible(view, owner, vault, task)
         meta = task_metadata(view, owner, vault, task)
         state = service._state(view, owner, vault, task, meta)
@@ -112,6 +131,13 @@ def read_task_detail(service, uid, vault, task, options):
             "attribution": None,
             "packet": None,
         }
+        if include_vault:
+            result["taskMetadata"] = meta
+            result["vaultResponse"] = (
+                _optional(lambda: _vault_response(v, view))
+                if fences_read
+                else {"status": "unavailable"}
+            )
         if state["rules"] is None and meta["status"] == "active" and meta["resourceBindings"]:
             result["legacy"] = _optional(lambda: stored_task_state(unit, owner, vault, task))
             authority = result["legacy"].get("data", {}).get("authority")

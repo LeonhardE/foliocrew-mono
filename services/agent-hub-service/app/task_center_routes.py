@@ -91,7 +91,10 @@ async def detail(vault: str, task: str, request: Request, user: Owner, service: 
     _invoke(lambda: control_transport(request))
     _invoke(lambda: _protocol(request))
     options = await body(
-        request, {"contractVersion", "includePacket", "includeAttribution"}, max_bytes=512
+        request,
+        {"contractVersion", "includePacket", "includeAttribution"},
+        optional_fields=("includeVault",),
+        max_bytes=512,
     )
     return await run_in_threadpool(
         _invoke, lambda: read_task_detail(service, user.uid, vault, task, options)

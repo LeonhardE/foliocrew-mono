@@ -104,7 +104,7 @@ def transport(request, *, operation=False, author=False):
             validate_schema(schema, request.headers[key])
 
 
-async def body(request, fields, *, max_bytes=MAX_HTTP_WRITE_BYTES):
+async def body(request, fields, *, optional_fields=(), max_bytes=MAX_HTTP_WRITE_BYTES):
     _invoke(lambda: transport(request))
     if (
         len(request.headers.getlist("content-type")) != 1
@@ -121,7 +121,7 @@ async def body(request, fields, *, max_bytes=MAX_HTTP_WRITE_BYTES):
         value = strict_json_loads(bytes(raw), max_bytes=max_bytes)
         if (
             type(value) is not dict
-            or set(value) != set(fields)
+            or set(value).difference(optional_fields) != set(fields)
             or value.get("contractVersion") != CONTRACT_VERSION
         ):
             raise ContractError("malformed_request")
