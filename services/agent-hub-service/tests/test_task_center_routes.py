@@ -145,19 +145,34 @@ class TaskCenterRouteTests(unittest.TestCase):
             self.assertEqual(
                 read.call_args.args[1:], ("synthetic_owner", "vault_A", "task_A", value)
             )
+            extended = {**value, "includeVault": True}
+            self.assertEqual(
+                self.client.post(path, headers=self.headers, json=extended).status_code, 200
+            )
+            self.assertEqual(read.call_args.args[-1], extended)
             for headers, target, payload in [
                 (self.write, path, value),
                 ({**self.headers, "x-folioview-author-key": "device_key"}, path, value),
                 ({**self.headers, "x-serverless-authorization": "wrong"}, path, value),
                 (self.headers, path + "?all=true", value),
                 (self.headers, path, {**value, "taskIds": []}),
+                (
+                    self.headers,
+                    path,
+                    {key: field for key, field in extended.items() if key != "includePacket"},
+                ),
             ]:
                 self.assertGreaterEqual(
                     self.client.post(target, headers=headers, json=payload).status_code, 400
                 )
-            self.assertEqual(read.call_count, 1)
+            self.assertEqual(read.call_count, 2)
         for flag in ("includePacket", "includeAttribution"):
             result = self.client.post(path, headers=self.headers, json={**value, flag: 1})
+            self.assertEqual(result.status_code, 400)
+        for invalid in (False, 1, None, "true"):
+            result = self.client.post(
+                path, headers=self.headers, json={**value, "includeVault": invalid}
+            )
             self.assertEqual(result.status_code, 400)
         self.app.dependency_overrides.pop(require_owner)
         self.assertEqual(self.client.post(path, headers=self.headers, json=value).status_code, 401)

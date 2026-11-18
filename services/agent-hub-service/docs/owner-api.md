@@ -470,7 +470,8 @@ historical task proof, not a new receipt for the complete original transition-in
 
 `POST /api/v3/task-center/{vault}/tasks/{task}/detail/query` reads one visible task in a
 single Owner transaction. The closed JSON body contains `contractVersion` and two required
-booleans, `includePacket` and `includeAttribution`. The body limit is 512 bytes.
+booleans, `includePacket` and `includeAttribution`. A caller can also send `"includeVault":true`.
+Omitting that flag preserves the original response shape. The body limit is 512 bytes.
 The result uses profile `folioview.owner-task-detail.v1` and contains `contractVersion`,
 `profile`, `state`, `legacy`, `attribution` and `packet`. The required `state` is the original
 Task Center response, including its signed controls and current assignment plans.
@@ -486,10 +487,17 @@ Each optional field is either `null` when inapplicable or unrequested,
   index, vault, connection and provider. A revoked record keeps its original author label.
 - `packet` contains the unmodified current encrypted packet when requested. The Hub runs the
   original single-task checks and compares the complete packet metadata with the current head.
+- With `includeVault:true`, the response adds `taskMetadata`, the complete current `TaskMetadata`
+  verified against the task index and head, including when no packet was requested. It also adds
+  `vaultResponse`, whose ready data is the complete `GET /api/v2/vaults/current` response.
+  This includes the public root, signed registry history, opaque archive, version and current
+  source epochs. The Hub reads the source fences alongside the task records in the same
+  transaction. An unreadable fence or oversized projection yields `{"status":"unavailable"}`;
+  the browser can fetch the original endpoint and apply the same Worker checks.
 
 Owner authentication, vault, head, visibility and required state failures reject the request.
 The whole response fits the original 1 MiB read budget. If needed the service omits the optional
-packet first, then the legacy section and its dependent attribution. The client may retry the
+vault first, then the packet, then the legacy section and its dependent attribution. The client may retry the
 unavailable section through its original read. Browsing still requires the browser's existing
 proof checks, current private scope, and worker verification before decryption. Execution,
 settings changes and historical reads use their existing dedicated endpoints.
