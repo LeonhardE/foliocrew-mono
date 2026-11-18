@@ -42,7 +42,7 @@ locals {
       FIREBASE_PROJECT_ID           = local.project_id
       FIRESTORE_DATABASE            = "agent-hub"
       AGENT_HUB_STORE_BACKEND       = "firestore"
-      CORS_ORIGINS                  = local.web_origin
+      CORS_ORIGINS                  = join(",", concat([local.web_origin], var.browser_origin_aliases))
       HUB_SERVICE_AUDIENCE          = var.deployment.hub_origin
       HUB_KMS_SIGNING_KEY_VERSION   = "${google_kms_crypto_key.delegation.id}/cryptoKeyVersions/1"
       HUB_CATALOGUE_CALLER_EMAIL    = local.runtime_email

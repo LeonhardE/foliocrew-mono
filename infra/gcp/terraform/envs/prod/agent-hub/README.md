@@ -67,6 +67,16 @@ operator inputs. Never put raw client secrets or Agent private keys in Terraform
 source or logs. Real provider callback registration and Node host readiness still
 require their separate acceptance window.
 
+### Additional owner browser origins
+
+Review the per-target [browser origin candidate](../../../../deployment-profiles/README.md#browser-origin-candidates-profile-v6)
+before setting optional `browser_origin_aliases` in the separate Agent Hub operator inputs.
+The canonical Web origin stays first in `CORS_ORIGINS` so existing account-link consent pages
+keep opening that workspace by default. `HUB_AGENT_OWNER_URL` also stays bound to the canonical
+Web origin. The Hub service audience and OAuth issuer continue to come from `deployment.hub_origin`.
+Apply admission through a reviewed Hub plan. The task-center rollout comparison still treats
+these aliases as protected inputs.
+
 ## Ownership and staged creation
 
 | Owner                   | Prospective resources                                                                                                    | Order                                    |
