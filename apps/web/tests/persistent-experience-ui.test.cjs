@@ -42,6 +42,14 @@ function render(locale, unlocked, plan, credential = null, duration = null, stat
   };
   const components = compile("../components/PersistentAgentsPanel.tsx", imports, {
     Intl,
+    Date:
+      state.now === undefined
+        ? Date
+        : class extends Date {
+            static now() {
+              return state.now * 1000;
+            }
+          },
   });
   if (duration)
     return renderToStaticMarkup(
@@ -274,4 +282,52 @@ test("Agent readiness reflects the complete verified display and never treats re
   assert.match(state({}, false), /data-load-state="locked"/);
   assert.match(state({ workspace: { owner: "owner_B" } }), /data-load-state="locked"/);
   assert.doesNotMatch(state(), /connection_A|owner_A|PRIVATE/);
+});
+
+test("expiry changes at the exact credential deadline and account unlinking follows the independent account status", () => {
+  const now = 1_800_000_000;
+  for (const [locale, expired, valid, unlink] of [
+    ["en", "Credential expired on", "Valid until", "Unlink account"],
+    ["zh", "执行凭证已于", "有效至", "解除账号关联"],
+    ["zh-Hant", "執行憑證已於", "有效至", "解除帳號連結"],
+  ]) {
+    for (const provider of ["muse", "chatgpt"]) {
+      function row(id, time, linked = true) {
+        return {
+          connection: {
+            connectionId: id,
+            status: linked ? "active" : "revoked",
+            accountState: linked ? "relogin_required" : "revoked",
+            provider,
+          },
+          credential: { status: "active", expiresAt: time, reference: { connectionId: id } },
+          pending: false,
+          tasks: [],
+        };
+      }
+      const current = row("current", now);
+      const previous = row("previous", now - 86400);
+      const removed = row("removed", now - 86400, false);
+      const model = {
+        views: [current, previous, removed],
+        providerStates: {
+          [provider]: { slot: { currentCredential: current.credential.reference } },
+        },
+      };
+      const at = (clock, unlocked = true) =>
+        render(locale, unlocked, null, null, null, { now: clock, model });
+      const earlier = at(now - 1);
+      assert.ok(earlier.includes(valid));
+      assert.equal(earlier.split(expired).length - 1, 1);
+      for (const clock of [now, now + 1]) {
+        const out = at(clock);
+        assert.equal(out.split(expired).length - 1, 2);
+        assert.equal(out.split(unlink).length - 1, 2);
+        assert.ok(!out.includes(valid));
+      }
+      const locked = at(now, false);
+      assert.ok(!locked.includes(expired));
+      assert.ok(!locked.includes(unlink));
+    }
+  }
 });

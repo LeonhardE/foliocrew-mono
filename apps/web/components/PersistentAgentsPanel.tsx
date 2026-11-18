@@ -8,6 +8,7 @@ import {
   DEFAULT_CONNECTION_SECONDS,
   TEMPORARY_CONNECTION_SECONDS,
   type PersistentConnection,
+  type PersistentConnectionView,
   type PersistentTask,
 } from "@/lib/persistent-experience-controller";
 import {
@@ -95,10 +96,18 @@ export function PersistentAgentsPanel({
     selected: string[];
     lifetimeSeconds: number;
   } | null>(null);
+  const nextClockUpdate = model.views.reduce((next, { credential }) => {
+    const expiry = credential?.expiresAt;
+    return expiry > now ? Math.min(next, expiry) : next;
+  }, now + 60);
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now() / 1000), 60000);
-    return () => clearInterval(timer);
-  }, []);
+    if (!active || !model.unlocked) return;
+    const timer = setTimeout(
+      () => setNow(Date.now() / 1000),
+      Math.max(0, Math.ceil(nextClockUpdate * 1000 - Date.now())),
+    );
+    return () => clearTimeout(timer);
+  }, [active, model.unlocked, nextClockUpdate]);
   useEffect(() => {
     setAuthorization(null);
   }, [scope]);
@@ -223,6 +232,18 @@ export function PersistentAgentsPanel({
         ? { dateStyle: "medium", timeStyle: "short" }
         : { dateStyle: "medium" },
     ).format(value * 1000);
+  function credentialExpiry(view: PersistentConnectionView | null) {
+    const credential = view?.credential;
+    if (
+      !model.unlocked ||
+      view?.connection.status !== "active" ||
+      !credential?.expiresAt ||
+      !["active", "expiring", "expired"].includes(credential.status)
+    )
+      return null;
+    const expired = credential.status === "expired" || credential.expiresAt <= now;
+    return t(expired ? "expiredAt" : "expires", { date: date(credential.expiresAt) });
+  }
   const status = (view: (typeof model.views)[number]) => {
     if (view.connection.status === "revoked") return "disconnected";
     const value = view.credential;
@@ -231,7 +252,7 @@ export function PersistentAgentsPanel({
       return "reauthorize";
     return value.expiresAt - now <= 604800 ? "expiring" : "connected";
   };
-  const ready = model.loaded,
+  const ready = model.unlocked && model.loaded,
     readError = model.loadError,
     refreshing = model.loading,
     checking = model.unlocked && !ready && !readError,
@@ -454,6 +475,7 @@ export function PersistentAgentsPanel({
       <div className={styles.connectionGrid}>
         {groups.map((group) => {
           const view = group.current,
+            expiry = credentialExpiry(view),
             value = !model.unlocked
               ? "unlockStatus"
               : !ready
@@ -480,11 +502,7 @@ export function PersistentAgentsPanel({
                   {t(value)}
                 </span>
               </div>
-              {view?.credential?.expiresAt && model.unlocked && (
-                <p className={styles.note}>
-                  {t("expires", { date: date(view.credential.expiresAt) })}
-                </p>
-              )}
+              {expiry && <p className={styles.note}>{expiry}</p>}
               {group.reviewRequired && <p className={styles.note}>{t("reviewConnections")}</p>}
               {model.unlocked && view?.tasks.length ? (
                 <ul className={styles.taskLinks}>
@@ -509,11 +527,11 @@ export function PersistentAgentsPanel({
                     setCopied(false);
                   }}
                 >
-                  {t(view ? "reauthorizeButton" : "connect", {
+                  {t(view?.connection.status === "active" ? "reauthorizeButton" : "connect", {
                     provider: providerName(group.provider),
                   })}
                 </button>
-                {view?.pending && (
+                {view?.pending && view.connection.status === "active" && (
                   <button
                     className={styles.secondary}
                     disabled={!canChangeConnection || !workspace.canWriteState}
@@ -545,11 +563,9 @@ export function PersistentAgentsPanel({
                             ? status(old)
                             : "previousConnection",
                         )}
-                        {old.credential?.expiresAt && model.unlocked
-                          ? ` · ${date(old.credential.expiresAt)}`
-                          : ""}
                       </span>
-                      {old.pending && (
+                      {credentialExpiry(old)}
+                      {old.pending && old.connection.status === "active" && (
                         <button
                           disabled={!canChangeConnection || !workspace.canWriteState}
                           onClick={() => void model.continueOperation(old.connection)}
