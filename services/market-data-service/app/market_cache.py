@@ -18,6 +18,9 @@ from folioview_shared.firestore import BoundedTransaction
 
 from .cost_controls import MarketLimited, get_cost_controls
 
+# One cold Market and holdings visit can require 31 weighted provider units.
+UPSTREAM_UNITS_PER_MINUTE = 32
+
 
 class CacheUnavailable(Exception):
     """The shared cache cannot safely reserve upstream capacity."""
@@ -99,7 +102,7 @@ def reserve(
         state.update(window=now, window_count=0)
     if state.get("count", 0) + cost > limit:
         return "The shared daily market refresh limit has been reached."
-    if state.get("window_count", 0) + cost > 20:
+    if state.get("window_count", 0) + cost > UPSTREAM_UNITS_PER_MINUTE:
         return "Market refreshes are temporarily limited. Please try again shortly."
     state["count"] = state.get("count", 0) + cost
     state["window_count"] = state.get("window_count", 0) + cost

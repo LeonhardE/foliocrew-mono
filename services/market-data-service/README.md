@@ -40,6 +40,11 @@ never calls Yahoo, reserves a refresh or changes the cache TTL, daily upstream
 budget or cooldown rules. Mock responses derive their quote from the 1M fixture
 and remain explicitly marked as fictional by the enclosing response.
 
+The database coordinates a weighted budget of 32 provider units per minute
+across all instances. A cold visit can fetch the overview, chart, stock metrics,
+two holdings quotes, currency rates and instrument search within that window.
+Fresh cache hits consume no provider units. The default daily provider budget is 200.
+
 ## Anonymous request and storage cost controls
 
 Registered `/api/` market handlers use constant-memory, process-wide admission
