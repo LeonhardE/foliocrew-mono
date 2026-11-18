@@ -822,6 +822,18 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(env["TF_IN_AUTOMATION"], "1")
         self.assertEqual(env["TF_CLI_CONFIG_FILE"], "/dev/null")
 
+    def test_terraform_can_find_the_bundled_runner_python_for_provisioners(self):
+        python = "/usr/lib/google-cloud-sdk/platform/bundledpythonunix/bin/python3"
+        result = subprocess.CompletedProcess(["terraform", "apply"], 0, b"", b"")
+        with (
+            patch.object(pipeline.sys, "executable", python),
+            patch.dict("os.environ", {"PATH": "/usr/bin:/bin"}, clear=True),
+            patch.object(pipeline.subprocess, "run", return_value=result) as run,
+        ):
+            pipeline.command(["terraform", "apply", "reviewed.tfplan"], Path("/tmp"))
+        env = run.call_args.kwargs["env"]
+        self.assertEqual(env["PATH"], f"{Path(python).parent}:/usr/bin:/bin")
+
 
 if __name__ == "__main__":
     unittest.main()
