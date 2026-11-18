@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 6,
+  "profileId": "demo-alpha",
+  "mode": "adoption",
+  "project": {
+    "id": "demo-folio-alpha",
+    "number": "111222333444"
+  },
+  "region": "us-central1",
+  "source": {
+    "repositoryUrl": "https://github.com/example/demo-folio-alpha.git",
+    "repositoryResource": "projects/demo-folio-alpha/locations/us-central1/connections/demo-github/repositories/demo-alpha"
+  },
+  "artifactRepository": "folio-images",
+  "state": {
+    "bootstrapBucket": "demo-folio-alpha-tf-bootstrap",
+    "stateBucket": "demo-folio-alpha-tfstate",
+    "planBucket": "demo-folio-alpha-tfplans"
+  },
+  "bootstrapStages": {
+    "portfolio": "none",
+    "agent-hub": "none"
+  },
+  "firebase": {
+    "enabled": false,
+    "apiKey": "",
+    "authDomain": "",
+    "appId": ""
+  },
+  "targets": {
+    "repo": {
+      "enabled": false,
+      "lifecycle": "create",
+      "origin": null,
+      "image": null,
+      "runtimeAccountId": null,
+      "adoption": null
+    },
+    "market": {
+      "enabled": false,
+      "lifecycle": "adopt",
+      "origin": "https://market-api-111222333444.us-central1.run.app",
+      "image": "us-central1-docker.pkg.dev/demo-folio-alpha/folio-images/market-api@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "runtimeAccountId": "folio-market-runtime",
+      "adoption": {
+        "serviceUid": "00000000-0000-0000-0000-000000000004",
+        "buildTriggerId": "00000000-0000-0000-0000-000000000005",
+        "planTriggerId": "00000000-0000-0000-0000-000000000006",
+        "applyTriggerId": "00000000-0000-0000-0000-000000000007"
+      }
+    },
+    "user": {
+      "enabled": false,
+      "lifecycle": "create",
+      "origin": "https://user-api-111222333444.us-central1.run.app",
+      "image": null,
+      "runtimeAccountId": "folio-user-runtime",
+      "adoption": null
+    },
+    "config": {
+      "enabled": false,
+      "lifecycle": "create",
+      "origin": "https://config-api-111222333444.us-central1.run.app",
+      "image": null,
+      "runtimeAccountId": "folio-config-runtime",
+      "adoption": null
+    },
+    "web": {
+      "enabled": false,
+      "lifecycle": "adopt",
+      "origin": "https://market-web-111222333444.us-central1.run.app",
+      "image": "us-central1-docker.pkg.dev/demo-folio-alpha/folio-images/market-web@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "runtimeAccountId": "folio-web-runtime",
+      "adoption": {
+        "serviceUid": "00000000-0000-0000-0000-000000000008",
+        "buildTriggerId": "00000000-0000-0000-0000-000000000009",
+        "planTriggerId": "00000000-0000-0000-0000-00000000000a",
+        "applyTriggerId": "00000000-0000-0000-0000-00000000000b"
+      }
+    },
+    "portfolio": {
+      "enabled": false,
+      "lifecycle": "create",
+      "origin": "https://portfolio-api-111222333444.us-central1.run.app",
+      "image": null,
+      "runtimeAccountId": "folio-portfolio-runtime",
+      "adoption": null
+    },
+    "agent-hub": {
+      "enabled": false,
+      "lifecycle": "create",
+      "origin": "https://agent-hub-api-111222333444.us-central1.run.app",
+      "image": null,
+      "runtimeAccountId": "folio-agent-hub-runtime",
+      "adoption": null
+    }
+  },
+  "webOwnerApis": {
+    "portfolio": false,
+    "agentHub": false
+  },
+  "userHubTrust": {
+    "enabled": false,
+    "hubSubject": null
+  },
+  "portfolioHubTrust": {
+    "hubEnabled": false,
+    "hubSubject": null,
+    "webOwnerEnabled": false
+  },
+  "browserOrigins": {
+    "market": ["https://workspace.demo.example"]
+  }
+}

@@ -154,12 +154,8 @@ def instance_target(instance):
     }
 
 
-def require_trust_consumer(directory, target="user"):
-    """Explicit source opt-in prevents Terraform ignoring an undeclared trust variable."""
-    marker = directory / f"{target}-hub-trust.consumer.json"
-    message = (
-        f"{target.title()} source has not adopted the reviewed {target.title()}/Hub trust contract."
-    )
+def require_consumer_marker(marker, expected, message):
+    """Require a source opt-in before passing Terraform an additional variable."""
     try:
         require(marker.is_file() and not marker.is_symlink(), message)
         with marker.open("rb") as source:
@@ -171,49 +167,52 @@ def require_trust_consumer(directory, target="user"):
             parse_constant=deployments.reject_constant,
         )
         require(type(value) is dict and type(value.get("schemaVersion")) is int, message)
-        require(
-            value
-            == {
-                "schemaVersion": 1,
-                "target": target,
-                "trustContract": f"{target}-hub-trust.v1",
-                "terraformVariable": "hub_trust",
-            },
-            message,
-        )
+        require(value == expected, message)
     except (OSError, ValueError, TypeError, RecursionError):
         raise RuntimeError(message) from None
+
+
+def require_trust_consumer(directory, target="user"):
+    label = target.title()
+    require_consumer_marker(
+        directory / f"{target}-hub-trust.consumer.json",
+        {
+            "schemaVersion": 1,
+            "target": target,
+            "trustContract": f"{target}-hub-trust.v1",
+            "terraformVariable": "hub_trust",
+        },
+        f"{label} source has not adopted the reviewed {label}/Hub trust contract.",
+    )
 
 
 require_user_hub_trust_consumer = require_trust_consumer
 
 
 def require_web_owner_consumer(directory):
-    marker = directory / "web-owner.consumer.json"
-    message = "Web source has not adopted the reviewed owner configuration contract."
-    try:
-        require(marker.is_file() and not marker.is_symlink(), message)
-        with marker.open("rb") as source:
-            data = source.read(513)
-        require(0 < len(data) <= 512, message)
-        value = json.loads(
-            data.decode("utf-8"),
-            object_pairs_hook=deployments.unique_pairs,
-            parse_constant=deployments.reject_constant,
-        )
-        require(type(value) is dict and type(value.get("schemaVersion")) is int, message)
-        require(
-            value
-            == {
-                "schemaVersion": 1,
-                "target": "web",
-                "configurationContract": "web-owner.v1",
-                "terraformVariable": "owner_environment",
-            },
-            message,
-        )
-    except (OSError, ValueError, TypeError, RecursionError):
-        raise RuntimeError(message) from None
+    require_consumer_marker(
+        directory / "web-owner.consumer.json",
+        {
+            "schemaVersion": 1,
+            "target": "web",
+            "configurationContract": "web-owner.v1",
+            "terraformVariable": "owner_environment",
+        },
+        "Web source has not adopted the reviewed owner configuration contract.",
+    )
+
+
+def require_browser_origins_consumer(directory, target):
+    require_consumer_marker(
+        directory / "browser-origins.consumer.json",
+        {
+            "schemaVersion": 1,
+            "target": target,
+            "configurationContract": "browser-origins.v1",
+            "terraformVariable": "browser_origin_aliases",
+        },
+        f"{target.title()} source has not adopted the reviewed browser origin contract.",
+    )
 
 
 def registry(root, target, instance=None):
@@ -371,6 +370,8 @@ def registry(root, target, instance=None):
         require_trust_consumer(directory, "portfolio")
     if instance is not None and "webOwner" in instance:
         require_web_owner_consumer(directory)
+    if instance is not None and "browserOrigins" in instance:
+        require_browser_origins_consumer(directory, target)
     return policy, selected, directory
 
 

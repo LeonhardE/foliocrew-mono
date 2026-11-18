@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 MAX_PROFILE_BYTES = 131_072
 MAX_TARGET_BYTES = 4_000
 MAX_PLAN_AGE_SECONDS = 21_600
+MAX_ADDITIONAL_BROWSER_ORIGINS = 7
 TARGET_SERVICES = {
     "repo": None,
     "market": "market-api",
@@ -28,6 +29,16 @@ TARGET_SERVICES = {
     "web": "market-web",
     "portfolio": "portfolio-api",
     "agent-hub": "agent-hub-api",
+}
+MANAGED_BROWSER_ORIGIN_TARGETS = {"config", "market", "user"}
+BROWSER_ORIGIN_TARGETS = MANAGED_BROWSER_ORIGIN_TARGETS | {"agent-hub"}
+BROWSER_ORIGIN_FIELDS = {
+    "schemaVersion",
+    "instanceId",
+    "target",
+    "deploymentSha256",
+    "canonicalWebOrigin",
+    "additionalOrigins",
 }
 TOP_FIELDS = {
     "schemaVersion",
@@ -119,6 +130,7 @@ PROJECT = re.compile(r"[a-z][a-z0-9-]{4,28}[a-z0-9]\Z")
 REGION = re.compile(r"[a-z]+(?:-[a-z0-9]+)+[0-9]\Z")
 ACCOUNT = re.compile(r"[a-z][a-z0-9-]{4,28}[a-z0-9]\Z")
 DOMAIN = re.compile(r"[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?\Z")
+DNS_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
 
 
 class ProfileError(ValueError):
@@ -200,6 +212,26 @@ def origin(value):
         raise ProfileError from None
 
 
+def browser_origin_aliases(addresses, reserved):
+    """Validate an unordered set of exact HTTPS origins on DNS hostnames."""
+    require(type(addresses) is list and 1 <= len(addresses) <= MAX_ADDITIONAL_BROWSER_ORIGINS)
+    for address in addresses:
+        origin(address)
+        labels = urlsplit(address).hostname.split(".")
+        require(all(DNS_LABEL.fullmatch(label) for label in labels))
+        require(not labels[-1].isdigit() and address not in reserved)
+    require(len(set(addresses)) == len(addresses))
+    return sorted(addresses)
+
+
+def run_service_origins(number, region):
+    return {
+        f"https://{service}-{number}.{region}.run.app"
+        for service in TARGET_SERVICES.values()
+        if service
+    }
+
+
 def uuid(value):
     try:
         require(type(value) is str and str(UUID(value)) == value)
@@ -212,13 +244,14 @@ def validate_profile(value):
     try:
         require(type(value) is dict)
         version = value.get("schemaVersion")
-        require(type(version) is int and version in {1, 2, 3, 4})
+        require(type(version) is int and version in {1, 2, 3, 4, 6})
         fields(
             value,
             TOP_FIELDS
             | ({"webOwnerApis"} if version >= 2 else set())
             | ({"userHubTrust"} if version >= 3 else set())
-            | ({"portfolioHubTrust"} if version >= 4 else set()),
+            | ({"portfolioHubTrust"} if version >= 4 else set())
+            | ({"browserOrigins"} if version == 6 else set()),
         )
         matches(SLUG, value["profileId"])
         require(value["mode"] in {"adoption", "fresh_install"})
@@ -384,6 +417,17 @@ def validate_profile(value):
                     selected["origin"]
                     == f"https://{TARGET_SERVICES[name]}-{number}.{region}.run.app"
                 )
+        if version == 6:
+            selections = value["browserOrigins"]
+            require(type(selections) is dict and selections.keys() <= BROWSER_ORIGIN_TARGETS)
+            if selections:
+                require(value["targets"]["web"]["lifecycle"] == "adopt")
+            normalized = {}
+            reserved = seen_origins | run_service_origins(number, region)
+            for name, addresses in selections.items():
+                require(value["targets"][name]["lifecycle"] == "adopt")
+                normalized[name] = browser_origin_aliases(addresses, reserved)
+            value = {**value, "browserOrigins": normalized}
         # Canonical serialization rejects invalid Unicode and snapshots mutable callers.
         return json.loads(canonical(value))
     except (KeyError, TypeError, ValueError, OverflowError, RecursionError):
@@ -419,13 +463,16 @@ def validate_target(value):
         require(not has_portfolio_trust or target == "portfolio")
         has_user_trust = "userHubTrust" in value
         require(not has_user_trust or target == "user")
+        has_browser_origins = "browserOrigins" in value
+        require(not has_browser_origins or target in MANAGED_BROWSER_ORIGIN_TARGETS)
         fields(
             value,
             TARGET_TOP_FIELDS
             | ({"build"} if target == "web" else set())
             | ({"userHubTrust"} if has_user_trust else set())
             | ({"portfolioHubTrust"} if has_portfolio_trust else set())
-            | ({"webOwner"} if has_web_owner else set()),
+            | ({"webOwner"} if has_web_owner else set())
+            | ({"browserOrigins"} if has_browser_origins else set()),
         )
         require(type(value["schemaVersion"]) is int and value["schemaVersion"] == 1)
         matches(SLUG, value["instanceId"])
@@ -482,6 +529,11 @@ def validate_target(value):
                 validate_instance_origin(inputs[name], service, number, region)
         if "market_origin" in inputs:
             require(inputs["market_origin"] != inputs["web_origin"])
+        if has_browser_origins:
+            reserved = run_service_origins(number, region)
+            reserved.update((inputs["web_origin"], inputs.get("market_origin")))
+            addresses = value["browserOrigins"]
+            require(addresses == browser_origin_aliases(addresses, reserved))
         if target == "web":
             build = value["build"]
             fields(build, WEB_BUILD_FIELDS)
@@ -521,7 +573,11 @@ def validate_target(value):
         if has_user_trust:
             trust = value["userHubTrust"]
             fields(trust, {"configuration", "hubDeployment"})
-            base = {name: item for name, item in value.items() if name != "userHubTrust"}
+            base = {
+                name: item
+                for name, item in value.items()
+                if name not in {"userHubTrust", "browserOrigins"}
+            }
             configuration = trust["configuration"]
             require(type(configuration) is dict)
             require((configuration.get("hubSubject") is None) == (trust["hubDeployment"] is None))
@@ -581,6 +637,8 @@ def terraform_inputs(instance):
         result["hub_trust"] = dict(value["portfolioHubTrust"]["configuration"]["environment"])
     if "webOwner" in value:
         result["owner_environment"] = dict(value["webOwner"]["server"]["environment"])
+    if "browserOrigins" in value:
+        result["browser_origin_aliases"] = list(value["browserOrigins"])
     return result
 
 
@@ -656,6 +714,88 @@ def compile_artifacts(profile, target):
                 name: hashlib.sha256(canonical(value) + b"\n").hexdigest()
                 for name, value in artifacts.items()
             },
+        },
+    }
+
+
+def parse_browser_origins(data, *, instance, web_origin, expected_sha256):
+    """Read a reviewed browser origin sidecar for one exact deployment instance."""
+    require(type(data) is bytes and 0 < len(data) <= MAX_TARGET_BYTES)
+    try:
+        require(hashlib.sha256(data).hexdigest() == expected_sha256)
+        instance = parse_target(canonical(instance))
+        require(instance["target"] in BROWSER_ORIGIN_TARGETS)
+        number, region = instance["project"]["number"], instance["region"]
+        validate_instance_origin(web_origin, "market-web", number, region)
+        require(instance["inputs"].get("web_origin", web_origin) == web_origin)
+        value = json.loads(
+            data.decode("ascii"), object_pairs_hook=unique_pairs, parse_constant=reject_constant
+        )
+        fields(value, BROWSER_ORIGIN_FIELDS)
+        require(canonical(value) == data)
+        require(type(value["schemaVersion"]) is int and value["schemaVersion"] == 1)
+        require(value["instanceId"] == instance["instanceId"])
+        require(value["target"] == instance["target"])
+        require(value["deploymentSha256"] == digest(instance))
+        require(value["canonicalWebOrigin"] == web_origin)
+        reserved = run_service_origins(number, region)
+        reserved.update((web_origin, instance["inputs"].get("market_origin")))
+        addresses = value["additionalOrigins"]
+        require(addresses == browser_origin_aliases(addresses, reserved))
+        return value
+    except (KeyError, TypeError, ValueError, RecursionError):
+        raise ProfileError from None
+
+
+def add_browser_origins(instance, data, *, expected_sha256):
+    """Combine a reviewed sidecar with the active deployment, keeping its trust settings."""
+    instance = parse_target(canonical(instance))
+    require(instance["target"] in MANAGED_BROWSER_ORIGIN_TARGETS)
+    base = {
+        name: item
+        for name, item in instance.items()
+        if name not in {"userHubTrust", "browserOrigins"}
+    }
+    document = parse_browser_origins(
+        data,
+        instance=base,
+        web_origin=base["inputs"]["web_origin"],
+        expected_sha256=expected_sha256,
+    )
+    return parse_target(canonical({**instance, "browserOrigins": document["additionalOrigins"]}))
+
+
+def compile_browser_origin_artifacts(profile, target):
+    """Render browser admission separately from existing deployable inputs."""
+    profile = validate_profile(profile)
+    require(type(target) is str and target in profile.get("browserOrigins", {}))
+    instance = compile_target(profile, target)
+    web_origin = profile["targets"]["web"]["origin"]
+    document = {
+        "schemaVersion": 1,
+        "instanceId": instance["instanceId"],
+        "target": target,
+        "deploymentSha256": digest(instance),
+        "canonicalWebOrigin": web_origin,
+        "additionalOrigins": profile["browserOrigins"][target],
+    }
+    checksum = digest(document)
+    parse_browser_origins(
+        canonical(document), instance=instance, web_origin=web_origin, expected_sha256=checksum
+    )
+    filename = "browser-origins.candidate.json"
+    return {
+        filename: document,
+        "manifest.json": {
+            "schemaVersion": 1,
+            "purpose": "offline_browser_origins_candidate",
+            "approval": "not_requested",
+            "productionActivation": False,
+            "instanceId": instance["instanceId"],
+            "target": target,
+            "deploymentSha256": digest(instance),
+            "browserOriginsSha256": checksum,
+            "filesSha256": {filename: hashlib.sha256(canonical(document) + b"\n").hexdigest()},
         },
     }
 
@@ -1281,30 +1421,28 @@ def main():
             "compile-user-hub-trust",
             "compile-portfolio-hub-trust",
             "compile-web-owner-deployment",
+            "compile-browser-origins",
         ),
     )
     parser.add_argument("--profile", required=True)
     parser.add_argument("--output-dir")
     parser.add_argument("--target")
     args = parser.parse_args()
+    target_actions = {"compile", "compile-browser-origins"}
+    output_actions = target_actions | {
+        "render",
+        "compile-web-owner",
+        "compile-user-hub-trust",
+        "compile-portfolio-hub-trust",
+        "compile-web-owner-deployment",
+    }
     try:
-        require(
-            (
-                args.action
-                in {
-                    "render",
-                    "compile",
-                    "compile-web-owner",
-                    "compile-user-hub-trust",
-                    "compile-portfolio-hub-trust",
-                    "compile-web-owner-deployment",
-                }
-            )
-            == (args.output_dir is not None)
-        )
-        require((args.action == "compile") == (args.target is not None))
+        require((args.action in output_actions) == (args.output_dir is not None))
+        require((args.action in target_actions) == (args.target is not None))
         profile = load_profile(args.profile)
-        if args.action == "compile-web-owner-deployment":
+        if args.action == "compile-browser-origins":
+            artifacts = compile_browser_origin_artifacts(profile, args.target)
+        elif args.action == "compile-web-owner-deployment":
             artifacts = compile_web_owner_deployment_artifacts(profile)
         elif args.action == "compile-portfolio-hub-trust":
             artifacts = compile_portfolio_hub_trust_artifacts(profile)
@@ -1318,14 +1456,7 @@ def main():
                 if args.action == "compile"
                 else render(profile)
             )
-        if args.action in {
-            "render",
-            "compile",
-            "compile-web-owner",
-            "compile-user-hub-trust",
-            "compile-portfolio-hub-trust",
-            "compile-web-owner-deployment",
-        }:
+        if args.action in output_actions:
             write_candidates(artifacts, args.output_dir)
         # Hashes identify selected input; they are not source-provenance or approval proof.
         print(json.dumps(artifacts["manifest.json"], sort_keys=True))

@@ -494,3 +494,66 @@ specifications. They do not select an active consumer or authorize apply. Curren
 personal Agent credentials need no Policy origin, executor endpoint, policy JWK
 or Agent-specific secret in deployment configuration. Web consumes only existing
 Firebase/Portfolio/Hub settings; its consumer restriction is delivered separately.
+
+## Browser origin candidates (profile v6)
+
+[Profile v6](profile-v6.schema.json) adds a `browserOrigins` object to the v4 shape.
+Choose each target explicitly. An empty object declares no candidate.
+The [synthetic example](example-v6.profile.json) selects Market:
+
+```json
+{
+  "browserOrigins": {
+    "market": ["https://workspace.demo.example"]
+  }
+}
+```
+
+Market, User, Config and Agent Hub may each name up to seven additional, exact HTTPS
+origins. Supply the reviewed hostname for the selected environment. Each selected
+target and Web must have adopted instances. The loader rejects duplicates, wildcard
+or IP hostnames, ports, credentials, paths, queries, fragments and established
+service origins. Order is normalized for stable review. The aliases express
+membership. A consumer that generates a default owner URL chooses it independently.
+
+```sh
+python3 infra/gcp/deployment_profile.py compile-browser-origins \
+  --profile .deployment/profile.json \
+  --target market \
+  --output-dir .deployment/market-browser-origin-review
+```
+
+The command writes `browser-origins.candidate.json` and a private manifest. The
+candidate names the selected instance and target and binds the original deployment
+SHA-256 and canonical Web origin. A future reader passes that reviewed deployment,
+the existing Web origin and the independently reviewed candidate hash to
+`parse_browser_origins`. Strip only the writer's terminal newline before reading.
+The manifest records both the canonical candidate hash and the actual file hash.
+
+For Market, User and Config, `add_browser_origins` combines the reviewed candidate
+with the existing managed deployment. The producer preserves the base inputs and
+any User/Hub trust extension. Only the chosen deployment gains a `browserOrigins`
+member and produces the Terraform variable `browser_origin_aliases`. Its source
+root must opt in through a regular `browser-origins.consumer.json` file with the
+following four fields, using its own target value:
+
+```json
+{
+  "schemaVersion": 1,
+  "target": "market",
+  "configurationContract": "browser-origins.v1",
+  "terraformVariable": "browser_origin_aliases"
+}
+```
+
+The runner checks this file before passing the variable to Terraform. Agent Hub
+reviews the same sidecar with its separate operator input workflow and chooses its
+owner default independently.
+
+Regular compilation, trust inputs and generated build substitutions keep their
+existing bytes. The manifest's profile fingerprint reflects the additional
+configuration. Profiles v1–v4 keep their prior validation and outputs. Each
+consumer adopts the candidate in its own change. Verify the canonical origin,
+service identity and audience in that target's plan and compare the exact admitted
+origins. On rollback of a public link or owner default, keep allowing both
+workspace origins until the retiring origin's consumers are verified clear.
