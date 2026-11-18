@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const { webcrypto } = require("node:crypto");
 const { readFileSync } = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
@@ -343,6 +344,89 @@ test("same-origin snapshot writes survive the container URL while preserving pri
   assert.equal(forwarded.headers.get("authorization"), "Bearer " + tokenA);
   for (const name of ["host", "origin", "x-forwarded-host"])
     assert.equal(forwarded.headers.has(name), false);
+});
+
+test("the branded edge proof binds the request and keeps Firebase and workload authentication", async () => {
+  const alias = "https://workbench.example.test";
+  const host = new URL(SITE).host;
+  const path = SOURCE + "/snapshots/snapshot_A";
+  const method = "PUT";
+  const pair = await webcrypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
+  const { x } = await webcrypto.subtle.exportKey("jwk", pair.publicKey);
+  const env = { ...ENV, FOLIOCREW_EDGE_BROWSER_ORIGIN: alias, FOLIOCREW_EDGE_PUBLIC_KEY: x };
+  const timestamp = String(NOW / 1000);
+  const body = { contractVersion: CONTRACT, expectedRevision: 0, carrier: CARRIER };
+  const proof = async (
+    time,
+    signedHost = host,
+    signedOrigin = alias,
+    signedMethod = method,
+    target = PREFIX + path,
+  ) => {
+    const bytes = new TextEncoder().encode(
+      JSON.stringify([
+        "foliocrew.edge-origin.v1",
+        time,
+        signedHost,
+        signedOrigin,
+        signedMethod,
+        target,
+      ]),
+    );
+    const signature = Buffer.from(await webcrypto.subtle.sign("Ed25519", pair.privateKey, bytes));
+    return time + "." + signature.toString("base64url");
+  };
+  const validProof = await proof(timestamp);
+  const send = (h, headers = {}, token = tokenA) =>
+    h.proxy(
+      request(path, {
+        site: "https://0.0.0.0:8080",
+        method,
+        token,
+        headers: {
+          ...writeHeaders(),
+          Host: host,
+          Origin: alias,
+          "Sec-Fetch-Site": "same-origin",
+          "X-Foliocrew-Edge-Proof": validProof,
+          ...headers,
+        },
+        json: body,
+      }),
+    );
+
+  const valid = harness({ env });
+  const result = await send(valid);
+  assert.equal(result.status, 200, await result.clone().text());
+  assert.equal(result.headers.get("cache-control"), "no-store");
+  const forwarded = valid.upstream()[0].options.headers;
+  assert.equal(forwarded.get("authorization"), "Bearer " + tokenA);
+  assert.equal(forwarded.get("x-serverless-authorization"), "Bearer " + serviceToken);
+  assert.equal(forwarded.has("x-foliocrew-edge-proof"), false);
+
+  const anonymous = harness({ env });
+  await expectError(await send(anonymous, {}, "no-token"), 401, "invalid_token");
+  assert.equal(anonymous.calls.length, 0);
+  const disabled = harness();
+  await expectError(await send(disabled), 403, "insufficient_scope");
+  assert.equal(disabled.calls.length, 0);
+  for (const headers of [
+    { "X-Foliocrew-Edge-Proof": "", "X-Forwarded-Host": new URL(alias).host },
+    { "X-Foliocrew-Edge-Proof": validProof + "," + validProof },
+    { "X-Foliocrew-Edge-Proof": await proof(String(NOW / 1000 - 31)) },
+    { "X-Foliocrew-Edge-Proof": await proof(String(NOW / 1000 + 31)) },
+    { "X-Foliocrew-Edge-Proof": await proof(timestamp, "unrelated.example.test") },
+    { "X-Foliocrew-Edge-Proof": await proof(timestamp, host, "https://unrelated.example.test") },
+    { "X-Foliocrew-Edge-Proof": await proof(timestamp, host, alias, "POST") },
+    {
+      "X-Foliocrew-Edge-Proof": await proof(timestamp, host, alias, method, PREFIX + path + "?v=1"),
+    },
+    { "Sec-Fetch-Site": "cross-site" },
+  ]) {
+    const invalid = harness({ env });
+    await expectError(await send(invalid, headers), 403, "insufficient_scope");
+    assert.equal(invalid.calls.length, 0);
+  }
 });
 
 test("snapshot writes reject a forged forwarded host and the container origin before acquiring identity", async () => {
