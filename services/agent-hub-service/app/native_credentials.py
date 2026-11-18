@@ -68,7 +68,7 @@ class NativeCredentialService:
             "hostInstructions": (
                 "Keep credentials only in this Agent's private persistent directory. "
                 "Load the existing profile for every later task. If missing, corrupt, expired "
-                "or rejected, stop and tell the user to authorize again in FolioView. "
+                "or rejected, stop and tell the user to authorize again in Foliocrew. "
                 "Never print private keys, upload credentials, or silently replace active keys. "
                 "Use the reviewed local client for PoP requests, local ciphertext decryption "
                 "and Owner-encrypted reports. Native OAuth is bootstrap only."

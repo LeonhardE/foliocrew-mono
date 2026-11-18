@@ -30,7 +30,7 @@ from .task_overview import router as task_overview_router
 from .tasks import router as tasks_router
 
 app = create_app(
-    "FolioView Agent Hub API",
+    "Foliocrew Agent Hub API",
     private=True,
     methods=("GET", "POST", "PUT", "PATCH"),
     description="Passkey-sealed owner archive and signed public directory. No content decryption.",
