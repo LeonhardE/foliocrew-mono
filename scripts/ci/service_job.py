@@ -228,7 +228,7 @@ def smoke_target(target_id: str) -> None:
             "service-smoke",
             "--env",
             "MARKET_DATA_SOURCE=mock",
-            "folioview-backend:test",
+            "foliocrew-backend:test",
         ],
         check=True,
     )

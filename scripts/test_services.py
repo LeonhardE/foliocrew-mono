@@ -53,7 +53,7 @@ raise SystemExit(0 if result.wasSuccessful() else 1)
 
 def run_parallel(directory: Path, environment: dict, jobs: int) -> bool:
     """Keep module/class fixtures in one process; prove complete discovery coverage."""
-    with tempfile.TemporaryDirectory(prefix="folioview-test-shards-") as scratch:
+    with tempfile.TemporaryDirectory(prefix="foliocrew-test-shards-") as scratch:
         reports = [Path(scratch) / f"{index}.json" for index in range(jobs)]
 
         def run(index):
