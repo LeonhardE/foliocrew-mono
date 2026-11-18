@@ -161,7 +161,15 @@ function harness({ count = 2, respond, open, overviewEnabled = true, readDetail 
         m.overview,
         m.selectedDetail,
       );
-      const r = results.useTaskResults(workspace, undefined, m, active, "", c, m.overview);
+      const observed = Object.values(c.manual)
+        .flatMap((rows) =>
+          rows.flatMap(
+            (row) => row.snapshot?.executors?.map((e) => e.resultId).filter(Boolean) ?? [],
+          ),
+        )
+        .sort()
+        .join("|");
+      const r = results.useTaskResults(workspace, undefined, m, active, observed, c, m.overview);
       const tree = view.TaskCenterView({ workspace, model: m, center: c, resultState: r, active });
       return (current = { m, c, r, tree });
     });
@@ -1119,6 +1127,40 @@ test("a fresh included packet opens after vault verification while an independen
     assert.equal(result.c.executors.status, "error");
     assert.equal(h.calls.filter((c) => c.path === "/api/v2/tasks/task_1").length, 0);
     assert.equal(h.calls.filter((c) => c.path.endsWith("/tasks/task_1/manual")).length, 1);
+  } finally {
+    h.close();
+  }
+});
+
+test("opening a task whose historical run is already in the overview keeps the feed and unread count", async () => {
+  const h = harness({
+    open: () => ({ ...syntheticForm(), name: "Synthetic", goal: "Research" }),
+    respond: (path) => {
+      if (path.endsWith("/tasks/task_1/manual"))
+        return Response.json({
+          items: [
+            {
+              snapshot: { executors: [{ resultId: "result_A" }] },
+              aggregate: { hasActiveExecutors: false },
+            },
+          ],
+        });
+      if (path.endsWith("/tasks/task_1")) return Response.json(detailFixture("task_1", null).state);
+    },
+  });
+  try {
+    let m = await h.ready();
+    h.workspace.verifyTaskCenterState = async (s) => s;
+    h.workspace.loadTaskCenterPending = async () => null;
+    h.workspace.refreshVault = async () => h.workspace.vault;
+    const receipt = m.m.overview.receipt;
+    assert.equal(m.r.unreadCounts.task_1, 1);
+    await m.m.openTask("task_1");
+    m = await h.ready();
+    assert.equal(m.c.manual.task_1[0].snapshot.executors[0].resultId, "result_A");
+    assert.equal(m.m.overview.receipt, receipt);
+    assert.equal(m.r.unreadCounts.task_1, 1);
+    assert.equal(h.calls.filter((c) => c.path.includes("?limit=")).length, 0);
   } finally {
     h.close();
   }
