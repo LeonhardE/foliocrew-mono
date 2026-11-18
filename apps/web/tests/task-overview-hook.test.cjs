@@ -196,6 +196,43 @@ function harness({ count = 2, respond, open, overviewEnabled = true } = {}) {
     },
   };
 }
+test("opening a task verifies the fresh included packet without fetching its head twice", async () => {
+  const h = harness({
+    open: async (packet) => ({
+      ...compile("../lib/task-forms.ts", { "./task-types": types }).defaultTask("custom"),
+      name: "Synthetic " + packet.metadata.taskId,
+      goal: "Review the synthetic portfolio",
+    }),
+    respond: (path) => {
+      if (path === "/api/v2/tasks/task_1")
+        return Response.json(fixtures.packet(fixtures.metadata(1)));
+      if (path.endsWith("/tasks/task_1/manual")) return Response.json({ items: [] });
+      if (path.endsWith("/tasks/task_1"))
+        return Response.json({
+          taskId: "task_1",
+          taskVersion: 1,
+          executionEpoch: 1,
+          rules: null,
+          assignments: [],
+        });
+    },
+  });
+  try {
+    const x = await h.ready();
+    h.workspace.loadTaskCenterPending = async () => null;
+    h.workspace.verifyTaskCenterState = async (state) => state;
+    h.workspace.refreshVault = async () => h.workspace.vault;
+    await x.m.openTask("task_1");
+    assert.equal(h.render().m.selected?.taskId, "task_1");
+    assert.equal(h.calls.filter((c) => c.path === "/api/v2/tasks/task_1").length, 0);
+    h.advance(30_001);
+    await h.render().m.openTask("task_1");
+    assert.equal(h.calls.filter((c) => c.path === "/api/v2/tasks/task_1").length, 1);
+  } finally {
+    h.close();
+  }
+});
+
 test("three real task hooks share one overview and inline names preserve true unread/provider attribution", async () => {
   const h = harness();
   try {

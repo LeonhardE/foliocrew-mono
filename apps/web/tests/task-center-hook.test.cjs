@@ -2,7 +2,26 @@ const test = require("node:test"),
   assert = require("node:assert/strict");
 const { compile, settle } = require("./resource-library-helpers.cjs");
 const CONTRACT = "folioview.agent-workspace.v2.0";
-function harness({ pending = new Map(), transport, timers } = {}) {
+const meta = (taskId = "task_A", patch = {}) => ({
+  taskId,
+  taskVersion: 1,
+  executionEpoch: 1,
+  status: "active",
+  envelopeFingerprint: "fingerprint_A",
+  resourceBindings: [],
+  ...patch,
+});
+const state = (taskId = "task_A", patch = {}) => ({
+  contractVersion: CONTRACT,
+  taskId,
+  taskVersion: 1,
+  executionEpoch: 1,
+  rules: null,
+  assignments: [],
+  ...patch,
+});
+function harness({ pending = new Map(), transport, timers, initial = meta(), overview } = {}) {
+  let selected = initial;
   let owner = "owner_A",
     index = 0,
     dirty = false;
@@ -46,14 +65,19 @@ function harness({ pending = new Map(), transport, timers } = {}) {
         ? { enabled: true }
         : path.endsWith("/manual")
           ? { items: [] }
-          : { contractVersion: CONTRACT, taskId: "task_A", rules: null, assignments: [] },
+          : state(path.split("/").at(-1)),
     );
   };
   const workspace = {
     owner,
     phase: "unlocked",
     canWriteState: true,
-    vault: { vaultId: "vault_A" },
+    vault: {
+      vaultId: "vault_A",
+      rootKeyId: "root_A",
+      version: 1,
+      archive: { ownerSubject: "subject_A" },
+    },
     vaultGeneration: 1,
     verifyTaskCenterState: async (s) => s,
     loadTaskCenterPending: async (t) => pending.get(t) ?? null,
@@ -101,7 +125,7 @@ function harness({ pending = new Map(), transport, timers } = {}) {
       crypto: require("node:crypto").webcrypto,
     },
   );
-  const selected = { taskId: "task_A", taskVersion: 1 };
+
   function render() {
     let result,
       n = 0;
@@ -109,7 +133,7 @@ function harness({ pending = new Map(), transport, timers } = {}) {
       assert.ok(n++ < 30, "render loop");
       dirty = false;
       index = 0;
-      result = m.useTaskCenter(workspace, true, selected);
+      result = m.useTaskCenter(workspace, true, selected, overview);
       for (const e of effects.splice(0)) {
         cells[e.n]?.cleanup?.();
         cells[e.n] = { deps: e.deps, cleanup: e.f() };
@@ -118,6 +142,9 @@ function harness({ pending = new Map(), transport, timers } = {}) {
     return result;
   }
   return {
+    select(value) {
+      selected = value;
+    },
     pending,
     calls,
     workspace,
@@ -228,9 +255,7 @@ test("task state and manual progress read together but publish only after state 
     "independent progress read must not wait for the state body",
   );
   assert.equal(h.render().records.task_A, undefined);
-  release(
-    Response.json({ contractVersion: CONTRACT, taskId: "task_A", rules: null, assignments: [] }),
-  );
+  release(Response.json(state()));
   const m = await h.ready();
   assert.ok(m.records.task_A);
   h.close();
@@ -262,6 +287,264 @@ test("capability receipt distinguishes loading legitimate disabled failure and a
     model = await h.ready();
     assert.equal(model.capabilityState, "error");
     assert.equal(model.enabled, false);
+  } finally {
+    h.close();
+  }
+});
+
+const binding = { ref: { kind: "watchlist", resourceId: "synth" }, sourceEpoch: 1 };
+const modern = (id, provider) =>
+  state(id, {
+    rules: { definition: { taskVersion: 1, executionEpoch: 1 } },
+    assignments: provider
+      ? [{ assignment: { status: "active", provider }, plan: { currentAssignment: true } }]
+      : [],
+  });
+const legacyAuthority = (task, overrides = {}) => ({
+  contractVersion: CONTRACT,
+  profile: "folioview.persistent-content.v1",
+  envelope: {},
+  authority: {
+    context: {
+      ownerSubject: "subject_A",
+      vaultId: "vault_A",
+      rootKeyId: "root_A",
+      objectType: "task",
+      objectId: task.taskId,
+      taskId: task.taskId,
+      taskVersion: task.taskVersion,
+      executionEpoch: task.executionEpoch,
+      ownerTaskFingerprint: task.envelopeFingerprint,
+      connectionId: "connection_A",
+      ...overrides,
+    },
+  },
+});
+const connectionList = {
+  contractVersion: CONTRACT,
+  profile: "folioview.persistent-account.v1",
+  connections: [
+    {
+      connectionId: "connection_A",
+      clientId: "client_A",
+      vaultId: "vault_A",
+      provider: "muse",
+      status: "active",
+      accountState: "connected",
+      linkedAt: 1,
+    },
+  ],
+};
+const countCalls = (h, end) => h.calls.filter((c) => c.path.endsWith(end)).length;
+function mappedOverview() {
+  const receipt = {
+    scope: "owner_A:vault_A:1:1",
+    at: Date.now(),
+    data: { vaultId: "vault_A", capabilities: { enabled: true }, connections: connectionList },
+  };
+  return {
+    receipt,
+    acquire: async () => receipt,
+    invalidate() {
+      assert.fail("passive detail reads discarded the shared overview");
+    },
+  };
+}
+
+test("verified current assignments and confirmed empty tasks do not read legacy authority or discover connections", async () => {
+  const a = meta("task_A", { resourceBindings: [binding] }),
+    b = meta("task_B"),
+    c = meta("task_C", { resourceBindings: [binding] });
+  const h = harness({
+    initial: a,
+    transport: (path) =>
+      path.endsWith("/tasks/task_A")
+        ? Response.json(modern("task_A", "chatgpt"))
+        : path.endsWith("/tasks/task_C")
+          ? Response.json(modern("task_C", null))
+          : undefined,
+  });
+  try {
+    let m = await h.ready();
+    assert.equal(m.executors.status, "ready");
+    assert.deepEqual(Array.from(m.executors.providers), ["chatgpt"]);
+    h.select(b);
+    m = await h.ready();
+    assert.deepEqual(Array.from(m.executors.providers), []);
+    assert.equal(m.executors.status, "ready");
+    h.select(c);
+    m = await h.ready();
+    assert.deepEqual(Array.from(m.executors.providers), []);
+    assert.equal(m.executors.status, "ready");
+    h.select(a);
+    m = await h.ready();
+    assert.deepEqual(Array.from(m.executors.providers), ["chatgpt"]);
+    assert.equal(countCalls(h, "/tasks/task_A"), 1);
+    assert.equal(countCalls(h, "/authority"), 0);
+    assert.equal(countCalls(h, "/persistent-connections"), 0);
+  } finally {
+    h.close();
+  }
+});
+
+test("a legacy assignment reads its original authority once and reuses matching overview labels without opening its body or refreshing the vault", async () => {
+  const task = meta("task_A", { resourceBindings: [binding] });
+  const h = harness({
+    initial: task,
+    overview: mappedOverview(),
+    transport: (path) =>
+      path.endsWith("/authority") ? Response.json(legacyAuthority(task)) : undefined,
+  });
+  try {
+    const m = await h.ready();
+    assert.equal(m.executors.status, "ready");
+    assert.deepEqual(Array.from(m.executors.providers), ["muse"]);
+    assert.deepEqual(
+      h.calls.map((c) => c.path).sort(),
+      [
+        "/api/v3/task-center/vault_A/tasks/task_A",
+        "/api/v3/task-center/vault_A/tasks/task_A/manual",
+        "/api/v2/persistent-content/vault_A/tasks/task_A/authority",
+      ].sort(),
+    );
+    h.select(meta("task_B"));
+    await h.ready();
+    h.select(task);
+    await h.ready();
+    assert.equal(countCalls(h, "/authority"), 1);
+  } finally {
+    h.close();
+  }
+});
+
+test("a legacy failure stays in the executor field and retries just its read; missing or older authority is confirmed empty", async () => {
+  const task = meta("task_A", { resourceBindings: [binding], taskVersion: 2 });
+  let fail = true,
+    old = false;
+  const h = harness({
+    initial: task,
+    transport: (path) =>
+      path.endsWith("/tasks/task_A")
+        ? Response.json(state("task_A", { taskVersion: 2 }))
+        : path.endsWith("/authority")
+          ? fail
+            ? Response.json({}, { status: 503 })
+            : Response.json(
+                old
+                  ? legacyAuthority(task, { taskVersion: 1 })
+                  : {
+                      contractVersion: CONTRACT,
+                      profile: "folioview.persistent-content.v1",
+                      authority: null,
+                      envelope: null,
+                    },
+              )
+          : undefined,
+  });
+  try {
+    let m = await h.ready();
+    assert.equal(m.error, "");
+    assert.equal(m.executors.status, "error");
+    fail = false;
+    m.retryExecutors();
+    m = await h.ready();
+    assert.equal(m.executors.status, "ready");
+    assert.deepEqual(Array.from(m.executors.providers), []);
+    assert.equal(countCalls(h, "/authority"), 2);
+    assert.equal(countCalls(h, "/tasks/task_A"), 1);
+    old = true;
+    await m.load(task.taskId, true);
+    m = await h.ready();
+    assert.equal(m.executors.status, "ready");
+    assert.deepEqual(Array.from(m.executors.providers), []);
+    assert.equal(countCalls(h, "/persistent-connections"), 0);
+  } finally {
+    h.close();
+  }
+});
+
+test("legacy authority and mapping stay bound to the selected owner, vault, version and fingerprint across rapid switching", async () => {
+  const task = meta("task_A", { resourceBindings: [binding] });
+  let release,
+    wrong = false;
+  const delayed = new Promise((r) => {
+    release = r;
+  });
+  const overview = mappedOverview();
+  overview.receipt.scope = "owner_B:vault_A:1:1";
+  const h = harness({
+    initial: task,
+    overview,
+    transport: (path) =>
+      path.endsWith("/authority")
+        ? wrong
+          ? Response.json(legacyAuthority(task, { ownerTaskFingerprint: "wrong" }))
+          : delayed
+        : path.endsWith("/persistent-connections")
+          ? Response.json(connectionList)
+          : undefined,
+  });
+  try {
+    let m = await h.ready();
+    assert.equal(m.executors.status, "loading");
+    h.select(meta("task_B"));
+    m = await h.ready();
+    assert.equal(m.executors.status, "ready");
+    assert.deepEqual(Array.from(m.executors.providers), []);
+    h.select(task);
+    await h.ready();
+    release(Response.json(legacyAuthority(task)));
+    m = await h.ready();
+    assert.deepEqual(Array.from(m.executors.providers), ["muse"]);
+    assert.equal(countCalls(h, "/persistent-connections"), 1);
+    wrong = true;
+    h.owner("owner_B");
+    m = await h.ready();
+    assert.equal(m.executors.status, "error");
+    assert.deepEqual(Array.from(m.executors.providers), []);
+    assert.equal(m.error, "");
+    assert.equal(countCalls(h, "/persistent-connections"), 1);
+  } finally {
+    h.close();
+  }
+});
+
+test("a same-version assignment mutation invalidates the receipt and cannot be overwritten by the older read", async () => {
+  let provider = "chatgpt",
+    block = false,
+    release;
+  const wait = new Promise((r) => {
+    release = r;
+  });
+  const h = harness({
+    transport: (path, o) => {
+      if (path.endsWith("/commands")) {
+        provider = "muse";
+        return Response.json({});
+      }
+      if (path.endsWith("/tasks/task_A")) {
+        if (block) {
+          block = false;
+          return wait;
+        }
+        return Response.json(modern("task_A", provider));
+      }
+    },
+  });
+  try {
+    let m = await h.ready();
+    assert.deepEqual(Array.from(m.executors.providers), ["chatgpt"]);
+    block = true;
+    const stale = m.load("task_A", true);
+    await settle();
+    await m.command("task_A", "set_rules", null);
+    m = await h.ready();
+    assert.deepEqual(Array.from(m.executors.providers), ["muse"]);
+    release(Response.json(modern("task_A", "chatgpt")));
+    await stale;
+    m = await h.ready();
+    assert.deepEqual(Array.from(m.executors.providers), ["muse"]);
+    assert.equal(m.pending, null);
   } finally {
     h.close();
   }

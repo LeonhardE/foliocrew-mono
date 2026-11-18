@@ -4,9 +4,58 @@ import type { TaskOverviewRead } from "@/lib/task-overview";
 import { useAuth } from "./AuthProvider";
 import type { HoldingsWorkspace } from "./useHoldingsWorkspace";
 import { boundedJson, untilSignal } from "@/lib/workspace-cache";
-import type { TaskMetadata } from "@/lib/encrypted-types";
+import type { TaskMetadata, Vault } from "@/lib/encrypted-types";
+import { readReportProviders } from "@/lib/report-provider-attribution";
 const CONTRACT = "folioview.agent-workspace.v2.0";
 type J = Record<string, any>;
+type ExecutorDisplay = { status: "ready" | "loading" | "error"; providers: string[] };
+const ready = (providers: string[] = []): ExecutorDisplay => ({ status: "ready", providers });
+const taskHead = (meta: TaskMetadata | null) =>
+  meta && [
+    meta.taskId,
+    meta.taskVersion,
+    meta.executionEpoch,
+    meta.envelopeFingerprint,
+    meta.status,
+  ];
+
+// The legacy GET is Owner-authenticated display metadata. Its label cannot supply a grant.
+async function legacyConnection(value: J, meta: TaskMetadata, vault: Vault, uid?: string) {
+  if (value.contractVersion !== CONTRACT || value.profile !== "folioview.persistent-content.v1")
+    throw Error("invalid_response");
+  if (value.authority === null && value.envelope === null) return null;
+  const c = value.authority?.context;
+  const subject =
+    vault.archive?.ownerSubject ??
+    (uid &&
+      Array.from(
+        new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(uid))),
+        (b) => b.toString(16).padStart(2, "0"),
+      ).join(""));
+  if (
+    !subject ||
+    !c ||
+    !value.envelope ||
+    c.ownerSubject !== subject ||
+    c.vaultId !== vault.vaultId ||
+    c.rootKeyId !== vault.rootKeyId ||
+    c.objectType !== "task" ||
+    c.taskId !== meta.taskId ||
+    c.objectId !== meta.taskId ||
+    !Number.isSafeInteger(c.taskVersion) ||
+    c.taskVersion < 1 ||
+    !Number.isSafeInteger(c.executionEpoch) ||
+    c.executionEpoch < 1 ||
+    c.taskVersion > meta.taskVersion ||
+    c.executionEpoch > meta.executionEpoch ||
+    typeof c.connectionId !== "string" ||
+    !/^[A-Za-z0-9_-]{1,128}$/.test(c.connectionId)
+  )
+    throw Error("invalid_response");
+  if (c.taskVersion < meta.taskVersion || c.executionEpoch < meta.executionEpoch) return null;
+  if (c.ownerTaskFingerprint !== meta.envelopeFingerprint) throw Error("version_conflict");
+  return c.connectionId as string;
+}
 export function useTaskCenter(
   workspace: HoldingsWorkspace,
   active: boolean,
@@ -29,6 +78,8 @@ export function useTaskCenter(
     loading: boolean;
     busy: boolean;
     error: string;
+    detailFailure: string | null;
+    detailLoading: string | null;
     records: Record<string, J>;
     manual: Record<string, J[]>;
     pending: J | null;
@@ -41,28 +92,54 @@ export function useTaskCenter(
     loading: false,
     busy: false,
     error: "",
+    detailFailure: null,
+    detailLoading: null,
     records: {},
     manual: {},
     pending: null,
     trash: [],
     trashCursor: null,
   });
-  const live = useRef({ scope, workspace, owner, active });
-  live.current = { scope, workspace, owner, active };
-  const reads = useRef(new Map<string, Promise<J>>()),
-    lastRead = useRef(new Map<string, number>()),
+  const selectedKey = JSON.stringify([
+    scope,
+    workspace.vault?.rootKeyId,
+    workspace.vault?.version,
+    taskHead(selected),
+  ]);
+  const live = useRef({ scope, workspace, owner, active, selected, selectedKey });
+  live.current = { scope, workspace, owner, active, selected, selectedKey };
+  const recordHeads = useRef(new Map<string, { key: string; at: number }>());
+  const legacyCache = useRef(new WeakMap<J, string[]>());
+  const [legacy, setLegacy] = useState<{
+    key: string;
+    record: J;
+    value: ExecutorDisplay;
+    refreshRecord?: boolean;
+  } | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const reads = useRef(new Map<string, { key: string; promise: Promise<J> }>()),
+    generations = useRef(new Map<string, symbol>()),
     writes = useRef(false),
     controllers = useRef(new Set<AbortController>());
   const api = useCallback(
     async (
       path: string,
-      options: { method?: "POST"; json?: unknown; operation?: string } = {},
+      options: {
+        method?: "POST";
+        json?: unknown;
+        operation?: string;
+        signal?: AbortSignal;
+        display?: boolean;
+      } = {},
     ): Promise<J> => {
       const start = live.current;
       if (options.method) overview?.invalidate();
       if (!start.owner) throw Error("session_expired");
       const control = new AbortController();
       controllers.current.add(control);
+      const abort = () => control.abort();
+      if (options.signal?.aborted) abort();
+      else options.signal?.addEventListener("abort", abort, { once: true });
       let timedOut = false;
       const cancelled = () => Error(timedOut ? "request_timeout" : "cancelled");
       const timer = setTimeout(() => {
@@ -74,6 +151,7 @@ export function useTaskCenter(
           auth.requestPrivate("agent-hub", path, start.owner, {
             method: options.method ?? "GET",
             json: options.json,
+            ...(options.display ? { coalesceDisplay: true } : {}),
             signal: control.signal,
             headers: {
               "X-FolioView-Contract": CONTRACT,
@@ -108,9 +186,10 @@ export function useTaskCenter(
       } finally {
         clearTimeout(timer);
         controllers.current.delete(control);
+        options.signal?.removeEventListener("abort", abort);
       }
     },
-    [auth.requestPrivate],
+    [auth.requestPrivate, overview],
   );
   const error = (e: unknown) => (e instanceof Error ? e.message : "request_failed");
   const update = useCallback((value: Partial<typeof state>, expected = live.current.scope) => {
@@ -121,17 +200,41 @@ export function useTaskCenter(
     (task: string) => `/api/v3/task-center/${live.current.workspace.vault!.vaultId}/tasks/${task}`,
     [],
   );
+  // Invalidate the visible receipt even when an assignment changes without a new task version.
+  const invalidateDetail = useCallback((task: string) => {
+    generations.current.set(task, Symbol());
+    reads.current.delete(task);
+    recordHeads.current.delete(task);
+  }, []);
   const load = useCallback(
     async (task: string, force = false) => {
       const start = live.current;
-      if (!start.scope || !start.active) return null;
-      const key = `${start.scope}:${task}`;
-      if (!force && Date.now() - (lastRead.current.get(key) ?? 0) < 15000) return null;
-      const inFlight = reads.current.get(key);
-      if (inFlight) return inFlight;
-      overview?.invalidate(false);
+      if (!start.scope || !start.active || start.selected?.taskId !== task) return null;
+      const meta = start.selected,
+        key = start.selectedKey;
+      const receipt = recordHeads.current.get(task);
+      const age = receipt ? Date.now() - receipt.at : Infinity;
+      if (!force && receipt?.key === key && age >= 0 && age < 15000) {
+        // The encrypted outbox can change while another task is on screen.
+        try {
+          const pending = await start.workspace.loadTaskCenterPending(task);
+          if (live.current.selectedKey === key && recordHeads.current.get(task) === receipt)
+            update({ pending, detailFailure: null, detailLoading: null }, start.scope);
+        } catch {
+          if (live.current.selectedKey === key) update({ detailFailure: key }, start.scope);
+        }
+        return null;
+      }
+      const inFlight = reads.current.get(task);
+      if (inFlight?.key === key) return inFlight.promise;
+      const generation = Symbol();
+      generations.current.set(task, generation);
+      const sameGeneration = () =>
+        live.current.scope === start.scope &&
+        live.current.active &&
+        generations.current.get(task) === generation;
       const promise = (async () => {
-        update({ loading: true, error: "" }, start.scope);
+        update({ detailLoading: key, detailFailure: null }, start.scope);
         try {
           const [data, manual, pending] = await Promise.all([
             api(base(task)),
@@ -139,26 +242,32 @@ export function useTaskCenter(
             start.workspace.loadTaskCenterPending(task),
           ]);
           const checked = await start.workspace.verifyTaskCenterState(data);
-          if (live.current.scope !== start.scope) return {};
-          lastRead.current.set(key, Date.now());
+          if (!sameGeneration()) return {};
+          if (
+            checked.taskId !== task ||
+            checked.taskVersion !== meta.taskVersion ||
+            checked.executionEpoch !== meta.executionEpoch
+          )
+            throw Error("version_conflict");
+          recordHeads.current.set(task, { key, at: Date.now() });
+          const visible = live.current.selectedKey === key;
           setState((s) => ({
             ...s,
             scope: start.scope,
             records: { ...s.records, [task]: checked },
             manual: { ...s.manual, [task]: manual.items },
-            pending,
-            loading: false,
-            error: "",
+            ...(visible ? { pending, detailLoading: null, detailFailure: null } : {}),
           }));
           return data;
         } catch (e) {
-          if (error(e) !== "cancelled") update({ error: error(e), loading: false }, start.scope);
+          if (sameGeneration() && live.current.selectedKey === key && error(e) !== "cancelled")
+            update({ detailFailure: key, detailLoading: null }, start.scope);
           return {};
         } finally {
-          reads.current.delete(key);
+          if (generations.current.get(task) === generation) reads.current.delete(task);
         }
       })();
-      reads.current.set(key, promise);
+      reads.current.set(task, { key, promise });
       return promise;
     },
     [api, base, update],
@@ -174,7 +283,8 @@ export function useTaskCenter(
         operation: packet.operationId,
       });
       await start.workspace.finishTaskCenterPending(packet.taskId, receipt);
-      lastRead.current.delete(`${start.scope}:${packet.taskId}`);
+      if (live.current.scope !== start.scope) throw Error("cancelled");
+      invalidateDetail(packet.taskId);
       if (packet.action === "manual_intent" && live.current.scope === start.scope) {
         const encoded = packet.body.command.payload.replaceAll("-", "+").replaceAll("_", "/");
         const p = JSON.parse(
@@ -218,7 +328,7 @@ export function useTaskCenter(
       await load(packet.taskId, true);
       return receipt;
     },
-    [api, base, load, update],
+    [api, base, load, update, invalidateDetail],
   );
   const command = useCallback(
     async (task: string, action: string, value: unknown = null, provided?: J) => {
@@ -367,7 +477,10 @@ export function useTaskCenter(
   useEffect(() => {
     for (const c of controllers.current) c.abort();
     reads.current.clear();
-    lastRead.current.clear();
+    generations.current.clear();
+    legacyCache.current = new WeakMap();
+    recordHeads.current.clear();
+    setLegacy(null);
     setState({
       scope,
       enabled: false,
@@ -375,6 +488,8 @@ export function useTaskCenter(
       loading: false,
       busy: false,
       error: "",
+      detailFailure: null,
+      detailLoading: null,
       records: {},
       manual: {},
       pending: null,
@@ -409,7 +524,7 @@ export function useTaskCenter(
   }, [scope, overviewReceipt, update]);
   useEffect(() => {
     if (scope && active && selected) void load(selected.taskId);
-  }, [scope, active, selected?.taskId, selected?.taskVersion, load]);
+  }, [scope, active, selectedKey, load]);
   useEffect(() => {
     if (!scope || !active) return;
     const tasks = Object.entries(state.manual)
@@ -422,11 +537,17 @@ export function useTaskCenter(
       for (const task of tasks) {
         if (stopped || live.current.scope !== scope) break;
         try {
+          const generation = generations.current.get(task);
           const data = await api(base(task) + "/manual");
-          if (!stopped && live.current.scope === scope)
+          if (
+            !stopped &&
+            live.current.scope === scope &&
+            generation === generations.current.get(task)
+          )
             setState((s) => ({ ...s, manual: { ...s.manual, [task]: data.items } }));
         } catch (e) {
-          if (error(e) !== "cancelled") update({ error: error(e) }, scope);
+          if (!stopped && live.current.selected?.taskId === task && error(e) !== "cancelled")
+            update({ error: error(e) }, scope);
         }
       }
     };
@@ -437,16 +558,114 @@ export function useTaskCenter(
     };
   }, [scope, active, state.manual, api, base, update]);
   const current = scope && state.scope === scope ? state : null;
+  const task = selected?.taskId;
+  const record =
+    task && recordHeads.current.get(task)?.key === selectedKey ? current?.records[task] : undefined;
+  const needsLegacy = Boolean(
+    active &&
+    selected?.status === "active" &&
+    selected.resourceBindings.length &&
+    record &&
+    !record.rules,
+  );
+  useEffect(() => {
+    const vault = workspace.vault;
+    if (!needsLegacy || !record || !selected || !vault || !scope) return;
+    if (reads.current.has(selected.taskId)) return;
+    const previous = legacyCache.current.get(record);
+    if (previous) {
+      setLegacy({ key: selectedKey, record, value: ready(previous) });
+      return;
+    }
+    const control = new AbortController();
+    const current = () =>
+      !control.signal.aborted && live.current.active && live.current.selectedKey === selectedKey;
+    const options = { signal: control.signal, display: true };
+    setLegacy({ key: selectedKey, record, value: { status: "loading", providers: [] } });
+    async function read(meta: TaskMetadata, v: Vault, verified: J) {
+      try {
+        const authority = await api(
+          `/api/v2/persistent-content/${v.vaultId}/tasks/${meta.taskId}/authority`,
+          options,
+        );
+        const id = await legacyConnection(authority, meta, v, auth.profile?.uid);
+        if (!current()) return;
+        const providers: string[] = [];
+        if (id) {
+          const receipt = overview?.receipt;
+          const age = receipt ? Date.now() - receipt.at : Infinity;
+          const cached =
+            receipt &&
+            receipt.scope === `${scope}:${v.version}` &&
+            receipt.data.vaultId === v.vaultId &&
+            age >= 0 &&
+            age < 30000
+              ? readReportProviders(receipt.data.connections, v.vaultId)[id]
+              : undefined;
+          const provider =
+            cached ??
+            readReportProviders(await api("/api/v2/persistent-connections", options), v.vaultId)[
+              id
+            ];
+          if (!provider) throw Error("authorization_changed");
+          providers.push(provider);
+        }
+        if (!current()) return;
+        legacyCache.current.set(verified, providers);
+        setLegacy({ key: selectedKey, record: verified, value: ready(providers) });
+      } catch (e) {
+        if (current())
+          setLegacy({
+            key: selectedKey,
+            record: verified,
+            value: { status: "error", providers: [] },
+            refreshRecord: error(e) === "version_conflict",
+          });
+      }
+    }
+    void read(selected, vault, record);
+    return () => control.abort();
+  }, [scope, selectedKey, needsLegacy, record, attempt, api, overview, auth.profile?.uid]);
+  const currentAssignments: J[] =
+    selected?.status === "active" &&
+    record?.rules?.definition.taskVersion === selected.taskVersion &&
+    record.rules.definition.executionEpoch === selected.executionEpoch
+      ? record.assignments.filter(
+          (row: J) => row.assignment.status === "active" && row.plan?.currentAssignment,
+        )
+      : [];
+  let executors: ExecutorDisplay = { status: "loading", providers: [] };
+  if (current?.detailFailure === selectedKey) executors = { status: "error", providers: [] };
+  else if (record && selected && current?.detailLoading !== selectedKey) {
+    if (record.rules) executors = ready(currentAssignments.map((row) => row.assignment.provider));
+    else if (!needsLegacy) executors = ready();
+    else if (legacy?.key === selectedKey && legacy.record === record) executors = legacy.value;
+  }
+  const retryExecutors = () => {
+    if (!active || !task) return;
+    if (
+      !record ||
+      current?.detailFailure === selectedKey ||
+      (legacy?.key === selectedKey && legacy.record === record && legacy.refreshRecord)
+    )
+      void load(task, true);
+    else if (needsLegacy) setAttempt((previous) => previous + 1);
+  };
   return {
     scope,
     enabled: current?.enabled ?? false,
     capabilityState: current?.capabilityState ?? "loading",
-    loading: current?.loading ?? false,
+    loading: Boolean(current?.loading || (task && current?.detailLoading === selectedKey)),
     busy: current?.busy ?? false,
     error: current?.error ?? "",
     records: current?.records ?? {},
+    selectedRecord: record,
+    currentAssignments,
+    executors,
+    retryExecutors,
     manual: current?.manual ?? {},
-    pending: current?.pending ?? null,
+    pending:
+      current?.pending && (!task || current.pending.taskId === task) ? current.pending : null,
     trash: current?.trash ?? [],
     trashCursor: current?.trashCursor ?? null,
     load,

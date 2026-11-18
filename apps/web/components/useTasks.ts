@@ -151,6 +151,10 @@ export function useTasks(
       item.envelopeFingerprint,
       item.keyEpoch,
     ]);
+  // Only explicitly opened current details enter this bounded, page-memory display cache.
+  const details = useRef(
+    new DisplayLru<{ at: number; packet: EncryptedTask; form: TaskContent }>(8, 4 * 1024 * 1024),
+  );
   const inlinePackets = useRef(new Map<string, any>());
   const overview = useRef<TaskOverviewRead | null>(null);
   overview.current ??= new TaskOverviewRead(() => setState((s) => ({ ...s })));
@@ -291,6 +295,7 @@ export function useTasks(
     ) => {
       context.assert();
       if (options.method && options.method !== "GET" && path !== TASK_PACKET_QUERY) {
+        details.current.clear();
         overview.current!.invalidate();
         inlinePackets.current.clear();
       }
@@ -484,6 +489,7 @@ export function useTasks(
           false,
           async (context) => {
             if (region === "tasks" && force) {
+              details.current.clear();
               overview.current!.invalidate(false);
               inlinePackets.current.clear();
             }
@@ -756,14 +762,14 @@ export function useTasks(
 
   const openTask = useCallback(
     async (taskId: string, version?: number) => {
-      overview.current!.invalidate(false);
-      inlinePackets.current.clear();
       if (
         !owner ||
         live.current.owner !== owner ||
         !scope ||
         live.current.scope !== scope ||
         writeJob.current ||
+        !live.current.visible ||
+        !live.current.active ||
         !identifier(taskId) ||
         (version !== undefined && (!Number.isSafeInteger(version) || version < 1 || version > 50))
       )
@@ -773,31 +779,66 @@ export function useTasks(
         return;
       }
       const serial = ++selection.current;
+      const listItem = stateRef.current.items.find((item) => item.taskId === taskId);
+      const vaultVersion = live.current.workspace.vault?.version;
+      const key = JSON.stringify([scope, vaultVersion, taskId]);
+      const previousRead = version === undefined && listItem ? details.current.get(key) : undefined;
+      const age = previousRead ? Date.now() - previousRead.at : Infinity;
+      const cached =
+        previousRead &&
+        age >= 0 &&
+        age < 30_000 &&
+        listItem &&
+        sameTaskMetadata(previousRead.packet.metadata, listItem)
+          ? previousRead
+          : undefined;
       updatePrivate((previous) => ({
         ...previous,
         busy: true,
         error: "",
-        form: null,
-        selected: null,
+        ...(cached ? {} : { form: null, selected: null }),
         preview: null,
         confirmation: null,
       }));
       try {
         await operation(true, async (context) => {
-          await live.current.workspace.refreshVault(context.signal);
-          context.assert();
-          const head = encryptedTask(await api(`/api/v2/tasks/${taskId}`, context));
-          context.assert();
-          const packet =
-            version === undefined || version === head.metadata.taskVersion
-              ? head
-              : encryptedTask(await api(`/api/v2/tasks/${taskId}/versions/${version}`, context));
-          if (
-            packet.metadata.taskId !== taskId ||
-            (version !== undefined && packet.metadata.taskVersion !== version)
-          )
-            throw new TaskError("invalid_response");
-          const form = await live.current.workspace.openTask(packet);
+          let head: EncryptedTask, packet: EncryptedTask, form: TaskContent;
+          if (cached) {
+            ({ packet, form } = structuredClone(cached));
+            head = packet;
+          } else {
+            const verifiedVault = await live.current.workspace.refreshVault(context.signal);
+            context.assert();
+            const included =
+              version === undefined && listItem && vaultVersion === verifiedVault.version
+                ? overview.current!.currentTaskPacket(listItem)
+                : null;
+            head =
+              included?.packet ??
+              encryptedTask(
+                await api(`/api/v2/tasks/${taskId}`, context, { retryAdmission: true }),
+              );
+            context.assert();
+            packet =
+              version === undefined || version === head.metadata.taskVersion
+                ? head
+                : encryptedTask(await api(`/api/v2/tasks/${taskId}/versions/${version}`, context));
+            if (
+              head.metadata.taskId !== taskId ||
+              packet.metadata.taskId !== taskId ||
+              (version !== undefined && packet.metadata.taskVersion !== version)
+            )
+              throw new TaskError("invalid_response");
+            form = await live.current.workspace.openTask(packet);
+            context.assert();
+            if (serial !== selection.current) return;
+            if (version === undefined && vaultVersion === live.current.workspace.vault?.version) {
+              details.current.set(
+                key,
+                structuredClone({ at: included?.at ?? Date.now(), packet, form }),
+              );
+            }
+          }
           context.assert();
           if (serial !== selection.current) return;
           const existingDrafts = await live.current.workspace.listTaskDrafts();
@@ -1401,6 +1442,7 @@ export function useTasks(
     for (const job of jobs.current) job.abort();
     jobs.current.clear();
     names.current.clear();
+    details.current.clear();
     hiddenTaskIds.current.clear();
     nameFailures.current.clear();
     namePending.current.clear();
@@ -1444,6 +1486,7 @@ export function useTasks(
   }, [owner, scope, visible, operation, summaries, fail]);
   useEffect(() => {
     if (!active) {
+      details.current.clear();
       for (const job of jobs.current) if (!navigationDrafts.current.has(job)) job.abort();
       ++selection.current;
       ++readSerial.current.tasks;
@@ -1656,6 +1699,7 @@ export function useTasks(
 
   const display = state.owner === owner ? state : { ...initial, owner };
   const invalidateTask = (taskId: string, restored = false) => {
+    details.current.clear();
     overview.current!.invalidate();
     inlinePackets.current.clear();
     if (restored) {

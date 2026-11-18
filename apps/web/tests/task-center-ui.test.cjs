@@ -74,6 +74,8 @@ function render({
     enabled: true,
     capabilityState: "ready",
     records: {},
+    currentAssignments: [],
+    executors: { status: "ready", providers: [] },
     manual: running
       ? {
           task_PRIVATE_ID: [
@@ -237,50 +239,55 @@ test("legacy task settings wait for the selected assignment and retain it when d
     scope: "owner:vault:1",
     enabled: true,
     records: { selected_legacy: { rules: null, assignments: [] } },
+    currentAssignments: [],
     manual: {},
     pending: null,
   };
-  let release,
-    reads = 0;
-  const view = {
-    connection: { provider: "muse", status: "active" },
-    credential: { status: "active" },
-    tasks: [],
+  center.selectedRecord = center.records.selected_legacy;
+  center.executors = { status: "loading", providers: [] };
+  let retries = 0;
+  center.retryExecutors = () => {
+    retries++;
+    center.executors = { status: "ready", providers: ["muse"] };
   };
   const persistent = {
     loaded: true,
-    loading: false,
+    views: [],
     tasks: [],
-    views: [view],
-    revision: 1,
-    loadTask: (selected) => {
-      assert.equal(selected, meta);
-      reads++;
-      return new Promise((r) => {
-        release = r;
-      });
+    loadTask() {
+      assert.fail("display reloaded the task");
     },
   };
-  const draw = (active = true) =>
-    h.render(() => mod.TaskCenterView({ workspace: {}, model, center, persistent, active }));
+  const draw = () =>
+    h.render(() => mod.TaskCenterView({ workspace: {}, model, center, persistent }));
   const settings = (tree) =>
     all(tree, (n) => n.type === "button" && n.props.children === "Settings")[0];
+  const fields = (tree) => all(tree, (n) => n.type === "dd");
   try {
-    draw(false);
-    assert.equal(reads, 0, "a retained hidden Task Center must not start legacy detail reads");
     let tree = draw();
-    assert.equal(reads, 1);
     assert.equal(settings(tree).props.disabled, true);
-    const task = { taskId: meta.taskId, packet: { metadata: meta } };
-    persistent.tasks = [task];
-    persistent.views = [{ ...view, tasks: [task] }];
-    release(true);
-    await new Promise(setImmediate);
+    assert.ok(
+      fields(tree).some(
+        (field) => field.props.children?.props?.busy && field.props.children?.props?.hasContent,
+      ),
+    );
+    center.executors = { status: "error", providers: [] };
     tree = draw();
+    const errorField = fields(tree).find((field) => field.props.children?.props?.onRetry);
+    assert.equal(
+      errorField.props.children.props.message,
+      messages.taskCenter.errors.request_failed,
+    );
+    assert.equal(
+      all(tree, (n) => n.props?.message === messages.taskCenter.errors.request_failed).length,
+      1,
+    );
+    assert.equal(settings(tree).props.disabled, true);
+    errorField.props.children.props.onRetry();
+    tree = draw();
+    assert.equal(retries, 1);
     assert.equal(settings(tree).props.disabled, false);
-    const executors = all(tree, (n) => n.type === "dd" && n.props.children === "Muse");
-    assert.equal(executors.length, 1);
-    assert.equal(reads, 1, "verified details do not trigger another scan on render");
+    assert.ok(fields(tree).some((field) => field.props.children === "Muse"));
   } finally {
     h.close();
   }
@@ -316,6 +323,7 @@ test("resource handoffs wait for a confirmed catalogue and keep read failure ret
     scope: "owner_A:vault_A:1",
     enabled: true,
     records: {},
+    currentAssignments: [],
     manual: {},
     pending: null,
   };

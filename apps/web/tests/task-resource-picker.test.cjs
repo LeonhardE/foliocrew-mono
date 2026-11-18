@@ -144,7 +144,9 @@ function picker({ locale = "en", mode = "unavailable", credential = "active" } =
     scope: "owner_A:vault_A:1",
     enabled: true,
     capabilityState: "ready",
-    records: { task_A: { rules: { definition: { schedule: null } }, assignments: [] } },
+    selectedRecord: { rules: { definition: { schedule: null } }, assignments: [] },
+    currentAssignments: [],
+    executors: { status: "ready", providers: [] },
     manual: {},
     pending: null,
   };

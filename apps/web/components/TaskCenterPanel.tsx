@@ -38,6 +38,7 @@ export function TaskCenterView({
   resultState,
   navigating = false,
   active = true,
+  onEditingChange,
 }: {
   workspace: HoldingsWorkspace;
   model: TaskModel;
@@ -61,6 +62,7 @@ export function TaskCenterView({
   };
   navigating?: boolean;
   active?: boolean;
+  onEditingChange?: (editing: boolean) => void;
 }) {
   const t = useTranslations("taskCenter"),
     locale = useLocale();
@@ -89,11 +91,9 @@ export function TaskCenterView({
   const selected = model.selected,
     form = model.form,
     task = selected?.taskId,
-    record = task ? center.records[task] : null;
+    record = center.selectedRecord;
   const assignments: J[] = record?.assignments ?? [];
-  const currentAssignments = assignments.filter(
-    (a) => a.assignment.status === "active" && a.plan?.currentAssignment,
-  );
+  const currentAssignments = center.currentAssignments;
   const requests = task ? (center.manual[task] ?? []) : [],
     currentRequest = requests.find((r) => r.aggregate?.hasActiveExecutors) ?? requests.at(-1),
     running = Boolean(currentRequest?.aggregate?.hasActiveExecutors);
@@ -106,18 +106,10 @@ export function TaskCenterView({
   }, [resultsFocusKey]);
   const busy = model.busy || center.busy || localBusy,
     writable = model.canWrite && !model.historical && selected?.status !== "archived";
-  const legacyUnknown = Boolean(
-    persistent &&
-    selected &&
-    selected.status === "active" &&
-    record &&
-    !record.rules &&
-    !persistent.tasks.some(
-      (t) =>
-        t.taskId === selected.taskId &&
-        t.packet.metadata.envelopeFingerprint === selected.envelopeFingerprint,
-    ),
-  );
+  useEffect(() => {
+    onEditingChange?.(mode === "edit");
+    return () => onEditingChange?.(false);
+  }, [mode, onEditingChange]);
   const available = ["muse", "chatgpt"].flatMap((provider) => {
     const rows =
       persistent?.views.filter(
@@ -140,55 +132,8 @@ export function TaskCenterView({
     }
   }, [center.scope]);
   useEffect(() => {
-    if (
-      !active ||
-      !selected ||
-      selected.status !== "active" ||
-      !record ||
-      record.rules ||
-      !persistent?.loaded ||
-      persistent.loading ||
-      persistent.tasks.some(
-        (t) =>
-          t.taskId === selected.taskId &&
-          t.packet.metadata.envelopeFingerprint === selected.envelopeFingerprint,
-      )
-    )
-      return;
-    let current = true;
-    // Legacy assignment display is a selected-task read, never an initial
-    // scan of every task merely to show available Agent connections.
-    void persistent.loadTask(selected).then((ok) => {
-      if (current) setLocalError(ok ? "" : "request_failed");
-    });
-    return () => {
-      current = false;
-    };
-  }, [
-    active,
-    center.scope,
-    selected?.taskId,
-    selected?.status,
-    selected?.envelopeFingerprint,
-    Boolean(record),
-    Boolean(record?.rules),
-    persistent?.loaded,
-    persistent?.loading,
-    persistent?.revision,
-    persistent?.loadTask,
-  ]);
-  useEffect(() => {
     if (mode !== "browse" || !selected) return;
     const d = record?.rules?.definition;
-    setProviders(
-      record?.rules
-        ? currentAssignments.map((a) => a.assignment.provider)
-        : currentAssignments.length
-          ? currentAssignments.map((a) => a.assignment.provider)
-          : (persistent?.views
-              .filter((v) => v.tasks.some((x) => x.taskId === selected.taskId))
-              .map((v) => v.connection.provider) ?? []),
-    );
     setScheduled(Boolean(d?.schedule ?? form?.deliveryExpectation));
     if (d?.schedule)
       setSchedule({
@@ -211,7 +156,7 @@ export function TaskCenterView({
         timeZone: v.timeZone,
       });
     }
-  }, [mode, selected?.taskId, record, persistent?.views, form?.deliveryExpectation]);
+  }, [mode, selected?.taskId, record, form?.deliveryExpectation]);
   useEffect(() => {
     if (reopen.current && !model.form && !model.dirty && !model.busy) {
       const id = reopen.current;
@@ -538,17 +483,6 @@ export function TaskCenterView({
           message={failureLabel}
           onRetry={() => {
             setLocalError("");
-            if (legacyUnknown && selected && persistent) {
-              const expected = live.current;
-              void persistent.loadTask(selected).then((ok) => {
-                if (
-                  live.current.scope === expected.scope &&
-                  live.current.task === expected.task &&
-                  !ok
-                )
-                  setLocalError("request_failed");
-              });
-            }
             if (task) void center.load(task, true);
             else void model.reload();
           }}
@@ -881,18 +815,28 @@ export function TaskCenterView({
                           {providerName(v.connection.provider)}
                         </label>
                       ))}
-                      {(!available.length || !center.enabled) && (
-                        <a
-                          href="/agents"
-                          onClick={(e) => {
-                            if (onNavigate) {
-                              e.preventDefault();
-                              onNavigate("agents");
-                            }
-                          }}
-                        >
-                          {t("manageAgents")}
-                        </a>
+                      {persistent?.loadError ? (
+                        <InlineError
+                          message={t("errors.request_failed")}
+                          retryLabel={t("retry")}
+                          onRetry={() => void persistent.reload()}
+                        />
+                      ) : persistent && !persistent.loaded ? (
+                        <LoadingIndicator busy hasContent label={t("loading")} />
+                      ) : (
+                        (!available.length || !center.enabled) && (
+                          <a
+                            href="/agents"
+                            onClick={(e) => {
+                              if (onNavigate) {
+                                e.preventDefault();
+                                onNavigate("agents");
+                              }
+                            }}
+                          >
+                            {t("manageAgents")}
+                          </a>
+                        )
                       )}
                     </fieldset>
                     <fieldset>
@@ -1088,10 +1032,10 @@ export function TaskCenterView({
                       !writable ||
                       busy ||
                       center.loading ||
-                      (center.enabled && !record) ||
-                      legacyUnknown
+                      (center.enabled && (!record || center.executors.status !== "ready"))
                     }
                     onClick={() => {
+                      setProviders(center.executors.providers);
                       setMode("edit");
                       setStep(1);
                     }}
@@ -1112,14 +1056,16 @@ export function TaskCenterView({
                       </dd>
                       <dt>{t("executors")}</dt>
                       <dd>
-                        {legacyUnknown ? (
-                          localError ? (
-                            t("errors.request_failed")
-                          ) : (
-                            <LoadingIndicator busy hasContent={false} label={t("loading")} />
-                          )
+                        {center.executors.status === "loading" ? (
+                          <LoadingIndicator busy hasContent label={t("loading")} />
+                        ) : center.executors.status === "error" ? (
+                          <InlineError
+                            message={t("errors.request_failed")}
+                            onRetry={center.retryExecutors}
+                            retryLabel={t("retry")}
+                          />
                         ) : (
-                          providers.map(providerName).join("、") || t("noExecutor")
+                          center.executors.providers.map(providerName).join("、") || t("noExecutor")
                         )}
                       </dd>
                       <dt>{t("runMode")}</dt>

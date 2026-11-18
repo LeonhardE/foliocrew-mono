@@ -1,5 +1,7 @@
 /** Task-page display transport only; packets still require the existing Owner Worker. */
+import type { TaskMetadata } from "./encrypted-types";
 import {
+  encryptedTask,
   exact,
   identifier,
   taskPage,
@@ -156,6 +158,15 @@ export class TaskOverviewRead {
   get receipt() {
     const r = this.cached;
     return r && r.scope === this.config?.scope ? r : null;
+  }
+  currentTaskPacket(metadata: TaskMetadata) {
+    const receipt = this.receipt;
+    if (!receipt || !this.config?.active || !this.config.visible) return null;
+    const age = this.now() - receipt.at;
+    if (age < 0 || age >= 30_000) return null;
+    const row = receipt.data.packets?.items.find((item: J) => item.taskId === metadata.taskId);
+    if (row?.status !== "ready" || !sameTaskMetadata(row.packet.metadata, metadata)) return null;
+    return { packet: encryptedTask(row.packet), at: receipt.at };
   }
   invalidate(abort = true) {
     this.epoch++;

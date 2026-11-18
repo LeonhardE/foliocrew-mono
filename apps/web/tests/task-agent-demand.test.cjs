@@ -3,7 +3,7 @@ const assert = require("node:assert/strict"),
 const { compile } = require("./resource-library-helpers.cjs");
 const { hooks, jsx, all } = require("./resource-ui-harness.cjs");
 
-test("real TasksPanel requests executors for creation, editing and selected details while preserving full list and unread reads", () => {
+test("real TasksPanel requests executors only for creation and editing while preserving full list and unread reads", () => {
   const h = hooks(),
     demands = [],
     resultReads = [],
@@ -67,7 +67,18 @@ test("real TasksPanel requests executors for creation, editing and selected deta
   assert.equal(demands.at(-1), true, "editing preserves executor demand");
   model.dirty = false;
   draw();
-  assert.equal(demands.at(-1), true, "detail assignments remain enabled");
+  assert.equal(
+    demands.at(-1),
+    false,
+    "browsing the selected task does not discover Agent connections",
+  );
+  const edit = all(draw(), (n) => n.type === TaskCenterView)[0].props.onEditingChange;
+  edit(true);
+  draw();
+  assert.equal(demands.at(-1), true, "opening settings loads the editor's eligible connections");
+  edit(false);
+  draw();
+  assert.equal(demands.at(-1), false);
   model.form = null;
   model.selected = null;
   draw();
