@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="referrer" content="no-referrer" />
+    <meta
+      name="description"
+      content="Cedar’s share price slips while the rest of the portfolio holds steady. Give ChatGPT and Muse the same move to investigate."
+    />
+    <title>Foliocrew · Agent hub for investment research</title>
+    <link rel="icon" type="image/svg+xml" href="./brand-mark.svg" />
+    <link rel="stylesheet" href="./landing.css?v=8" />
+    <link rel="stylesheet" href="./flow-scene.css?v=8" />
+    <link rel="stylesheet" href="./sample-dialog.css?v=8" />
+    <script defer src="./flow-scene.js?v=8"></script>
+    <script defer src="./sample-dialog.js?v=8"></script>
+    <script defer src="./landing.js?v=8"></script>
+  </head>
+  <body>
+    <main id="deck" data-index="0" data-playing="false" aria-label="Foliocrew product introduction">
+      <div class="atmosphere" aria-hidden="true"><i></i><b></b></div>
+      <div class="signature" aria-label="Foliocrew">
+        <img class="brand-mark" src="./brand-mark.svg" width="30" height="30" alt="" />
+        <span class="brand-name">Folio<span>crew</span></span>
+      </div>
+      <div class="narrative">
+        <div id="chapters">
+          <section class="chapter" id="overview" aria-labelledby="title-overview">
+            <p class="eyebrow">
+              <i aria-hidden="true"></i
+              ><span data-text="category">Agent hub for investment research</span>
+            </p>
+            <h1 id="title-overview">
+              <span data-text="t0a">One brief.</span
+              ><span class="chapter-accent" data-text="t0b">Two perspectives.</span>
+            </h1>
+            <p class="synopsis" data-text="b0">
+              Cedar’s share price slips while the rest of the portfolio holds steady. Give ChatGPT
+              and Muse the same move to investigate.
+            </p>
+          </section>
+          <section class="chapter" id="source" aria-labelledby="title-source">
+            <p class="eyebrow"><i aria-hidden="true"></i><span data-text="s1">Resources</span></p>
+            <h2 id="title-source">
+              <span data-text="t1a">Choose what</span
+              ><span class="chapter-accent" data-text="t1b">to share.</span>
+            </h2>
+            <p class="synopsis" data-text="b1">
+              Select a holdings snapshot from Resources. Include your YouTube subscriptions if
+              they’re relevant.
+            </p>
+          </section>
+          <section class="chapter" id="dispatch" aria-labelledby="title-dispatch">
+            <p class="eyebrow"><i aria-hidden="true"></i><span data-text="s2">Task center</span></p>
+            <h2 id="title-dispatch">
+              <span data-text="t2a">Why?</span
+              ><span class="chapter-accent" data-text="t2b">Now What?</span>
+            </h2>
+            <p class="synopsis" data-text="b2">
+              ChatGPT and Muse receive the same brief. Each works from the materials you’ve shared.
+            </p>
+          </section>
+          <section class="chapter" id="reports" aria-labelledby="title-reports">
+            <p class="eyebrow">
+              <i aria-hidden="true"></i><span data-text="s3">Research reports</span>
+            </p>
+            <h2 id="title-reports">
+              <span data-text="t3a">Two reports.</span
+              ><span class="chapter-accent" data-text="t3b">One task.</span>
+            </h2>
+            <p class="synopsis" data-text="b3">
+              ChatGPT finds that the share count held steady as the price fell. Muse suggests
+              comparing company news with the wider sector.
+            </p>
+          </section>
+          <section class="chapter" id="privacy" aria-labelledby="title-privacy">
+            <p class="eyebrow"><i aria-hidden="true"></i><span data-text="s4">Privacy</span></p>
+            <h2 id="title-privacy">
+              <span data-text="t4a">Decide who</span
+              ><span class="chapter-accent" data-text="t4b">gets access.</span>
+            </h2>
+            <p class="synopsis" data-text="b4">
+              Unlock private resources with your passkey. You can revoke an agent’s access at any
+              time. Previously shared copies stay with the recipient.
+            </p>
+          </section>
+        </div>
+        <div class="actions">
+          <button class="sample enhanced-only" type="button" data-open-demo aria-haspopup="dialog">
+            <i class="play-glyph" aria-hidden="true"></i
+            ><span data-text="demo">Watch the research demo</span>
+          </button>
+          <a class="enter" href="__FOLIOCREW_WORKSPACE_URL__" rel="noreferrer"
+            ><span data-text="enter">Enter workspace</span><span aria-hidden="true">↗</span></a
+          >
+        </div>
+      </div>
+      <div class="scene-field">
+        <div id="flow-stage"></div>
+      </div>
+      <div
+        class="deck-dock enhanced-only"
+        role="group"
+        aria-label="Presentation controls"
+        data-label="controls"
+      >
+        <div class="position" aria-hidden="true"><b id="ordinal">01</b><i></i>05</div>
+        <div class="progress-rail" role="group" aria-label="Choose a scene" data-label="choose">
+          <button type="button" data-jump="0" aria-current="step" aria-label="Overview">
+            <span><i></i></span>
+          </button>
+          <button type="button" data-jump="1" aria-label="Resources">
+            <span><i></i></span>
+          </button>
+          <button type="button" data-jump="2" aria-label="Task center">
+            <span><i></i></span>
+          </button>
+          <button type="button" data-jump="3" aria-label="Research reports">
+            <span><i></i></span>
+          </button>
+          <button type="button" data-jump="4" aria-label="Privacy">
+            <span><i></i></span>
+          </button>
+        </div>
+        <div class="transport">
+          <button type="button" id="prev" data-label="prev" aria-label="Previous scene">
+            <i aria-hidden="true"></i>
+          </button>
+          <button type="button" id="pause" aria-label="Pause presentation">
+            <i aria-hidden="true"></i>
+          </button>
+          <button type="button" id="next" data-label="next" aria-label="Next scene">
+            <i aria-hidden="true"></i>
+          </button>
+        </div>
+        <label class="language"
+          ><select id="language" aria-label="Language" data-label="language">
+            <option value="en" lang="en">English</option>
+            <option value="zh-Hans" lang="zh-Hans">简体中文</option>
+            <option value="zh-Hant" lang="zh-Hant">繁體中文</option></select
+          ><i aria-hidden="true"></i
+        ></label>
+      </div>
+      <div class="sr" id="announcement" aria-live="polite" aria-atomic="true"></div>
+    </main>
+  </body>
+</html>
