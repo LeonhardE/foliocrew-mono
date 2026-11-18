@@ -133,6 +133,7 @@ function render(f = fixture(), locale = "en", capture = []) {
         createTranslator({ locale, messages: catalogs[locale], namespace }),
     },
     "./useTasks": { useTasks: () => f.model },
+    "@/lib/task-detail-read": require("./task-overview-helpers.cjs").detail,
     "./useTaskResults": {},
     "./TaskResultsPanel": {},
     "./useTaskCenter": {},

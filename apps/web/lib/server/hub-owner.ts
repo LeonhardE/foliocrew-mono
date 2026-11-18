@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readResourceDisplay, RESOURCE_DISPLAY_PATH } from "../resource-display";
 import "server-only";
+import { parseTaskDetail, taskDetailRequest } from "../task-detail-read";
 import { taskOverviewRequest } from "../task-overview-request";
 import { parseTaskOverview, overviewPacketIds } from "../task-overview";
 import { taskCenterRoute, taskCenterRequest, taskCenterResponse } from "./task-center-owner";
@@ -83,7 +84,33 @@ function displayResponse(path: string, body: unknown) {
         summaryResponse(`/api/v3/provider-connections/${body.vaultId}/summary`, body.summary)))
   );
 }
-function overviewResponse(path: string, body: unknown, request: any) {
+function detailResponse(path: string, body: unknown, request: unknown, uid: string) {
+  if (!taskDetailRequest(request)) return false;
+  const [, , , , vault, , task] = path.split("/");
+  try {
+    const v = parseTaskDetail(body, vault, task, request);
+    return (
+      taskCenterResponse(`/api/v3/task-center/${vault}/tasks/${task}`, v.state) &&
+      (v.packet?.status !== "ready" ||
+        hubResponse(`/api/v2/tasks/${task}`, "GET", v.packet.data)) &&
+      (v.legacy?.status !== "ready" ||
+        (persistentResponse(
+          `/api/v2/persistent-content/${vault}/tasks/${task}/authority`,
+          "GET",
+          v.legacy.data,
+        ) &&
+          (!v.legacy.data.authority ||
+            v.legacy.data.authority.context.ownerSubject ===
+              createHash("sha256").update(uid).digest("hex")))) &&
+      (v.attribution?.status !== "ready" ||
+        persistentResponse("/api/v2/persistent-connections", "GET", v.attribution.data))
+    );
+  } catch {
+    return false;
+  }
+}
+function taskDisplayResponse(path: string, body: unknown, request: unknown, uid: string) {
+  if (path.endsWith("/detail/query")) return detailResponse(path, body, request, uid);
   try {
     if (!taskOverviewRequest(request)) return false;
     const v = parseTaskOverview(
@@ -132,6 +159,7 @@ type Rule = {
     | "task-create"
     | "task-update"
     | "task-transition"
+    | "task-detail"
     | "task-overview"
     | "task-packets"
     | "stage"
@@ -400,6 +428,8 @@ function binding(value: unknown) {
 function validBody(body: unknown, kind: Rule["kind"], vaultId?: string) {
   if (!record(body) || body.contractVersion !== CONTRACT) return false;
   switch (kind) {
+    case "task-detail":
+      return taskDetailRequest(body);
     case "task-overview":
       return taskOverviewRequest(body);
     case "task-packets":
@@ -534,7 +564,7 @@ async function transport(
   raw: Awaited<ReturnType<typeof bytes>> | undefined;
   token: string;
   taskIds?: string[];
-  overviewRequest?: unknown;
+  displayRequest?: unknown;
 }> {
   if (request.headers.get("x-folioview-contract") !== CONTRACT) fail("unsupported_contract");
   const auth = request.headers.get("authorization") ?? "";
@@ -572,7 +602,7 @@ async function transport(
     headers,
     raw,
     token: auth.slice(7),
-    ...(rule.kind === "task-overview" ? { overviewRequest: payload } : {}),
+    ...(["task-overview", "task-detail"].includes(rule.kind) ? { displayRequest: payload } : {}),
     ...(rule.kind === "task-packets"
       ? { taskIds: (payload as Record<string, unknown>).taskIds as string[] }
       : {}),
@@ -593,7 +623,7 @@ export function createHubProxy(options: Options = {}) {
       const config = hubConfiguration(env);
       if (!config) fail("authorization_unavailable");
       const { path, rule } = route(request);
-      const { headers, raw, token, taskIds, overviewRequest } = await transport(
+      const { headers, raw, token, taskIds, displayRequest } = await transport(
         request,
         rule,
         signal,
@@ -633,8 +663,8 @@ export function createHubProxy(options: Options = {}) {
                   return false;
                 }
               })()
-            : rule.kind === "task-overview"
-              ? overviewResponse(path, body, overviewRequest)
+            : rule.kind === "task-overview" || rule.kind === "task-detail"
+              ? taskDisplayResponse(path, body, displayRequest, uid)
               : /^\/api\/v3\/provider-connections\/[^/]+\/display$/.test(path)
                 ? displayResponse(path, body)
                 : /^\/api\/v3\/provider-connections\/[^/]+\/summary$/.test(path)

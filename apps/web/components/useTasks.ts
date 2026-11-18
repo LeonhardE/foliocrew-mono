@@ -10,6 +10,7 @@ import type {
   TaskContent,
   TaskMetadata,
 } from "@/lib/encrypted-types";
+import type { readTaskDetail, TaskDetailRead } from "@/lib/task-detail-read";
 import { TaskOverviewRead } from "@/lib/task-overview";
 import { DisplayLru, untilSignal } from "@/lib/workspace-cache";
 import { defaultTask, reviewTask, type TaskPreview } from "@/lib/task-forms";
@@ -27,6 +28,17 @@ import {
   TASK_CONTRACT,
   type TaskResourceOption,
 } from "@/lib/task-types";
+
+export type SelectedTaskDetail = {
+  id: symbol;
+  metadata: TaskMetadata;
+  scope: string;
+  vaultVersion: number;
+  signal: AbortSignal;
+  read: () => Promise<TaskDetailRead>;
+  cancel: () => void;
+  current: () => boolean;
+};
 
 type Confirmation = "rules" | "resource_scope" | "key_epoch" | "recipients";
 type DraftSummary = { slot: string; revision: number; baseVersion: number; taskId: string };
@@ -111,11 +123,13 @@ export function useTasks(
     catalogueOnDemand = false,
     catalogueRequested = false,
     overview: overviewEnabled = false,
+    readDetail,
   }: {
     active: boolean;
     catalogueOnDemand?: boolean;
     catalogueRequested?: boolean;
     overview?: boolean;
+    readDetail?: typeof readTaskDetail;
   },
 ) {
   const auth = useAuth();
@@ -160,6 +174,11 @@ export function useTasks(
     new DisplayLru<{ at: number; packet: EncryptedTask; form: TaskContent }>(8, 4 * 1024 * 1024),
   );
   const inlinePackets = useRef(new Map<string, any>());
+  const selectedDetail = useRef<SelectedTaskDetail | null>(null);
+  const clearSelectedDetail = useCallback(() => {
+    selectedDetail.current?.cancel();
+    selectedDetail.current = null;
+  }, []);
   const overview = useRef<TaskOverviewRead | null>(null);
   overview.current ??= new TaskOverviewRead(() => setState((s) => ({ ...s })));
   overview.current.configure({
@@ -672,6 +691,8 @@ export function useTasks(
         updatePrivate((previous) => ({ ...previous, error: "source_unavailable" }));
         return;
       }
+      ++selection.current;
+      clearSelectedDetail();
       editor.current = {
         scope: scope!,
         slot: "new",
@@ -797,6 +818,71 @@ export function useTasks(
         sameTaskMetadata(previousRead.packet.metadata, listItem)
           ? previousRead
           : undefined;
+      clearSelectedDetail();
+      const listedHead = version === undefined ? listItem : undefined;
+      const knownPacket = !cached && listedHead && overview.current!.currentTaskPacket(listedHead);
+      let detail: SelectedTaskDetail | null = null;
+      if (readDetail && listedHead && vaultVersion !== undefined) {
+        const controller = new AbortController();
+        const includePacket = !cached && !knownPacket;
+        let pending: Promise<TaskDetailRead> | undefined;
+        let cancelled = false;
+        const current = () =>
+          !cancelled &&
+          serial === selection.current &&
+          scope === live.current.scope &&
+          live.current.active &&
+          live.current.visible &&
+          live.current.workspace.vault?.version === vaultVersion;
+        detail = {
+          id: Symbol(),
+          metadata: listedHead,
+          scope,
+          vaultVersion,
+          signal: controller.signal,
+          current,
+          cancel: () => {
+            cancelled = true;
+            controller.abort();
+            pending = undefined;
+          },
+          read: () => {
+            if (!current()) return Promise.reject(new TaskError("cancelled"));
+            if (!pending) {
+              let timedOut = false;
+              const timer = window.setTimeout(() => {
+                timedOut = true;
+                controller.abort();
+              }, 14000);
+              pending = readDetail(
+                (path, options) => auth.requestPrivate("agent-hub", path, owner, options),
+                listedHead.vaultId,
+                taskId,
+                includePacket,
+                true,
+                controller.signal,
+              )
+                .then((value) => {
+                  if (!current()) throw new TaskError("cancelled");
+                  if (
+                    value.state.taskId !== taskId ||
+                    value.state.taskVersion !== listedHead.taskVersion ||
+                    value.state.executionEpoch !== listedHead.executionEpoch
+                  )
+                    throw new TaskError("version_conflict");
+                  return value;
+                })
+                .catch((error) => {
+                  if (timedOut && current()) throw new TaskError("request_timeout");
+                  throw error;
+                })
+                .finally(() => window.clearTimeout(timer));
+            }
+            return pending;
+          },
+        };
+        selectedDetail.current = detail;
+      }
       updatePrivate((previous) => ({
         ...previous,
         busy: true,
@@ -813,19 +899,30 @@ export function useTasks(
             ({ packet, form } = structuredClone(cached));
             head = packet;
           } else {
-            const listedHead = version === undefined && listItem;
             const readHead = async () =>
               encryptedTask(
                 await api(`/api/v2/tasks/${taskId}`, context, { retryAdmission: true }),
               );
-            const hasPacket = listedHead && overview.current!.currentTaskPacket(listedHead);
+            const readSelectedPacket = async () => {
+              if (knownPacket) return null;
+              if (!detail) return readHead();
+              const combined = await detail.read();
+              const section = combined.packet;
+              if (!section) throw new TaskError("invalid_response");
+              if (section.status === "unavailable") return readHead();
+              if (!sameTaskMetadata(section.data.metadata, detail.metadata))
+                throw new TaskError("version_conflict");
+              return section.data;
+            };
             // Start the encrypted read alongside vault verification. Only the verified
             // vault and a still-current receipt may supply content to the Worker.
             const [verifiedVault, fetched] = await Promise.all([
               live.current.workspace.refreshVault(context.signal),
-              hasPacket ? null : readHead(),
+              readSelectedPacket(),
             ]);
             context.assert();
+            if (detail && (!detail.current() || vaultVersion !== verifiedVault.version))
+              throw new TaskError("version_conflict");
             const included =
               !fetched && listedHead && vaultVersion === verifiedVault.version
                 ? overview.current!.currentTaskPacket(listedHead)
@@ -884,13 +981,26 @@ export function useTasks(
           }));
         });
       } catch (error) {
-        if (serial === selection.current) fail(error);
+        if (serial === selection.current) {
+          clearSelectedDetail();
+          fail(error);
+        }
       } finally {
         if (serial === selection.current)
           updatePrivate((previous) => ({ ...previous, opening: null, busy: false }));
       }
     },
-    [api, fail, operation, owner, scope, updatePrivate],
+    [
+      api,
+      auth.requestPrivate,
+      clearSelectedDetail,
+      fail,
+      operation,
+      owner,
+      readDetail,
+      scope,
+      updatePrivate,
+    ],
   );
 
   const restoreDraft = useCallback(
@@ -906,6 +1016,7 @@ export function useTasks(
       )
         return;
       const serial = ++selection.current;
+      clearSelectedDetail();
       updatePrivate((previous) => ({ ...previous, opening: null, busy: true, error: "" }));
       try {
         await operation(true, async (context) => {
@@ -1495,6 +1606,7 @@ export function useTasks(
     if (scope && active && visible) void operation(true, summaries).catch(fail);
     return () => {
       ++generation.current;
+      clearSelectedDetail();
       for (const job of jobs.current) job.abort();
       editor.current = null;
       reviewed.current = null;
@@ -1502,6 +1614,7 @@ export function useTasks(
   }, [owner, scope, visible, operation, summaries, fail]);
   useEffect(() => {
     if (!active) {
+      clearSelectedDetail();
       details.current.clear();
       for (const job of jobs.current) if (!navigationDrafts.current.has(job)) job.abort();
       ++selection.current;
@@ -1716,6 +1829,7 @@ export function useTasks(
 
   const display = state.owner === owner ? state : { ...initial, owner };
   const invalidateTask = (taskId: string, restored = false) => {
+    clearSelectedDetail();
     details.current.clear();
     overview.current!.invalidate();
     inlinePackets.current.clear();
@@ -1780,6 +1894,8 @@ export function useTasks(
   return {
     ...output,
     overview: overviewEnabled ? overview.current : undefined,
+    selectedDetail:
+      privateVisible && selectedDetail.current?.current() ? selectedDetail.current : undefined,
     listReady: Boolean(
       privateVisible &&
       freshReads.current.tasks?.scope === `${owner}:${scope ?? "locked"}` &&

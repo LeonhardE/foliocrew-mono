@@ -4,6 +4,11 @@ const request = compile("../lib/task-overview-request.ts", { "./task-types": typ
 const inbox = compile("../lib/inbox-types.ts");
 const reader = compile("../lib/task-result-reader.ts", { "./inbox-types": inbox });
 const providers = compile("../lib/report-provider-attribution.ts");
+const detail = compile("../lib/task-detail-read.ts", {
+  "./task-types": types,
+  "./report-provider-attribution": providers,
+  "./workspace-cache": compile("../lib/workspace-cache.ts"),
+});
 const overview = compile(
   "../lib/task-overview.ts",
   {
@@ -15,4 +20,4 @@ const overview = compile(
   },
   { setTimeout, clearTimeout },
 );
-module.exports = { types, request, inbox, reader, providers, overview };
+module.exports = { types, request, inbox, reader, providers, overview, detail };

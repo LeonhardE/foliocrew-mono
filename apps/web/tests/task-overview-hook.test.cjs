@@ -5,7 +5,7 @@ const { compile } = require("./resource-library-helpers.cjs"),
 const { types, overview, reader, inbox, providers } = require("./task-overview-helpers.cjs"),
   fixtures = require("./task-overview-fixtures.cjs");
 const tick = () => new Promise((r) => setImmediate(r));
-function harness({ count = 2, respond, open, overviewEnabled = true } = {}) {
+function harness({ count = 2, respond, open, overviewEnabled = true, readDetail } = {}) {
   const ui = hooks(),
     calls = [],
     opens = [],
@@ -152,8 +152,15 @@ function harness({ count = 2, respond, open, overviewEnabled = true } = {}) {
         active,
         catalogueOnDemand: true,
         overview: overviewEnabled,
+        readDetail,
       });
-      const c = center.useTaskCenter(workspace, active, m.selected, m.overview);
+      const c = center.useTaskCenter(
+        workspace,
+        active,
+        m.opening ?? m.selected,
+        m.overview,
+        m.selectedDetail,
+      );
       const r = results.useTaskResults(workspace, undefined, m, active, "", c, m.overview);
       const tree = view.TaskCenterView({ workspace, model: m, center: c, resultState: r, active });
       return (current = { m, c, r, tree });
@@ -886,5 +893,233 @@ test("late Worker success or failure cannot cross an Owner or unlock generation 
         h.close();
       }
     }
+  }
+});
+
+function detailFixture(id, packet, patch = {}) {
+  return {
+    contractVersion: types.TASK_CONTRACT,
+    profile: "folioview.owner-task-detail.v1",
+    state: {
+      contractVersion: types.TASK_CONTRACT,
+      profile: "folioview.task-center.v1",
+      taskId: id,
+      taskVersion: 1,
+      executionEpoch: 1,
+      rules: null,
+      assignments: [],
+    },
+    legacy: null,
+    attribution: null,
+    packet,
+    ...patch,
+  };
+}
+const syntheticForm = () =>
+  compile("../lib/task-forms.ts", { "./task-types": types }).defaultTask("custom");
+test("one selected-task query starts beside vault verification, supplies the body and verified executor state, and a fresh revisit sends nothing", async () => {
+  let releaseVault,
+    verifications = 0;
+  const h = harness({
+    open: () => ({ ...syntheticForm(), name: "Synthetic", goal: "Research" }),
+    readDetail: require("./task-overview-helpers.cjs").detail.readTaskDetail,
+    respond: (path, opts) => {
+      if (path.endsWith("/detail/query"))
+        return Response.json(
+          detailFixture(
+            "task_1",
+            opts.json.includePacket
+              ? { status: "ready", data: fixtures.packet(fixtures.metadata(1)) }
+              : null,
+          ),
+        );
+      if (path.endsWith("/manual")) return Response.json({ items: [] });
+    },
+  });
+  try {
+    await h.ready();
+    h.advance(30_001);
+    h.workspace.loadTaskCenterPending = async () => null;
+    h.workspace.verifyTaskCenterState = async (s) => {
+      verifications++;
+      return s;
+    };
+    h.workspace.refreshVault = () =>
+      new Promise((resolve) => {
+        releaseVault = resolve;
+      });
+    const before = h.calls.length;
+    const opening = h.current.m.openTask("task_1");
+    let result = await h.ready();
+    assert.equal(typeof releaseVault, "function");
+    const query = h.calls.slice(before).filter((c) => c.path.endsWith("/detail/query"));
+    assert.equal(query.length, 1);
+    assert.equal(query[0].options.json.includePacket, true);
+    assert.equal(verifications, 1);
+    assert.equal(result.m.selected, null);
+    releaseVault(h.workspace.vault);
+    await opening;
+    result = await h.ready();
+    assert.equal(result.m.selected.taskId, "task_1");
+    assert.equal(result.c.executors.status, "ready");
+    const paths = h.calls.slice(before).map((c) => c.path);
+    assert.equal(
+      paths.some(
+        (p) =>
+          p.endsWith("/tasks/task_1") ||
+          p.endsWith("/authority") ||
+          p.endsWith("/persistent-connections"),
+      ),
+      false,
+    );
+    const n = h.calls.length;
+    await result.m.openTask("task_1");
+    await h.ready();
+    assert.equal(h.calls.length, n);
+  } finally {
+    h.close();
+  }
+});
+test("an unavailable bundled packet alone retries the original head; a denied entire selection never falls back", async () => {
+  for (const denied of [false, true]) {
+    const h = harness({
+      readDetail: require("./task-overview-helpers.cjs").detail.readTaskDetail,
+      open: () => ({ ...syntheticForm(), name: "Synthetic", goal: "Research" }),
+      respond: (p) => {
+        if (p.endsWith("/detail/query"))
+          return denied
+            ? Response.json({}, { status: 403 })
+            : Response.json(detailFixture("task_1", { status: "unavailable" }));
+        if (p === "/api/v2/tasks/task_1")
+          return Response.json(fixtures.packet(fixtures.metadata(1)));
+        if (p.endsWith("/manual")) return Response.json({ items: [] });
+      },
+    });
+    try {
+      await h.ready();
+      h.advance(30_001);
+      h.workspace.loadTaskCenterPending = async () => null;
+      h.workspace.verifyTaskCenterState = async (s) => s;
+      h.workspace.refreshVault = async () => h.workspace.vault;
+      const opening = h.current.m.openTask("task_1");
+      await h.ready();
+      await opening;
+      const r = await h.ready();
+      assert.equal(r.m.selected?.taskId, denied ? undefined : "task_1");
+      assert.equal(h.calls.filter((c) => c.path === "/api/v2/tasks/task_1").length, denied ? 0 : 1);
+      assert.equal(
+        h.calls.filter((c) => c.path === "/api/v3/task-center/vault_A/tasks/task_1").length,
+        0,
+      );
+    } finally {
+      h.close();
+    }
+  }
+});
+
+test("a new selection discards a late body, state and early manual history even if transport ignores abort", async () => {
+  let releaseA, releaseHistory;
+  const h = harness({
+    readDetail: require("./task-overview-helpers.cjs").detail.readTaskDetail,
+    open: () => ({ ...syntheticForm(), name: "Synthetic", goal: "Research" }),
+    respond: (path, opts) => {
+      if (path.endsWith("/detail/query")) {
+        const id = path.includes("/task_1/") ? "task_1" : "task_2";
+        const response = () =>
+          Response.json(
+            detailFixture(
+              id,
+              opts.json.includePacket
+                ? {
+                    status: "ready",
+                    data: fixtures.packet(fixtures.metadata(id === "task_1" ? 1 : 2)),
+                  }
+                : null,
+            ),
+          );
+        if (id === "task_1")
+          return new Promise((resolve) => {
+            releaseA = () => resolve(response());
+          });
+        return response();
+      }
+      if (path.endsWith("/task_1/manual"))
+        return new Promise((resolve) => {
+          releaseHistory = () =>
+            resolve(Response.json({ items: [{ aggregate: { hasActiveExecutors: true } }] }));
+        });
+      if (path.endsWith("/manual")) return Response.json({ items: [] });
+    },
+  });
+  try {
+    await h.ready();
+    h.advance(30_001);
+    h.workspace.loadTaskCenterPending = async () => null;
+    h.workspace.verifyTaskCenterState = async (s) => s;
+    h.workspace.refreshVault = async () => h.workspace.vault;
+    const first = h.current.m.openTask("task_1");
+    await h.ready();
+    assert.equal(
+      typeof releaseHistory,
+      "function",
+      "queue the required manual read after the combined request starts, before it finishes",
+    );
+    assert.equal(h.calls.filter((c) => c.path.endsWith("/task_1/manual")).length, 1);
+    assert.ok(
+      h.calls.findIndex((c) => c.path.endsWith("/task_1/detail/query")) <
+        h.calls.findIndex((c) => c.path.endsWith("/task_1/manual")),
+    );
+    const second = h.current.m.openTask("task_2");
+    await h.ready();
+    await second;
+    releaseHistory();
+    releaseA();
+    await first;
+    const r = await h.ready();
+    assert.equal(r.m.selected.taskId, "task_2");
+    assert.equal(r.c.selectedRecord.taskId, "task_2");
+    assert.equal(r.c.manual.task_1, undefined);
+    assert.equal(r.c.runState, "ready");
+    assert.equal(h.calls.filter((c) => c.path.endsWith("/task_2/manual")).length, 1);
+    assert.equal(h.calls.filter((c) => c.path.endsWith("/detail/query")).length, 2);
+  } finally {
+    h.close();
+  }
+});
+
+test("a fresh included packet opens after vault verification while an independent state query is still outstanding", async () => {
+  let finish;
+  const h = harness({
+    readDetail: require("./task-overview-helpers.cjs").detail.readTaskDetail,
+    open: () => ({ ...syntheticForm(), name: "Synthetic", goal: "Research" }),
+    respond: (path, opts) => {
+      if (path.endsWith("/detail/query")) {
+        assert.equal(opts.json.includePacket, false);
+        return new Promise((resolve) => {
+          finish = () => resolve(Response.json({}, { status: 503 }));
+        });
+      }
+      if (path.endsWith("/manual")) return Response.json({ items: [] });
+    },
+  });
+  try {
+    await h.ready();
+    h.workspace.loadTaskCenterPending = async () => null;
+    h.workspace.verifyTaskCenterState = async (s) => s;
+    h.workspace.refreshVault = async () => h.workspace.vault;
+    const opened = h.current.m.openTask("task_1");
+    let result = await h.ready();
+    assert.equal(typeof finish, "function");
+    assert.equal(result.m.selected?.taskId, "task_1");
+    assert.equal(result.c.executors.status, "loading");
+    finish();
+    await opened;
+    result = await h.ready();
+    assert.equal(result.m.selected?.taskId, "task_1");
+    assert.equal(result.c.executors.status, "error");
+    assert.equal(h.calls.filter((c) => c.path === "/api/v2/tasks/task_1").length, 0);
+    assert.equal(h.calls.filter((c) => c.path.endsWith("/tasks/task_1/manual")).length, 1);
+  } finally {
+    h.close();
   }
 });

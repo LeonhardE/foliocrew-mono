@@ -107,6 +107,8 @@ export function taskCenterRoute(path: string, method: string) {
   )
     return { kind: "read" as const, max: 0, responseStatus: 200 as const };
   if (method !== "POST") return null;
+  if (new RegExp(`^/api/v3/task-center/${ID}/tasks/${ID}/detail/query$`).test(path))
+    return { kind: "task-detail" as const, max: 512, responseStatus: 200 as const };
   if (new RegExp(`^/api/v3/task-center/${ID}/tasks/${ID}/(?:commands|manual)$`).test(path))
     return { kind: "center" as const, max: 24576, operation: true, responseStatus: 201 as const };
   if (
