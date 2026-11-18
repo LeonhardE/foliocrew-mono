@@ -32,6 +32,7 @@ from .persistent_routes import control_transport
 from .store import get_store
 
 COOKIE = "fv_native_oauth_flow"
+SCOPED_COOKIE = "fc_native_oauth_flow"
 COOKIE_PATH = "/api/v2/persistent-account-authorizations"
 router = APIRouter(route_class=OAuthRoute)
 owner_router = APIRouter(prefix=COOKIE_PATH, route_class=PrivateRoute)
@@ -54,15 +55,18 @@ def native_browser(request, service):
     parsed = urlsplit(service.config.consent_url)
     if request.headers.getlist("origin") != [f"{parsed.scheme}://{parsed.netloc}"]:
         raise ContractError("insufficient_scope")
-    found = []
+    found = {}
     for raw in request.headers.getlist("cookie"):
         for part in raw.split(";"):
             key, separator, value = part.strip().partition("=")
-            if separator and key == COOKIE:
-                found.append(value)
-    if len(found) != 1 or re.fullmatch(r"[A-Za-z0-9_-]{43}", found[0]) is None:
+            if separator and key in (COOKIE, SCOPED_COOKIE):
+                if key in found or re.fullmatch(r"[A-Za-z0-9_-]{43}", value) is None:
+                    raise ContractError("insufficient_scope")
+                found[key] = value
+    if not found:
         raise ContractError("insufficient_scope")
-    return found[0]
+    # A scoped flow may overlap an existing legacy window in the same browser.
+    return found.get(SCOPED_COOKIE) or found[COOKIE]
 
 
 @router.get("/.well-known/oauth-authorization-server/oauth/persistent")
@@ -85,14 +89,15 @@ async def authorize(request: Request, service: Service):
         status_code=303,
         headers=PRIVATE,
     )
+    scoped = os.getenv("HUB_NATIVE_SCOPED_CONSENT_COOKIES_ENABLED") == "1"
     response.set_cookie(
-        COOKIE,
+        SCOPED_COOKIE if scoped else COOKIE,
         browser,
         max_age=PENDING_SECONDS,
         httponly=True,
         secure=True,
         samesite="lax",
-        path=COOKIE_PATH,
+        path=COOKIE_PATH + "/" + ident if scoped else COOKIE_PATH,
     )
     return response
 
