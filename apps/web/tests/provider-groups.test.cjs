@@ -46,3 +46,25 @@ test("the exact canonical slot wins and stale references never fall back to a di
   g = providerGroups([a, b], state, 1000)[0];
   assert.equal(g.current, null);
 });
+
+test("management history counts only previous accounts that can still be unlinked", () => {
+  for (const provider of ["muse", "chatgpt"]) {
+    const current = row("a"),
+      expired = row("b", 900),
+      former = row("c");
+    const views = [former, current, expired];
+    for (const view of views) view.connection.provider = provider;
+    former.connection.status = "revoked";
+    const states = { [provider]: { slot: { currentCredential: current.credential.reference } } };
+    const group = () =>
+      providerGroups(views, states, 1000).find((item) => item.provider === provider);
+    assert.equal(group().current, current);
+    assert.deepEqual(
+      group().history.map((entry) => entry.connection.connectionId),
+      [expired.connection.connectionId],
+    );
+    expired.connection.status = "revoked";
+    assert.equal(group().history.length, 0);
+    assert.equal(views.length, 3);
+  }
+});

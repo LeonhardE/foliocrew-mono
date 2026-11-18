@@ -41,6 +41,7 @@ export function providerGroups(
       (!slot && live.length > 1) ||
       (ref && !current),
     );
-    return { provider, current, history: rows.filter((v) => v !== current), reviewRequired };
+    const history = rows.filter((v) => v !== current && v.connection.status === "active");
+    return { provider, current, history, reviewRequired };
   });
 }
