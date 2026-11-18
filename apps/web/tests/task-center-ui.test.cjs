@@ -18,7 +18,7 @@ function render({
   centerPatch = {},
 } = {}) {
   const messages = require(`../messages/${locale}.json`),
-    metadata = { taskId: "task_PRIVATE_ID", status: "active", taskVersion: 1 };
+    metadata = { taskId: "task_PRIVATE_ID", status: "active", taskVersion: 1, executionEpoch: 1 };
   const mod = compile(
     "../components/TaskCenterPanel.tsx",
     {
@@ -178,6 +178,29 @@ test("task actions live inside the task and technical IDs never replace verified
   assert.doesNotMatch(html, /task_PRIVATE_ID|request_PRIVATE_ID|Manage executors|View results/);
   assert.doesNotMatch(html.slice(0, html.indexOf("</header>")), /Run now/);
   assert.match(html, /Run now/);
+});
+test("Run now requires verified status for this head and shows existing progress during recovery", () => {
+  const record = { taskId: "task_PRIVATE_ID", taskVersion: 1, executionEpoch: 1 };
+  const center = {
+    runState: "ready",
+    selectedRecord: record,
+    currentAssignments: [{ assignment: { assignmentId: "current", provider: "muse" } }],
+  };
+  const disabled = /disabled="">Run now<\/button>/;
+  assert.doesNotMatch(render({ centerPatch: center }), disabled);
+  for (const patch of [
+    { runState: "loading" },
+    { runState: "error" },
+    { pending: { taskId: record.taskId } },
+    { selectedRecord: { ...record, taskVersion: 2 } },
+    { selectedRecord: { ...record, executionEpoch: 2 } },
+    { currentAssignments: [] },
+  ]) {
+    assert.match(render({ centerPatch: { ...center, ...patch } }), disabled);
+  }
+  const running = render({ running: true, centerPatch: { ...center, runState: "error" } });
+  assert.match(running, />View progress<\/button>/);
+  assert.doesNotMatch(running, /disabled="">View progress<\/button>|>Run now<\/button>/);
 });
 test("known running requests show a returnable progress action and list/title indicators", () => {
   const html = render({ running: true, count: 2 });

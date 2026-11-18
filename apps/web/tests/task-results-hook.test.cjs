@@ -18,7 +18,7 @@ const meta = () => ({
   starred: false,
   archived: false,
 });
-function harness({ transport, center, timers, clock = Date } = {}) {
+function harness({ transport, center, timers, clock = Date, resultsVisible = true } = {}) {
   let observed = "";
   let owner = "owner_A",
     index = 0,
@@ -223,6 +223,8 @@ function harness({ transport, center, timers, clock = Date } = {}) {
         active,
         observed,
         center,
+        undefined,
+        resultsVisible,
       );
       const pendingEffects = effects.splice(0);
       // React runs all previous passive cleanups before the new setups.
@@ -236,6 +238,9 @@ function harness({ transport, center, timers, clock = Date } = {}) {
     workspace,
     model,
     calls,
+    showResults(v) {
+      resultsVisible = v;
+    },
     observe(v) {
       observed = v;
     },
@@ -409,7 +414,7 @@ test("initial result metadata reads only one page per source and no private repo
 
 test("selected task history shares verified center state and pages only after explicit More", async () => {
   const h = harness({
-    center: { records: { task_A: { rules: {} } } },
+    center: { selectedRecord: { taskId: "task_A", rules: {} } },
     transport: async (path, options) => {
       if (path.endsWith("/results/query"))
         return Response.json({
@@ -457,7 +462,7 @@ test("selected task history shares verified center state and pages only after ex
 
 test("a malformed selected page publishes neither foreign rows nor invented trigger attribution", async () => {
   const h = harness({
-    center: { records: { task_A: { rules: {} } } },
+    center: { selectedRecord: { taskId: "task_A", rules: {} } },
     transport: async (path) =>
       path.endsWith("/results/query")
         ? Response.json({
@@ -524,7 +529,7 @@ test("expired result metadata refreshes the head instead of continuing an old cu
         return now;
       }
     },
-    center: { records: { task_A: { rules: {} } } },
+    center: { selectedRecord: { taskId: "task_A", rules: {} } },
     transport: async (path, options) => {
       if (path.endsWith("/results/query"))
         return Response.json({
@@ -597,8 +602,44 @@ test("new results arriving during initial loading queue one fresh head read with
   h.close();
 });
 
+test("task-specific results wait for the results tab and a matching verified task", async () => {
+  const center = { selectedRecord: { taskId: "task_B", rules: {} } };
+  const h = harness({
+    resultsVisible: false,
+    center,
+    transport: (path) =>
+      path.endsWith("/results/query")
+        ? Response.json({
+            contractVersion: C,
+            profile: "folioview.task-center.v1",
+            items: [],
+            nextCursor: null,
+          })
+        : undefined,
+  });
+  const count = () => h.calls.filter((c) => c.path.endsWith("/results/query")).length;
+  try {
+    assert.equal((await h.ready()).complete, false);
+    h.showResults(true);
+    let model = await h.ready();
+    await model.reload();
+    model = await h.ready();
+    await model.more();
+    assert.equal((await h.ready()).complete, false);
+    assert.equal(count(), 0);
+    h.showResults(false);
+    center.selectedRecord = { taskId: "task_A", rules: {} };
+    await h.ready();
+    assert.equal(count(), 0);
+    h.showResults(true);
+    await h.ready();
+    assert.equal(count(), 1);
+  } finally {
+    h.close();
+  }
+});
 test("a task entering the new result route refreshes despite a fresh legacy display cache", async () => {
-  const center = { records: { task_A: { rules: null } } };
+  const center = { selectedRecord: { taskId: "task_A", rules: null } };
   const h = harness({
     center,
     transport: async (path) =>
@@ -613,7 +654,7 @@ test("a task entering the new result route refreshes despite a fresh legacy disp
   });
   await h.ready();
   assert.equal(h.calls.filter((c) => c.path.endsWith("/results/query")).length, 0);
-  center.records.task_A = { rules: {} };
+  center.selectedRecord = { taskId: "task_A", rules: {} };
   await h.ready();
   assert.equal(h.calls.filter((c) => c.path.endsWith("/results/query")).length, 1);
   h.close();

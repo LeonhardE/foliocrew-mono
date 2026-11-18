@@ -865,6 +865,29 @@ test("late decrypt and captured callbacks cannot cross lock/relogin/account boun
   assert.equal(h.render().form, null);
   h.unmount();
 });
+test("selection starts its encrypted head alongside vault verification and opens only after both succeed", async () => {
+  const h = harness(),
+    gate = deferred();
+  try {
+    const model = await h.drain();
+    const priorOpens = h.opens.length;
+    h.workspace.refreshVault = () => gate.promise;
+    const opening = model.openTask("task_A");
+    await settle();
+    assert.equal(h.calls.filter((c) => c.route === "/api/v2/tasks/task_A").length, 1);
+    assert.equal(h.render().opening?.taskId, "task_A");
+    assert.equal(h.render().selected, null);
+    assert.equal(h.opens.length, priorOpens);
+    gate.resolve({ version: 1 });
+    await opening;
+    assert.equal(h.render().opening, null);
+    assert.equal(h.render().selected?.taskId, "task_A");
+    assert.equal(h.opens.length, priorOpens + 1);
+  } finally {
+    gate.resolve({ version: 1 });
+    h.unmount();
+  }
+});
 test("deferred HTTP body is fenced before private open after lock; deadlines release busy", async () => {
   const gate = deferred();
   const h = harness({
@@ -1854,7 +1877,7 @@ test("unmounting a pending name batch cannot refill its display queue", async ()
   assert.equal(h.opens.length, 0);
 });
 
-test("task-list on-demand mode reads all task metadata/names without an unrelated catalogue, then enables new-task and detail resources", async () => {
+test("only creating or editing a task requests the resource catalogue in on-demand mode", async () => {
   const h = harness({ catalogueOnDemand: true });
   let m = await h.drain();
   assert.equal(m.items.length, 1);
@@ -1870,6 +1893,10 @@ test("task-list on-demand mode reads all task metadata/names without an unrelate
   const detail = harness({ catalogueOnDemand: true });
   m = await detail.drain();
   await m.openTask(m.items[0].taskId);
+  m = await detail.drain();
+  assert.equal(m.catalogueReady, false);
+  assert.equal(detail.calls.filter((c) => c.route.endsWith("/catalogue")).length, 0);
+  detail.requestCatalogue(true);
   m = await detail.drain();
   assert.equal(m.catalogueReady, true);
   assert.equal(detail.calls.filter((c) => c.route.endsWith("/catalogue")).length, 1);

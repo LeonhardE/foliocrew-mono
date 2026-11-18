@@ -7,7 +7,10 @@ test("real TasksPanel requests executors only for creation and editing while pre
   const h = hooks(),
     demands = [],
     resultReads = [],
-    taskReads = [];
+    taskReads = [],
+    catalogueDemand = [],
+    resultPageDemand = [],
+    selectedHeads = [];
   let active = true;
   const workspace = { authenticated: true, owner: "owner_A", phase: "unlocked" };
   const model = { owner: "owner_A", unlocked: true, selected: null, form: null, openTask() {} };
@@ -22,12 +25,28 @@ test("real TasksPanel requests executors only for creation and editing while pre
       "./useTasks": {
         useTasks: (_workspace, options) => {
           taskReads.push(options.active);
+          catalogueDemand.push(options.catalogueRequested);
           return model;
         },
       },
-      "./useTaskCenter": { useTaskCenter: () => ({ manual: {} }) },
+      "./useTaskCenter": {
+        useTaskCenter: (_workspace, _active, head) => {
+          selectedHeads.push(head);
+          return { manual: {} };
+        },
+      },
       "./useTaskResults": {
-        useTaskResults: (_workspace, _persistent, _model, enabled) => {
+        useTaskResults: (
+          _workspace,
+          _persistent,
+          _model,
+          enabled,
+          _observed,
+          _center,
+          _overview,
+          resultsVisible,
+        ) => {
+          resultPageDemand.push(resultsVisible);
           resultReads.push(enabled);
           return results;
         },
@@ -72,9 +91,28 @@ test("real TasksPanel requests executors only for creation and editing while pre
     false,
     "browsing the selected task does not discover Agent connections",
   );
+  assert.equal(catalogueDemand.at(-1), false);
+  assert.equal(resultPageDemand.at(-1), false);
+  model.opening = { taskId: "task_B" };
+  model.selected = null;
+  draw();
+  assert.equal(
+    selectedHeads.at(-1),
+    model.opening,
+    "prefetch the selected head while its body is opening",
+  );
+  model.opening = null;
+  model.selected = { taskId: "task_A" };
+  const resultsVisible = all(draw(), (n) => n.type === TaskCenterView)[0].props.results.props
+    .onVisibleChange;
+  resultsVisible(true);
+  draw();
+  assert.equal(resultPageDemand.at(-1), true);
+  resultsVisible(false);
   const edit = all(draw(), (n) => n.type === TaskCenterView)[0].props.onEditingChange;
   edit(true);
   draw();
+  assert.equal(catalogueDemand.at(-1), true);
   assert.equal(demands.at(-1), true, "opening settings loads the editor's eligible connections");
   edit(false);
   draw();

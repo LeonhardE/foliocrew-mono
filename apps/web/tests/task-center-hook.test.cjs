@@ -240,7 +240,7 @@ test("ignored command abort settles the UI and keeps its original pending packet
   h.close();
 });
 
-test("task state and manual progress read together but publish only after state verification", async () => {
+test("manual history leaves a display slot free until the task state has been verified", async () => {
   let release;
   const blocked = new Promise((resolve) => {
     release = resolve;
@@ -251,13 +251,15 @@ test("task state and manual progress read together but publish only after state 
   h.render();
   await settle();
   assert.ok(
-    h.calls.some((call) => call.path.endsWith("/manual")),
-    "independent progress read must not wait for the state body",
+    !h.calls.some((call) => call.path.endsWith("/manual")),
+    "secondary run history must not take a slot ahead of state or the selected task body",
   );
   assert.equal(h.render().records.task_A, undefined);
   release(Response.json(state()));
   const m = await h.ready();
   assert.ok(m.records.task_A);
+  assert.equal(m.runState, "ready");
+  assert.equal(countCalls(h, "/manual"), 1);
   h.close();
 });
 
@@ -545,6 +547,167 @@ test("a same-version assignment mutation invalidates the receipt and cannot be o
     m = await h.ready();
     assert.deepEqual(Array.from(m.executors.providers), ["muse"]);
     assert.equal(m.pending, null);
+  } finally {
+    h.close();
+  }
+});
+
+test("slow run history and outbox cannot hold back legacy executor authority", async () => {
+  const task = meta("task_A", { resourceBindings: [binding] });
+  let releaseManual, releasePending;
+  const history = new Promise((resolve) => {
+    releaseManual = resolve;
+  });
+  const outbox = new Promise((resolve) => {
+    releasePending = resolve;
+  });
+  const h = harness({
+    initial: task,
+    overview: mappedOverview(),
+    transport: (path) =>
+      path.endsWith("/authority")
+        ? Response.json(legacyAuthority(task))
+        : path.endsWith("/manual")
+          ? history
+          : undefined,
+  });
+  h.workspace.loadTaskCenterPending = () => outbox;
+  try {
+    let m = await h.ready();
+    const paths = h.calls.map((c) => c.path);
+    assert.ok(
+      paths.findIndex((p) => p.endsWith("/authority")) <
+        paths.findIndex((p) => p.endsWith("/manual")),
+    );
+    assert.deepEqual(Array.from(m.executors.providers), ["muse"]);
+    assert.equal(m.runState, "loading");
+    await assert.rejects(m.command(task.taskId, "manual_intent", []), /request_failed/);
+    releaseManual(Response.json({ items: [{ aggregate: { hasActiveExecutors: true } }] }));
+    m = await h.ready();
+    assert.equal(m.runState, "loading");
+    assert.equal(m.manual[task.taskId][0].aggregate.hasActiveExecutors, true);
+    releasePending(null);
+    m = await h.ready();
+    assert.equal(m.runState, "ready");
+    await assert.rejects(m.command(task.taskId, "manual_intent", []), /operation_pending/);
+    assert.equal(h.calls.filter((c) => c.options.method === "POST").length, 0);
+  } finally {
+    h.close();
+  }
+});
+
+test("run history failure retries locally without rereading verified state or legacy authority", async () => {
+  const task = meta("task_A", { resourceBindings: [binding] });
+  let broken = true;
+  const h = harness({
+    initial: task,
+    overview: mappedOverview(),
+    transport: (path) =>
+      path.endsWith("/authority")
+        ? Response.json(legacyAuthority(task))
+        : path.endsWith("/manual") && broken
+          ? Response.json({}, { status: 503 })
+          : undefined,
+  });
+  try {
+    let m = await h.ready();
+    assert.equal(m.runState, "error");
+    assert.equal(m.executors.status, "ready");
+    assert.equal(m.error, "");
+    broken = false;
+    m.retryRunState();
+    m = await h.ready();
+    assert.equal(m.runState, "ready");
+    assert.equal(countCalls(h, "/authority"), 1);
+    assert.equal(countCalls(h, "/tasks/task_A"), 1);
+    assert.equal(countCalls(h, "/manual"), 2);
+  } finally {
+    h.close();
+  }
+});
+
+test("an earlier visit cannot replace the selected outbox or enable a run before the current check", async () => {
+  const h = harness();
+  const deferred = [];
+  const hold = (task) => new Promise((resolve) => deferred.push({ task, resolve }));
+  try {
+    let m = await h.ready();
+    assert.equal(m.runState, "ready");
+    h.workspace.loadTaskCenterPending = hold;
+    h.select(meta("task_B"));
+    m = await h.ready();
+    assert.equal(m.runState, "loading");
+    h.select(meta());
+    m = h.render();
+    assert.equal(m.runState, "loading");
+    await assert.rejects(m.command("task_A", "manual_intent", []), /request_failed/);
+    h.select(meta("task_B"));
+    m = await h.ready();
+    assert.equal(m.runState, "loading");
+    assert.deepEqual(
+      deferred.map((v) => v.task),
+      ["task_B", "task_A", "task_B"],
+    );
+    deferred[0].resolve({ taskId: "task_B", operationId: "older_B" });
+    deferred[1].resolve({ taskId: "task_A", operationId: "late_A" });
+    m = await h.ready();
+    assert.equal(m.pending, null);
+    assert.equal(m.runState, "loading");
+    deferred[2].resolve({ taskId: "task_B", operationId: "current_B" });
+    m = await h.ready();
+    assert.equal(m.runState, "ready");
+    assert.equal(m.pending.operationId, "current_B");
+    assert.equal(countCalls(h, "/manual"), 2);
+  } finally {
+    h.close();
+  }
+});
+
+test("run confirmation checks the current definition and history together and preserves another client's active run", async () => {
+  let confirming = false,
+    releaseDefinition,
+    releaseHistory;
+  const h = harness({
+    transport: (path) => {
+      if (!confirming) return;
+      if (path.endsWith("/tasks/task_A"))
+        return new Promise((resolve) => {
+          releaseDefinition = resolve;
+        });
+      if (path.endsWith("/manual"))
+        return new Promise((resolve) => {
+          releaseHistory = resolve;
+        });
+    },
+  });
+  let signed = 0;
+  h.workspace.prepareTaskCenterControl = () => {
+    signed++;
+    throw Error("unexpected signing");
+  };
+  try {
+    let m = await h.ready();
+    assert.equal(m.runState, "ready");
+    assert.equal(m.manual.task_A.length, 0);
+    confirming = true;
+    const confirmed = m.command("task_A", "manual_intent", ["agent"]);
+    await settle();
+    assert.equal(typeof releaseDefinition, "function");
+    assert.equal(typeof releaseHistory, "function");
+    releaseDefinition(Response.json(state()));
+    releaseHistory(
+      Response.json({
+        items: [
+          { snapshot: { requestId: "from_other_device" }, aggregate: { hasActiveExecutors: true } },
+        ],
+      }),
+    );
+    await confirmed;
+    m = h.render();
+    assert.equal(m.manual.task_A[0].snapshot.requestId, "from_other_device");
+    assert.equal(m.error, "");
+    assert.equal(signed, 0);
+    assert.equal(h.calls.filter((c) => c.options.method === "POST").length, 0);
   } finally {
     h.close();
   }

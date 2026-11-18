@@ -43,6 +43,7 @@ export function useTaskResults(
   observedResults = "",
   center?: TaskCenterModel,
   overview?: TaskOverviewRead,
+  taskResultsVisible = true,
 ) {
   const auth = useAuth(),
     [visible, setVisible] = useState(
@@ -927,12 +928,15 @@ export function useTaskResults(
     },
     [api, merge, update, observedResults],
   );
-  const selectedRecord = center?.records[task];
+  const record = center?.selectedRecord;
+  const selectedRecord = record?.taskId === task ? record : undefined;
   const selectedRules = center ? Boolean(selectedRecord?.rules) : undefined;
+  const readSelectedPage = (force: boolean, more = false) =>
+    !center || selectedRecord ? loadTaskPage(task, selectedRules, force, more) : undefined;
   useEffect(() => {
-    if (scope && active && task && (!center || selectedRecord))
+    if (scope && active && taskResultsVisible && task && (!center || selectedRecord))
       void loadTaskPage(task, selectedRules);
-  }, [scope, active, task, selectedRecord, selectedRules, loadTaskPage]);
+  }, [scope, active, taskResultsVisible, task, selectedRecord, selectedRules, loadTaskPage]);
   useEffect(() => {
     if (scope && active && observedResults) void load(true);
   }, [scope, active, observedResults, load]);
@@ -1125,7 +1129,9 @@ export function useTaskResults(
     },
     pending: current.pending,
     unreadCounts,
-    partial: !current.complete || Boolean(task && taskPages.current.get(task)?.done !== true),
+    partial:
+      !current.complete ||
+      Boolean(taskResultsVisible && task && taskPages.current.get(task)?.done !== true),
     filters: f,
     actors: [...new Set(taskRows.map(providerFor))],
     providerFor,
@@ -1151,10 +1157,9 @@ export function useTaskResults(
     more: async () => {
       setFilters((s) => ({ ...s, [task]: { ...f, limit: f.limit + 20 } }));
       if (filtered.length <= f.limit)
-        await Promise.all([load(false, true), loadTaskPage(task, selectedRules, false, true)]);
+        await Promise.all([load(false, true), readSelectedPage(false, true)]);
     },
-    reload: () =>
-      Promise.all([load(true), loadTaskPage(task, selectedRules, true), loadReportProviders(true)]),
+    reload: () => Promise.all([load(true), readSelectedPage(true), loadReportProviders(true)]),
     open,
     close: () => {
       selectedSerial.current++;

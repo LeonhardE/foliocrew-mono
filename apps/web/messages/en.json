@@ -1571,6 +1571,7 @@
     "delete": "Delete task",
     "viewProgress": "View progress",
     "runNow": "Run now",
+    "runStatusFailed": "Could not check existing runs. Try again to start a new run.",
     "runNotEnabled": "Run now is not enabled for this account.",
     "selectTask": "Choose a task",
     "selectTaskHint": "Or create a task to get started.",
