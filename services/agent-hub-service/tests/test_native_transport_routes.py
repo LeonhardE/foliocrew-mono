@@ -14,6 +14,7 @@ from app.errors import HubErrors
 from app.native_transport_routes import (
     COOKIE,
     COOKIE_PATH,
+    SCOPED_COOKIE,
     get_native_transport,
     owner_router,
     router,
@@ -68,6 +69,55 @@ class NativeTransportRoutes(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         store.assert_not_called()
         self.assertEqual(response.headers["cache-control"], "no-store")
+
+    def test_two_parallel_scoped_windows_and_a_preceding_legacy_window_keep_their_own_cookie(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        from fixtures import BOOT, UID, VaultFixture
+        from test_oauth import authorization_params, configuration
+
+        from app.native_transport import SCOPE, NativeTransportService
+        from app.store import SQLiteHubStore
+        from app.vaults import VaultService
+
+        origin = configuration().issuer
+        headers = {"Origin": origin, "X-FolioView-Contract": CONTRACT_VERSION}
+        payload = {"contractVersion": CONTRACT_VERSION}
+        flag = "HUB_NATIVE_SCOPED_CONSENT_COOKIES_ENABLED"
+        with TemporaryDirectory() as scratch, TestClient(self.app, base_url=origin) as client:
+            store = SQLiteHubStore(Path(scratch) / "consent.sqlite3")
+            fixture = VaultFixture()
+            VaultService(store, clock=lambda: 1000).bootstrap(UID, fixture.bootstrap(), BOOT)
+            native = NativeTransportService(store, configuration(), clock=lambda: 1000)
+            self.app.dependency_overrides[require_owner] = lambda: SimpleNamespace(uid=UID)
+            self.app.dependency_overrides[get_native_transport] = lambda: native
+            params = authorization_params(scope=SCOPE, resource=native.config.resource)
+            windows = []
+            for enabled in ("0", "1", "1"):
+                with patch.dict(os.environ, {flag: enabled}):
+                    response = client.get(
+                        "/oauth/persistent/authorize", params=params, follow_redirects=False
+                    )
+                self.assertEqual(response.status_code, 303)
+                ident = response.headers["location"].split("?request=")[1]
+                path = COOKIE_PATH + "/" + ident
+                cookie = next(iter(response.cookies.jar))
+                self.assertEqual(cookie.name, SCOPED_COOKIE if enabled == "1" else COOKIE)
+                self.assertEqual(cookie.path, path if enabled == "1" else COOKIE_PATH)
+                windows.append(path)
+            # The browser's unmodified cookie jar picks the right secret for each path,
+            # including during a rollback to legacy issuance with the compatible reader.
+            with patch.dict(os.environ, {flag: "0"}):
+                for path in [windows[1], windows[0], windows[2]]:
+                    pending = client.post(path + "/pending", json=payload, headers=headers)
+                    self.assertEqual(pending.status_code, 200)
+                    approved = client.post(
+                        path + "/approvals",
+                        json={**payload, "vaultId": fixture.vault},
+                        headers=headers,
+                    )
+                    self.assertEqual(approved.status_code, 200)
 
     def test_authorize_sets_only_dedicated_secure_cookie_and_fixed_consent_target(self):
         self.install()
@@ -150,6 +200,8 @@ class NativeTransportRoutes(unittest.TestCase):
     def test_missing_foreign_duplicate_cookies_or_origins_cannot_approve(self):
         self.install()
         variants = [
+            {**self.headers, "Cookie": f"{SCOPED_COOKIE}={BROWSER}; {SCOPED_COOKIE}={BROWSER}"},
+            {**self.headers, "Cookie": f"{SCOPED_COOKIE}=short; {COOKIE}={BROWSER}"},
             {k: v for k, v in self.headers.items() if k != "Cookie"},
             {**self.headers, "Origin": "https://other.example"},
             {**self.headers, "Cookie": COOKIE + "=" + BROWSER + "; " + COOKIE + "=" + BROWSER},

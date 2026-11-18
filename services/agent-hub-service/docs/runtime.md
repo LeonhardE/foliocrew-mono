@@ -22,6 +22,12 @@ errors before the SDK handles the request; disconnect and external cancellation 
 without forwarding partial content. This body deadline does not shorten SDK processing
 or replace its original token, Owner, origin and permission checks.
 
+Multiple account-link windows can use separate browser bindings. After all serving Hub revisions
+can read both cookie formats, set `HUB_NATIVE_SCOPED_CONSENT_COOKIES_ENABLED=1` to issue each
+cookie for that request’s pending and approval paths. Turning off the flag restores issuance of
+the legacy cookie while existing scoped windows can finish. Keep the compatible reader until
+30 minutes after the last scoped cookie was issued before reverting to an older binary.
+
 ## First pairing
 
 Only explicit user connection or reauthorization creates a ten-minute setup. The
