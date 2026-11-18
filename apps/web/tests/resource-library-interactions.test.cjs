@@ -173,14 +173,16 @@ test("actual ResourceLibrary category selection drives real hook demand without 
     h.close();
   }
 });
-test("real category tabs reveal operative watchlist and follows, with shared-owner list identity", async () => {
+test("real category tabs reveal operative watchlist and follows, with shared-owner list identity and one reconnect read", async () => {
   const h = hooks(),
     edits = [],
     shared = {
       sessionKey: "A",
       items: stocks().items,
       loading: false,
+      loaded: true,
       busy: false,
+      reload: () => edits.push(["reload"]),
       limit: 50,
       add: (v) => edits.push(["add", v]),
       remove: (v) => edits.push(["remove", v]),
@@ -200,10 +202,14 @@ test("real category tabs reveal operative watchlist and follows, with shared-own
     owner: "A",
     authenticated: true,
     configured: true,
+    offline: false,
+    canRefresh: true,
     catalogue: loaded(catalogue()),
     watchlist: loaded(stocks("WRONG")),
     follows: loaded(channels()),
-    reload() {},
+    reload(source) {
+      assert.notEqual(source, "watchlist", "Must not fetch a second copy of the shared watchlist");
+    },
   };
   const render = () =>
     h.render(() => ResourceLibraryView({ model, watchlist: shared, children: "HOLDINGS" }));
@@ -227,6 +233,29 @@ test("real category tabs reveal operative watchlist and follows, with shared-own
   const pendingRows = watchlistRows();
   assert.equal(button(pendingRows, "remove").props.disabled, true);
   assert.equal(all(pendingRows, (n) => n.type === "strong")[0].props.children, "SYNTH");
+  shared.busy = false;
+  model.offline = true;
+  model.canRefresh = false;
+  tree = render();
+  assert.equal(button(tree, "remove").props.disabled, true);
+  assert.equal(button(tree, "retry").props.disabled, true);
+  assert.ok(all(tree, (n) => n.type === "strong" && n.props.children === "SYNTH").length);
+  button(tree, "kinds.holdings").props.onClick();
+  model.offline = false;
+  model.canRefresh = true;
+  tree = render();
+  assert.equal(edits.filter(([op]) => op === "reload").length, 0);
+  button(tree, "kinds.watchlist").props.onClick();
+  render();
+  render();
+  assert.equal(edits.filter(([op]) => op === "reload").length, 1);
+  shared.error = "unavailable";
+  tree = render();
+  assert.equal(button(tree, "remove").props.disabled, true);
+  button(tree, "retry").props.onClick();
+  assert.equal(edits.filter(([op]) => op === "reload").length, 2);
+  shared.error = "";
+  assert.equal(Boolean(button(render(), "remove").props.disabled), false);
   shared.sessionKey = "B";
   assert.equal(all(render(), (n) => n.props?.children === "SYNTH").length, 0);
   h.close();
