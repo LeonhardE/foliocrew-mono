@@ -4,7 +4,11 @@ import argparse
 import hashlib
 import json
 import re
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
+from deployment_profile import ProfileError, browser_origin_aliases  # noqa: E402
 
 FLAGS = ("provider_connection_slots_enabled", "task_center_enabled")
 FIELDS = {
@@ -16,6 +20,7 @@ FIELDS = {
     "agent_owned_allowed_owner_subjects",
     "agent_owned_mode_enabled",
     "agent_clients",
+    "browser_origin_aliases",
     *FLAGS,
 }
 DEPLOYMENT = {
@@ -128,6 +133,19 @@ def validate_full_input(value):
     fields(sources, SOURCES)
     for key in SOURCES - {"trusted_portfolio_callers"}:
         require(sources.get(key) is None or type(sources[key]) is str, "invalid_sources")
+    aliases = value.get("browser_origin_aliases", [])
+    require(type(aliases) is list, "invalid_browser_origins")
+    if aliases:
+        reserved = {
+            deployment["web_origin"],
+            deployment["hub_origin"],
+            sources.get("user_origin"),
+            sources.get("portfolio_origin"),
+        }
+        try:
+            browser_origin_aliases(aliases, reserved)
+        except ProfileError:
+            raise InputError("invalid_browser_origins") from None
     trusted = sources.get("trusted_portfolio_callers", {})
     trusted = {} if trusted is None else trusted
     require(

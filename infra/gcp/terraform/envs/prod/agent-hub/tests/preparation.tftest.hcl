@@ -206,6 +206,7 @@ run "personal_mode_is_closed_and_scale_to_zero_by_default" {
 run "explicit_personal_mode_uses_existing_hub_and_preregistered_providers" {
   command = plan
   variables {
+    browser_origin_aliases             = ["https://alpha-workspace.example.invalid"]
     agent_owned_mode_enabled           = true
     agent_owned_allowed_owner_subjects = [sha256("synthetic-owner")]
     connector                          = { oauth_enabled = true, muse_clients = [{ client_id = "synthetic-muse", redirect_uris = ["https://agent.example.invalid/callback"] }] }
@@ -218,6 +219,9 @@ run "explicit_personal_mode_uses_existing_hub_and_preregistered_providers" {
       output.creation_configuration.environment.HUB_TASK_CENTER_ENABLED == "0" &&
       output.creation_configuration.environment.HUB_AGENT_OWNED_ALLOWED_OWNER_SUBJECTS_JSON == jsonencode(var.agent_owned_allowed_owner_subjects) &&
       output.creation_configuration.environment.HUB_AGENT_OWNER_URL == "https://web.example.invalid/agents" &&
+      output.creation_configuration.environment.CORS_ORIGINS == "https://web.example.invalid,https://alpha-workspace.example.invalid" &&
+      output.creation_configuration.environment.HUB_OAUTH_ISSUER == var.deployment.hub_origin &&
+      output.creation_configuration.environment.HUB_SERVICE_AUDIENCE == var.deployment.hub_origin &&
       length([for name in keys(output.creation_configuration.environment) : name if startswith(name, "HUB_PERSISTENT_")]) == 6 &&
       alltrue([for name, value in output.creation_configuration.environment : value == "1" if startswith(name, "HUB_PERSISTENT_")]) &&
       jsondecode(output.creation_configuration.environment.HUB_OAUTH_CLIENTS_JSON)[1].provider == "chatgpt" &&
@@ -317,6 +321,7 @@ run "reject_both_new_gates_without_personal_mode" {
 run "explicit_task_gates_change_only_two_existing_environment_entries" {
   command = plan
   variables {
+    browser_origin_aliases             = ["https://alpha-workspace.example.invalid"]
     agent_owned_mode_enabled           = true
     agent_owned_allowed_owner_subjects = [sha256("synthetic-owner")]
     connector                          = { oauth_enabled = true, muse_clients = [{ client_id = "synthetic-muse", redirect_uris = ["https://agent.example.invalid/callback"] }] }
@@ -359,4 +364,12 @@ run "reject_task_center_without_explicit_slots_in_valid_personal_mode" {
     task_center_enabled                = true
   }
   expect_failures = [var.task_center_enabled]
+}
+
+run "reject_the_protocol_origin_as_an_owner_alias" {
+  command = plan
+  variables {
+    browser_origin_aliases = ["https://hub.example.invalid"]
+  }
+  expect_failures = [var.browser_origin_aliases]
 }

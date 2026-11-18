@@ -77,6 +77,26 @@ def compare(before, after, **options):
 
 
 class HubOperatorInputTests(unittest.TestCase):
+    def test_owner_browser_admission_is_exact_and_separate_from_the_rollout_flags(self):
+        baseline = fixture()
+        candidate = {**baseline, "browser_origin_aliases": ["https://alpha.example.invalid"]}
+        hub.validate_full_input(candidate)
+        for rejected in (
+            ["https://*.example.invalid"],
+            ["https://hub.example.invalid"],
+            ["https://user.example.invalid"],
+            ["https://alpha.example.invalid", "https://alpha.example.invalid"],
+        ):
+            with (
+                self.subTest(rejected=rejected),
+                self.assertRaisesRegex(hub.InputError, "invalid_browser_origins"),
+            ):
+                hub.validate_full_input({**candidate, "browser_origin_aliases": rejected})
+        before = json.dumps(baseline).encode()
+        after = json.dumps(candidate).encode()
+        with self.assertRaisesRegex(hub.InputError, "protected_inputs_changed"):
+            hub.compare_rollout_inputs(before, after, hashlib.sha256(before).hexdigest())
+
     def test_complete_supported_input_changes_only_flags_and_reports_no_private_values(self):
         before = fixture()
         after = {**before, **dict.fromkeys(hub.FLAGS, True)}
