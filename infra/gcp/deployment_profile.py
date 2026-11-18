@@ -457,6 +457,8 @@ def validate_target(value):
         require(type(value) is dict)
         target = value.get("target")
         require(type(target) is str and target in TARGET_SERVICES)
+        has_workspace_edge = "workspaceEdge" in value
+        require(not has_workspace_edge or target == "web")
         has_web_owner = "webOwner" in value
         require(not has_web_owner or target == "web")
         has_portfolio_trust = "portfolioHubTrust" in value
@@ -472,6 +474,7 @@ def validate_target(value):
             | ({"userHubTrust"} if has_user_trust else set())
             | ({"portfolioHubTrust"} if has_portfolio_trust else set())
             | ({"webOwner"} if has_web_owner else set())
+            | ({"workspaceEdge"} if has_workspace_edge else set())
             | ({"browserOrigins"} if has_browser_origins else set()),
         )
         require(type(value["schemaVersion"]) is int and value["schemaVersion"] == 1)
@@ -534,6 +537,13 @@ def validate_target(value):
             reserved.update((inputs["web_origin"], inputs.get("market_origin")))
             addresses = value["browserOrigins"]
             require(addresses == browser_origin_aliases(addresses, reserved))
+        if has_workspace_edge:
+            edge = value["workspaceEdge"]
+            fields(edge, {"browserOrigin", "publicKey"})
+            browser_origin_aliases([edge["browserOrigin"]], run_service_origins(number, region))
+            labels = urlsplit(edge["browserOrigin"]).hostname.split(".")
+            require(len(edge["browserOrigin"]) <= 261 and labels[-1][0].isalpha())
+            matches(re.compile(r"[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]\Z"), edge["publicKey"])
         if target == "web":
             build = value["build"]
             fields(build, WEB_BUILD_FIELDS)
@@ -585,7 +595,11 @@ def validate_target(value):
         if has_web_owner:
             owner = value["webOwner"]
             fields(owner, {"server", "public"})
-            base = {name: item for name, item in value.items() if name != "webOwner"}
+            base = {
+                name: item
+                for name, item in value.items()
+                if name not in {"webOwner", "workspaceEdge"}
+            }
             server = owner["server"]
             parse_web_owner_server(canonical(server), instance=base, expected_sha256=digest(server))
             parse_web_owner_public(
@@ -639,7 +653,19 @@ def terraform_inputs(instance):
         result["owner_environment"] = dict(value["webOwner"]["server"]["environment"])
     if "browserOrigins" in value:
         result["browser_origin_aliases"] = list(value["browserOrigins"])
+    if "workspaceEdge" in value:
+        result["workspace_edge"] = {
+            "browser_origin": value["workspaceEdge"]["browserOrigin"],
+            "public_key": value["workspaceEdge"]["publicKey"],
+        }
     return result
+
+
+def add_workspace_edge(instance, edge, *, expected_sha256):
+    """Extend a reviewed Web target document with its explicit edge settings."""
+    instance = parse_target(canonical(instance))
+    require(instance["target"] == "web" and digest(instance) == expected_sha256)
+    return parse_target(canonical({**instance, "workspaceEdge": edge}))
 
 
 def compile_target(profile, target):
