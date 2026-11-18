@@ -170,6 +170,24 @@ These state attributes contain no private identifiers and do not change data loa
 and the resource page do not claim an aggregate ready state; their child reads require independent
 inspection.
 
+### Browser timing for the workspace
+
+The browser emits a W3C User Timing measure named `foliocrew.workspace.journey` for opening
+Market, the Task Center list, or Agent management. Its duration runs from document navigation
+or the workspace navigation action to a paint opportunity with the corresponding content ready.
+Market requires a visible real index quote. Task Center and Agent management use the current
+visible panel's readiness state. A confirmed empty list is a successful read.
+
+The measure's detail contains three fixed fields: `journey`, `entry`, and `outcome`. Outcomes
+are `ready`, `error`, `timeout`, `access_required`, and `interrupted`. An eligible foreground
+attempt times out after 15 seconds. A completed access prompt begins a new `after_unlock` interval
+when the protected view becomes available. A different page or a background tab interrupts an
+unfinished attempt. Task/report links and Agent consent handoffs belong to separate operations.
+
+The most recent measure is available in the browser performance timeline. A `PerformanceObserver`
+can consume each completion while the page is open. Collection is local to the browser and works
+without a monitoring account. The event carries only the operation, entry type, result, and timing.
+
 ## Resource library
 
 Resources presents holdings, the existing Market watchlist, and a manually maintained YouTube

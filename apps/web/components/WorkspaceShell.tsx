@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { workspaceHref, workspaceView } from "@/lib/workspace-routes";
 import { useLocale, useTranslations } from "next-intl";
 import { usePreferences } from "@/components/PreferencesProvider";
+import { useAuth, type OwnerConfigStatus } from "./AuthProvider";
 import {
   SettingsPanel,
   ResourcesPanel,
@@ -15,7 +16,8 @@ import {
 import { usePersistentWorkspace } from "./usePersistentWorkspace";
 import { useAgentLinkConfiguration } from "./useAgentLinkConfiguration";
 import type { TaskRequest } from "@/components/TasksPanel";
-import { useHoldingsWorkspace } from "@/components/useHoldingsWorkspace";
+import { useHoldingsWorkspace, type HoldingsWorkspace } from "@/components/useHoldingsWorkspace";
+import { useWorkspaceJourney } from "./useWorkspaceJourney";
 import { localizeMessage } from "@/lib/ui-messages";
 import { InstrumentMetrics } from "@/components/InstrumentMetrics";
 import FxRatesPanel from "@/components/FxRatesPanel";
@@ -45,6 +47,16 @@ function changeClass(value: number | null | undefined) {
   return value == null || !Number.isFinite(value) ? "" : value >= 0 ? "positive" : "negative";
 }
 
+function journeyAccess(workspace: HoldingsWorkspace, config: OwnerConfigStatus) {
+  if (workspace.authStatus === "error" || workspace.authStatus === "unavailable") return "error";
+  if (workspace.authStatus === "loading" || workspace.authStatus === "verifying") return "checking";
+  if (!workspace.authenticated) return "blocked";
+  if (!workspace.vaultConfigured) return config === "loading" ? "checking" : "error";
+  if (workspace.phase === "checking") return workspace.error ? "error" : "checking";
+  if (workspace.phase === "unlocked" && !workspace.needsDeviceApproval) return "available";
+  return workspace.busy === "loading" ? "checking" : "blocked";
+}
+
 function SearchIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -71,6 +83,7 @@ export default function WorkspaceShell() {
   visited.current.add(activeView);
   const marketsVisited = visited.current.has("markets");
   const encryptedWorkspace = useHoldingsWorkspace();
+  const { ownerConfigStatus } = useAuth();
   const agentScope = JSON.stringify([
     encryptedWorkspace.owner,
     encryptedWorkspace.vault?.vaultId,
@@ -148,14 +161,6 @@ export default function WorkspaceShell() {
       if (frame !== undefined) window.cancelAnimationFrame?.(frame);
     };
   }, [activeView]);
-  const navigate = (view: WorkspaceView) => {
-    scrollPositions.current[activeView] = window.scrollY ?? 0;
-    if (view !== "inbox") clearInboxResultLink();
-    // All workspace views already live in this layout. A server transition can
-    // reload an older client after deployment and destroy its in-memory keys.
-    // Next's native-history integration updates usePathname without that fetch.
-    window.history.pushState(null, "", workspaceHref(view));
-  };
   const [taskRequest, setTaskRequest] = useState<TaskRequest | null>(null);
   const taskRequestSerial = useRef(0);
   useEffect(() => setTaskRequest(null), [encryptedWorkspace.owner]);
@@ -214,8 +219,32 @@ export default function WorkspaceShell() {
   const selectedQuote = watchlistQuotes.quotes[selected.symbol];
   const stocks = DEFAULT_INSTRUMENTS.map((instrument) => {
     const quote = watchlistQuotes.quotes[instrument.symbol];
-    return { ...instrument, ...quote };
+    const realIndexPrice =
+      instrument.instrumentType === "index" &&
+      !overview.data?.isMock &&
+      quote?.adjustment === "split_and_dividend_adjusted" &&
+      Number.isFinite(quote.latestClose);
+    return { ...instrument, ...quote, realIndexPrice };
   });
+  const markNavigation = useWorkspaceJourney({
+    view: activeView,
+    access: journeyAccess(encryptedWorkspace, ownerConfigStatus),
+    owner: encryptedWorkspace.owner,
+    marketState: stocks.some((stock) => stock.realIndexPrice)
+      ? "ready"
+      : overview.error
+        ? "error"
+        : "loading",
+  });
+  const navigate = (view: WorkspaceView, intent: "page" | "handoff" = "page") => {
+    markNavigation(intent === "page" ? view : null);
+    scrollPositions.current[activeView] = window.scrollY ?? 0;
+    if (view !== "inbox") clearInboxResultLink();
+    // All workspace views already live in this layout. A server transition can
+    // reload an older client after deployment and destroy its in-memory keys.
+    // Next's native-history integration updates usePathname without that fetch.
+    window.history.pushState(null, "", workspaceHref(view));
+  };
   const interval = marketData?.interval ?? (range === "1d" ? "5m" : range === "1w" ? "30m" : "1d");
 
   function refreshMarket() {
@@ -459,12 +488,12 @@ export default function WorkspaceShell() {
                   binding,
                   nonce: ++taskRequestSerial.current,
                 });
-                navigate("tasks");
+                navigate("tasks", "handoff");
               }}
               workspace={encryptedWorkspace}
               onOpenWatchlist={() => {
                 setPickerTab("watchlist");
-                navigate("markets");
+                navigate("markets", "handoff");
               }}
             />
           )}
@@ -474,7 +503,9 @@ export default function WorkspaceShell() {
             <TasksPanel
               persistent={persistent}
               onAgentConnectionsNeeded={requestTaskAgents}
-              onNavigate={navigate}
+              onNavigate={(view: "agents" | "inbox") =>
+                navigate(view, view === "inbox" ? "handoff" : "page")
+              }
               workspace={encryptedWorkspace}
               active={activeView === "tasks"}
               request={taskRequest?.owner === encryptedWorkspace.owner ? taskRequest : null}
@@ -511,7 +542,9 @@ export default function WorkspaceShell() {
                         ? t("market.ixic")
                         : t("market.dji")}
                   </span>
-                  <strong>{formatPrice(stock.latestClose, stock, locale)}</strong>
+                  <strong data-journey-quote={stock.realIndexPrice ? true : undefined}>
+                    {formatPrice(stock.latestClose, stock, locale)}
+                  </strong>
                   <span className={changeClass(stock.changePercent)}>
                     {formatChange(stock.changePercent, locale)}
                   </span>

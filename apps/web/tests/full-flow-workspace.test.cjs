@@ -393,6 +393,8 @@ function flow({ hash = "", search = "", owner = "A:1", locked = false, hidden = 
           throw new Error("Workspace routes must not request a new server build");
         },
       },
+      "./AuthProvider": { useAuth: () => ({ ownerConfigStatus: "ready" }) },
+      "./useWorkspaceJourney": { useWorkspaceJourney: () => () => {} },
       "@/lib/workspace-routes": compile("../lib/workspace-routes.ts"),
       "react/jsx-runtime": { jsx, jsxs: jsx },
       "next-intl": { useLocale: () => "en", useTranslations: () => (key) => key },
