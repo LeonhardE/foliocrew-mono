@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.market_cache import (
+    UPSTREAM_UNITS_PER_MINUTE,
     BoundedTransaction,
     CacheUnavailable,
     FirestoreMarketCache,
@@ -186,7 +187,14 @@ class CacheTests(unittest.TestCase):
 
     def test_rate_window_is_global_and_cache_rejects_nonfinite_json(self):
         state = {}
-        self.assertIsNone(reserve(state, NOW, 20, 200))
+        # A normal cold overview, chart, metrics, stock search, two holding quotes,
+        # FX and holdings search share a minute across all service instances.
+        costs = [len(DEFAULT_INSTRUMENTS), 1, 5, 1, 2, 2, 1, 9]
+        for cost in costs:
+            self.assertIsNone(reserve(state, NOW, cost, 200))
+        remaining = UPSTREAM_UNITS_PER_MINUTE - sum(costs)
+        if remaining:
+            self.assertIsNone(reserve(state, NOW, remaining, 200))
         self.assertIsNotNone(reserve(state, NOW, 1, 200))
         self.assertIsNone(reserve(state, NOW + 61, 1, 200))
         with self.assertRaises(ValueError):
