@@ -744,7 +744,7 @@ export default function WorkspaceShell() {
         {activeView === "markets" && (
           <footer className="workspace-footer">
             <span>
-              <strong>FolioView</strong> {t("nav.tagline")}
+              <strong>Foliocrew</strong> {t("nav.tagline")}
             </span>
             <span>{t("nav.footer")}</span>
           </footer>

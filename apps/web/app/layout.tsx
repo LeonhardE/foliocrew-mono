@@ -6,7 +6,7 @@ import { THEME_BOOTSTRAP_SCRIPT } from "@/lib/theme-bootstrap";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "FolioView — Your investing workspace",
+  title: "Foliocrew — Your investing workspace",
   description:
     "Follow the US market, explore stock charts, and keep your personal watchlist in one investing workspace.",
 };

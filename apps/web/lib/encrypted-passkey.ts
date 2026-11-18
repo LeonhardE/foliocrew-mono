@@ -206,11 +206,11 @@ async function createPasskey(
     active(options.signal);
     const publicKey: PublicKeyCredentialCreationOptions & { hints: string[] } = {
       challenge: crypto.getRandomValues(new Uint8Array(32)),
-      rp: { name: "FolioView" },
+      rp: { name: "Foliocrew" },
       user: {
         id: userId,
-        name: "FolioView account",
-        displayName: "FolioView encrypted resources",
+        name: "Foliocrew account",
+        displayName: "Foliocrew encrypted resources",
       },
       pubKeyCredParams: [{ type: "public-key", alg: -7 }],
       authenticatorSelection: {

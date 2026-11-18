@@ -1,7 +1,7 @@
 {
   "nav": {
     "skip": "跳到圖表",
-    "home": "FolioView 首頁",
+    "home": "Foliocrew 首頁",
     "primary": "工作台導航",
     "markets": "行情",
     "settings": "設定",
@@ -157,7 +157,7 @@
   "settings": {
     "eyebrow": "你的工作台",
     "title": "設定",
-    "description": "讓 FolioView 更符合你的使用習慣。",
+    "description": "讓 Foliocrew 更符合你的使用習慣。",
     "accountNote": "修改會自動儲存到帳戶，並在不同裝置間同步。",
     "guestNote": "登入後可跨裝置儲存設定。",
     "appearance": "外觀",
@@ -1377,7 +1377,7 @@
     "reportReceived": "已收到報告",
     "runReceived": "已收到執行請求",
     "notObserved": "尚未收到執行回執",
-    "planEvidenceHelp": "計劃狀態由 Muse 提供。最近執行以 FolioView 收到的回執為準。",
+    "planEvidenceHelp": "計劃狀態由 Muse 提供。最近執行以 Foliocrew 收到的回執為準。",
     "openInbox": "檢視收件箱",
     "linkedAt": "連線時間",
     "connectionId": "連線標識",
@@ -1445,7 +1445,7 @@
     "confirm": "授權並連線",
     "cancel": "取消",
     "connect": "連線 {provider}",
-    "reconnectHelp": "請在 {provider} 中重新連線 FolioView，再開啟它提供的授權連結。首次新增時可使用下方連線地址。",
+    "reconnectHelp": "請在 {provider} 中重新連線 Foliocrew，再開啟它提供的授權連結。首次新增時可使用下方連線地址。",
     "copyAddress": "複製連線地址",
     "copied": "已複製",
     "close": "關閉",

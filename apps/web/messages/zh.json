@@ -1,7 +1,7 @@
 {
   "nav": {
     "skip": "跳到图表",
-    "home": "FolioView 首页",
+    "home": "Foliocrew 首页",
     "primary": "工作台导航",
     "markets": "行情",
     "settings": "设置",
@@ -157,7 +157,7 @@
   "settings": {
     "eyebrow": "你的工作台",
     "title": "设置",
-    "description": "让 FolioView 更符合你的使用习惯。",
+    "description": "让 Foliocrew 更符合你的使用习惯。",
     "accountNote": "修改会自动保存到账户，并在不同设备间同步。",
     "guestNote": "登录后可跨设备保存设置。",
     "appearance": "外观",
@@ -1377,7 +1377,7 @@
     "reportReceived": "已收到报告",
     "runReceived": "已收到运行请求",
     "notObserved": "尚未收到运行回执",
-    "planEvidenceHelp": "计划状态由 Muse 提供。最近运行以 FolioView 收到的回执为准。",
+    "planEvidenceHelp": "计划状态由 Muse 提供。最近运行以 Foliocrew 收到的回执为准。",
     "openInbox": "查看收件箱",
     "linkedAt": "连接时间",
     "connectionId": "连接标识",
@@ -1445,7 +1445,7 @@
     "confirm": "授权并连接",
     "cancel": "取消",
     "connect": "连接 {provider}",
-    "reconnectHelp": "请在 {provider} 中重新连接 FolioView，再打开它提供的授权链接。首次添加时可使用下方连接地址。",
+    "reconnectHelp": "请在 {provider} 中重新连接 Foliocrew，再打开它提供的授权链接。首次添加时可使用下方连接地址。",
     "copyAddress": "复制连接地址",
     "copied": "已复制",
     "close": "关闭",
