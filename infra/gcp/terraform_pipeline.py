@@ -60,6 +60,11 @@ def command(arguments, directory, allowed=(0,)):
             cwd=directory,
             env={
                 **{key: value for key, value in os.environ.items() if not key.startswith("TF_")},
+                # The builder starts this runner using its bundled Python by absolute path.
+                # Terraform provisioners also need to find that interpreter on PATH.
+                "PATH": os.pathsep.join(
+                    (str(Path(sys.executable).parent), os.environ.get("PATH") or os.defpath)
+                ),
                 "TF_IN_AUTOMATION": "1",
                 "TF_INPUT": "0",
                 "TF_CLI_CONFIG_FILE": os.devnull,
