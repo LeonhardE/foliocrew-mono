@@ -10,6 +10,7 @@ from folioview_shared.http import PrivateResponseHeaders, create_app
 from .cost_controls import MarketCostRoute
 from .instrument_search import router as instrument_search_router
 from .market_data import MarketService, get_market_service
+from .search_access import install_search_access
 from .stock_metrics import router as stock_metrics_router
 from .valuation_fx import router as valuation_fx_router
 from .valuation_quotes import router as valuation_quotes_router
@@ -21,6 +22,7 @@ app = create_app(
 )
 app.router.route_class = MarketCostRoute
 app.add_middleware(PrivateResponseHeaders, prefixes=("/api/valuation/",))
+install_search_access(app)
 app.include_router(stock_metrics_router)
 app.include_router(valuation_fx_router)
 app.include_router(valuation_quotes_router)
