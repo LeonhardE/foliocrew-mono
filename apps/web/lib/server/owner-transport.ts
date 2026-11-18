@@ -1,6 +1,6 @@
 import "server-only";
 
-import { randomUUID } from "node:crypto";
+import { createPublicKey, randomUUID, verify } from "node:crypto";
 import { createRemoteJWKSet, customFetch, jwtVerify } from "jose";
 
 export const CONTRACT = "folioview.agent-workspace.v2.0";
@@ -47,7 +47,63 @@ export const fail = (code = "malformed_request"): never => {
   throw new Failure(code);
 };
 
-export function requireSameOrigin(request: Request, url: URL) {
+const EDGE_PROOF_HEADER = "x-foliocrew-edge-proof";
+const EDGE_PROOF_VERSION = "foliocrew.edge-origin.v1";
+const EDGE_PROOF_MAX_AGE_SECONDS = 30;
+type EdgeOriginVerifier = (request: Request, url: URL, host: string, origin: string) => boolean;
+
+export function createEdgeOriginVerifier(
+  env: NodeJS.ProcessEnv,
+  now: () => number,
+): EdgeOriginVerifier | undefined {
+  const alias = env.FOLIOCREW_EDGE_BROWSER_ORIGIN ?? "";
+  const encodedKey = env.FOLIOCREW_EDGE_PUBLIC_KEY ?? "";
+  if (
+    !/^https:\/\/[a-z0-9][a-z0-9.-]+[a-z0-9]$/.test(alias) ||
+    !/^[A-Za-z0-9_-]{43}$/.test(encodedKey)
+  )
+    return undefined;
+
+  const key = Buffer.from(encodedKey, "base64url");
+  if (key.length !== 32 || key.toString("base64url") !== encodedKey) return undefined;
+
+  let publicKey;
+  try {
+    if (new URL(alias).origin !== alias) return undefined;
+    publicKey = createPublicKey({
+      key: { kty: "OKP", crv: "Ed25519", x: encodedKey },
+      format: "jwk",
+    });
+  } catch {
+    return undefined;
+  }
+  return (request, url, host, origin) => {
+    if (origin !== alias || url.protocol !== "https:") return false;
+    const proof = /^([1-9][0-9]{9})\.([A-Za-z0-9_-]{86})$/.exec(
+      request.headers.get(EDGE_PROOF_HEADER) ?? "",
+    );
+    if (!proof) return false;
+    const [, timestamp, encodedSignature] = proof;
+    if (Math.abs(Math.floor(now() / 1000) - Number(timestamp)) > EDGE_PROOF_MAX_AGE_SECONDS)
+      return false;
+    const signature = Buffer.from(encodedSignature, "base64url");
+    if (signature.length !== 64 || signature.toString("base64url") !== encodedSignature)
+      return false;
+    const payload = Buffer.from(
+      JSON.stringify([
+        EDGE_PROOF_VERSION,
+        timestamp,
+        host,
+        origin,
+        request.method,
+        url.pathname + url.search,
+      ]),
+    );
+    return verify(null, payload, publicKey, signature);
+  };
+}
+
+export function requireSameOrigin(request: Request, url: URL, edgeOrigin?: EdgeOriginVerifier) {
   if (request.headers.get("sec-fetch-site") === "cross-site") fail("insufficient_scope");
   const origin = request.headers.get("origin");
   if (origin === null) return;
@@ -63,7 +119,7 @@ export function requireSameOrigin(request: Request, url: URL) {
   } catch {
     return fail("insufficient_scope");
   }
-  if (origin !== expected) fail("insufficient_scope");
+  if (origin !== expected && !edgeOrigin?.(request, url, host, origin)) fail("insufficient_scope");
 }
 
 export const record = (v: unknown): v is Json =>

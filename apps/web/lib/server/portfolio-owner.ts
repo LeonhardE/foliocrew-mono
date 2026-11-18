@@ -13,6 +13,7 @@ import {
   Failure,
   fail,
   requireSameOrigin,
+  createEdgeOriginVerifier,
   record,
   fields,
   integer,
@@ -54,12 +55,15 @@ export function portfolioConfiguration(env: NodeJS.ProcessEnv): Config | null {
   return { project, origin, audience: origin };
 }
 
-function ruleFor(request: Request): { path: string; rule: Rule } {
+function ruleFor(
+  request: Request,
+  edgeOrigin: ReturnType<typeof createEdgeOriginVerifier>,
+): { path: string; rule: Rule } {
   // Inspect the original string too: URL parsers normalize literal and escaped dot segments.
   const url = new URL(request.url);
   if (url.search || request.url.includes("?")) fail("unsupported_query");
   if (/[\\%#]/.test(request.url)) fail();
-  requireSameOrigin(request, url);
+  requireSameOrigin(request, url, edgeOrigin);
   if (!url.pathname.startsWith(PREFIX + "/")) fail();
   const path = url.pathname.slice(PREFIX.length);
   if (
@@ -235,6 +239,7 @@ export function createPortfolioProxy(options: Options = {}) {
   const env = options.env ?? process.env;
   const send = options.fetch ?? fetch;
   const now = options.now ?? Date.now;
+  const edgeOrigin = createEdgeOriginVerifier(env, now);
   const verifyOwner = createFirebaseVerifier(send, now);
   let serviceToken: { audience: string; token: string; until: number } | undefined;
   let tokenFlight: { audience: string; promise: Promise<string> } | undefined;
@@ -295,7 +300,7 @@ export function createPortfolioProxy(options: Options = {}) {
     try {
       const config = portfolioConfiguration(env);
       if (!config) fail("authorization_unavailable");
-      const { path, rule } = ruleFor(request);
+      const { path, rule } = ruleFor(request, edgeOrigin);
       const { headers, raw, token, viewExpected } = await transport(request, rule, signal);
       const uid = await verifyOwner(token, config!.project, signal);
       headers.set("X-Serverless-Authorization", `Bearer ${await until(identity(config!), signal)}`);

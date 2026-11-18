@@ -28,6 +28,7 @@ import {
   Failure,
   fail,
   requireSameOrigin,
+  createEdgeOriginVerifier,
   fields,
   integer,
   errorResponse,
@@ -202,11 +203,14 @@ function decimal(value: string, maximum: number) {
   );
 }
 
-function route(request: Request): { path: string; rule: Rule } {
+function route(
+  request: Request,
+  edgeOrigin: ReturnType<typeof createEdgeOriginVerifier>,
+): { path: string; rule: Rule } {
   const url = new URL(request.url);
   // Query values can be encoded; encoded PATH separators/segments cannot select a route.
   if (/[\\%#]/.test(request.url.split("?", 1)[0]) || url.hash) fail();
-  requireSameOrigin(request, url);
+  requireSameOrigin(request, url, edgeOrigin);
   if (!url.pathname.startsWith(PREFIX + "/")) fail();
   const path = url.pathname.slice(PREFIX.length);
   const get = request.method === "GET";
@@ -618,6 +622,7 @@ export function createHubProxy(options: Options = {}) {
   const env = options.env ?? process.env,
     send = options.fetch ?? fetch,
     now = options.now ?? Date.now;
+  const edgeOrigin = createEdgeOriginVerifier(env, now);
   const verifyOwner = createFirebaseVerifier(send, now);
   return async function hubProxy(request: Request): Promise<Response> {
     const started = proxyClock();
@@ -627,7 +632,7 @@ export function createHubProxy(options: Options = {}) {
     try {
       const config = hubConfiguration(env);
       if (!config) fail("authorization_unavailable");
-      const { path, rule } = route(request);
+      const { path, rule } = route(request, edgeOrigin);
       const { headers, raw, token, taskIds, displayRequest } = await transport(
         request,
         rule,

@@ -66,6 +66,17 @@ ports, opaque origins and malformed/multiple Host values are rejected before ide
 Hostless direct Request callers retain the URL-origin check; absent Origin remains permitted
 for authenticated non-browser clients.
 
+A trusted HTTPS edge can admit a single additional browser origin with the server runtime
+settings `FOLIOCREW_EDGE_BROWSER_ORIGIN` and `FOLIOCREW_EDGE_PUBLIC_KEY` (the base64url-encoded
+32-byte Ed25519 public key). Keep the signing key in the controlled edge runtime. The edge
+replaces any incoming `X-Foliocrew-Edge-Proof` and signs a UTF-8 JSON array containing
+`"foliocrew.edge-origin.v1"`, the Unix timestamp in seconds as a string, the exact upstream
+HTTP Host, the browser Origin, the HTTP method and the upstream pathname plus query.
+Send the timestamp and unpadded base64url signature separated by a period. The app accepts
+the configured origin only with a valid proof within 30 seconds of its clock. Cross-site
+requests remain rejected and both Firebase and workload authentication still apply. The app
+forwards only its established upstream headers and sends private responses with `no-store`.
+
 Hub forwarding covers owner vault enrollment/registry/source controls and authority tokens,
 resource catalogue, encrypted tasks and versions/transitions, Inbox lists/counts/details/history/
 proofs/state, connection listing/revocation and preparation intent/staging/commit. Only the named
