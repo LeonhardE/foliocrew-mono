@@ -380,6 +380,7 @@ test.before(async () => {
       "../lib/connection-summary.ts",
     ),
     "../task-overview": require("./task-overview-helpers.cjs").overview,
+    "../task-detail-read": require("./task-overview-helpers.cjs").detail,
     "../task-overview-request": require("./task-overview-helpers.cjs").request,
     "../persistent-owner-routes": persistentRoutes,
     "./persistent-owner-contracts": persistentContracts,

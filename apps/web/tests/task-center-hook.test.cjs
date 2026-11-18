@@ -20,7 +20,14 @@ const state = (taskId = "task_A", patch = {}) => ({
   assignments: [],
   ...patch,
 });
-function harness({ pending = new Map(), transport, timers, initial = meta(), overview } = {}) {
+function harness({
+  pending = new Map(),
+  transport,
+  timers,
+  initial = meta(),
+  overview,
+  selectedDetail,
+} = {}) {
   let selected = initial;
   let owner = "owner_A",
     index = 0,
@@ -133,7 +140,7 @@ function harness({ pending = new Map(), transport, timers, initial = meta(), ove
       assert.ok(n++ < 30, "render loop");
       dirty = false;
       index = 0;
-      result = m.useTaskCenter(workspace, true, selected, overview);
+      result = m.useTaskCenter(workspace, true, selected, overview, selectedDetail);
       for (const e of effects.splice(0)) {
         cells[e.n]?.cleanup?.();
         cells[e.n] = { deps: e.deps, cleanup: e.f() };
@@ -710,5 +717,59 @@ test("run confirmation checks the current definition and history together and pr
     assert.equal(h.calls.filter((c) => c.options.method === "POST").length, 0);
   } finally {
     h.close();
+  }
+});
+
+test("combined legacy evidence is checked against the original task and optional fallback reads stay local", async () => {
+  const task = meta("task_A", { resourceBindings: [binding] });
+  for (const mode of ["ready", "unavailable-legacy", "unavailable-provider", "foreign-authority"]) {
+    const original = legacyAuthority(
+      task,
+      mode === "foreign-authority" ? { ownerSubject: "another_owner" } : {},
+    );
+    const selectedDetail = {
+      metadata: task,
+      scope: "owner_A:vault_A:1",
+      vaultVersion: 1,
+      current: () => true,
+      read: async () => ({
+        state: state(),
+        legacy:
+          mode === "unavailable-legacy"
+            ? { status: "unavailable" }
+            : { status: "ready", data: original },
+        attribution:
+          mode === "unavailable-legacy"
+            ? null
+            : mode === "unavailable-provider"
+              ? { status: "unavailable" }
+              : { status: "ready", data: connectionList },
+        packet: null,
+      }),
+    };
+    const h = harness({
+      initial: task,
+      selectedDetail,
+      transport: (p) =>
+        p.endsWith("/authority")
+          ? Response.json(legacyAuthority(task))
+          : p.endsWith("/persistent-connections")
+            ? Response.json(connectionList)
+            : undefined,
+    });
+    try {
+      const m = await h.ready();
+      assert.equal(m.executors.status, mode === "foreign-authority" ? "error" : "ready", mode);
+      if (mode !== "foreign-authority")
+        assert.deepEqual(Array.from(m.executors.providers), ["muse"]);
+      assert.equal(countCalls(h, "/tasks/task_A"), 0);
+      assert.equal(countCalls(h, "/authority"), mode === "unavailable-legacy" ? 1 : 0);
+      assert.equal(
+        countCalls(h, "/persistent-connections"),
+        ["unavailable-legacy", "unavailable-provider"].includes(mode) ? 1 : 0,
+      );
+    } finally {
+      h.close();
+    }
   }
 });

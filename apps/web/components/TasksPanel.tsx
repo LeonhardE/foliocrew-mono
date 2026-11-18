@@ -3,6 +3,7 @@
 import { useRef, useEffect, useState } from "react";
 import { useTaskResults } from "./useTaskResults";
 import { TaskResultsPanel } from "./TaskResultsPanel";
+import { readTaskDetail } from "@/lib/task-detail-read";
 import { useTaskCenter } from "./useTaskCenter";
 import { TaskCenterView } from "./TaskCenterPanel";
 import type { PersistentWorkspaceModel } from "./usePersistentWorkspace";
@@ -966,6 +967,7 @@ export default function TasksPanel({
     active,
     catalogueOnDemand: true,
     overview: true,
+    readDetail: readTaskDetail,
     catalogueRequested: editing || Boolean(request && request.owner === workspace.owner),
   });
   // Only the editor needs eligible connection and credential discovery.
@@ -979,7 +981,13 @@ export default function TasksPanel({
     onAgentConnectionsNeeded?.(needsAgents);
   }, [needsAgents, onAgentConnectionsNeeded]);
   useEffect(() => () => onAgentConnectionsNeeded?.(false), [onAgentConnectionsNeeded]);
-  const center = useTaskCenter(workspace, active, model.opening ?? model.selected, model.overview);
+  const center = useTaskCenter(
+    workspace,
+    active,
+    model.opening ?? model.selected,
+    model.overview,
+    model.selectedDetail,
+  );
   const observed = Object.values(center.manual)
     .flatMap((rows) =>
       rows.flatMap(

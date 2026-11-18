@@ -1,5 +1,6 @@
 "use client";
 import { holdingsViewRequest } from "@/lib/holdings-view";
+import { taskDetailRequest } from "@/lib/task-detail-read";
 import { taskOverviewRequest } from "@/lib/task-overview-request";
 import { CURRENCY_PREFERENCES_PATH, currencyUpdate } from "@/lib/currency-preferences";
 import { FX_FOLLOWS_PATH, fxPreferences } from "@/lib/fx-follows";
@@ -161,6 +162,7 @@ type EncryptedRule = {
   rootCommands?: string[];
   taskPackets?: boolean;
   taskOverview?: boolean;
+  taskDetail?: boolean;
   holdingsView?: string;
 };
 function hubOwnerRule(path: string, method: PrivateMethod): EncryptedRule | null {
@@ -180,16 +182,20 @@ function hubOwnerRule(path: string, method: PrivateMethod): EncryptedRule | null
       ...(center.kind === "read"
         ? {}
         : {
-            keys: /\/(commands|manual)$/.test(pathname)
-              ? ["contractVersion", "command"]
-              : pathname.endsWith("/trash/query")
-                ? ["contractVersion", "cursor"]
-                : /\/operations\/[^/]+\/cancel$/.test(pathname)
-                  ? ["contractVersion", "fingerprint"]
-                  : /\/(maintenance|cancel)$/.test(pathname)
-                    ? ["contractVersion"]
-                    : ["contractVersion", "request"],
+            keys:
+              center.kind === "task-detail"
+                ? ["contractVersion", "includePacket", "includeAttribution"]
+                : /\/(commands|manual)$/.test(pathname)
+                  ? ["contractVersion", "command"]
+                  : pathname.endsWith("/trash/query")
+                    ? ["contractVersion", "cursor"]
+                    : /\/operations\/[^/]+\/cancel$/.test(pathname)
+                      ? ["contractVersion", "fingerprint"]
+                      : /\/(maintenance|cancel)$/.test(pathname)
+                        ? ["contractVersion"]
+                        : ["contractVersion", "request"],
           }),
+      taskDetail: center.kind === "task-detail",
       idempotent: center.operation,
       maxBytes: center.max,
       rootCommand:
@@ -495,6 +501,8 @@ function encryptedRequestHeaders(
       throw new Error("Invalid private API request");
   } else if (options.json !== undefined) throw new Error("Invalid private API request");
   if (rule.holdingsView && !holdingsViewRequest(options.json, rule.holdingsView))
+    throw new Error("Invalid private API request");
+  if (rule.taskDetail && !taskDetailRequest(options.json))
     throw new Error("Invalid private API request");
   if (rule.taskOverview && !taskOverviewRequest(options.json))
     throw new Error("Invalid private API request");
@@ -1054,7 +1062,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           /^\/api\/v3\/tasks\/[^/]+\/overview\/query$/.test(path)) ||
         (method === "POST" && service === "agent-hub" && path === "/api/v2/tasks/packets/query") ||
         (method === "POST" &&
-          /^\/api\/v3\/task-center\/[^/]+\/(?:trash\/query|tasks\/[^/]+\/(?:results|progress)\/query)$/.test(
+          /^\/api\/v3\/task-center\/[^/]+\/(?:trash\/query|tasks\/[^/]+\/(?:results|progress|detail)\/query)$/.test(
             path,
           ));
       const response =

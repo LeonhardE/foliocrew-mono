@@ -687,6 +687,13 @@ new metadata reads to the current unlock scope, so their receipts can start the 
 verification queue. Owner, lock and unlock-generation changes still discard late receipts and names. Partial feeds retain real partial unread counts
 and cannot mark the homepage ready.
 
+Selecting a current task uses the Owner-only `POST /api/v3/task-center/{vault}/tasks/{task}/detail/query`.
+The task and executor views share a request within that selection. The vault is verified independently.
+The browser requests a packet only when it needs the ciphertext. For older tasks, the response can
+also include the original grant and its provider attribution. Existing packet, task state, ownership
+and version checks apply to the corresponding sections. An explicitly unavailable section can use
+its original endpoint. Opening a historical version and submitting a command retain their own reads.
+
 The single overview cache is local to the task-page hooks and keyed by Owner login, vault,
 unlock generation and vault version. Its 30-second freshness uses the original receipt time,
 including route/visibility return. Scope changes and hidden pending work fence late results;
