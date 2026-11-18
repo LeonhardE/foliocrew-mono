@@ -3556,7 +3556,7 @@ test("actual compound subscriber cancellation fences old outcomes, retains origi
   }
 });
 for (const success of [true, false])
-  test(`soft display-context invalidation preserves User PUT and original ${success ? "ACK refresh" : "uncertain recovery"}`, async () => {
+  test(`soft display-context invalidation preserves User PUT and ${success ? "acknowledged revision" : "uncertain recovery"} with on-demand discovery`, async () => {
     const f = await require("./resource-display-fixtures.cjs").fixture("a"),
       putGate = deferred(),
       calls = [];
@@ -3611,7 +3611,7 @@ for (const success of [true, false])
         catalogueBefore,
         "No pre-ACK catalogue can become fresh",
       );
-      assert.equal(ui.model.catalogue.stale, true);
+      assert.equal(ui.model.catalogue.data, null);
       if (success) revision = 2;
       putGate.resolve(
         Response.json(success ? channels("Synthetic", revision) : {}, {
@@ -3623,15 +3623,18 @@ for (const success of [true, false])
       assert.equal(calls.filter((c) => c.options.method === "PUT").length, 1);
       assert.equal(
         calls.filter((c) => c.url.endsWith("/resources/catalogue")).length,
-        catalogueBefore + Number(success),
+        catalogueBefore,
       );
       if (success) {
         assert.equal(ui.model.follows.data.revision, 2);
+        ui.filter("holdings");
+        await ui.complete();
+        assert.ok(ui.model.catalogue.data);
         assert.equal(ui.model.catalogue.stale, false);
       } else {
         assert.equal(ui.model.follows.stale, true);
         assert.equal(ui.model.writeError, "unavailable");
-        assert.equal(ui.model.catalogue.stale, true);
+        assert.equal(ui.model.catalogue.data, null);
       }
     } finally {
       putGate.resolve(Response.json({}, { status: 503 }));
