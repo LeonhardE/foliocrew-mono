@@ -116,7 +116,7 @@ def create_server(oauth):
                             else " Requires helper 1.3.0 and transport profile v1."
                         )
                         if name in {"get_foreground_transport_v2", "get_foreground_transport_v3"}
-                        else "FolioView encrypted v2: " + name
+                        else "Foliocrew encrypted v2: " + name
                     ),
                     input_schema=input_schema(name),
                     output_schema=output_schema(name),
@@ -187,7 +187,7 @@ def create_server(oauth):
             ]
 
     server = EncryptedServer(
-        "FolioView encrypted agent workspace",
+        "Foliocrew encrypted agent workspace",
         token_verifier=Verifier(),
         auth=AuthSettings(
             issuer_url=oauth.config.issuer,

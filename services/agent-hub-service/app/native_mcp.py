@@ -199,7 +199,7 @@ def create_native_server(oauth):
             raise ValueError("Unsupported resource.")
 
     server = NativeServer(
-        "FolioView personal Agent connection",
+        "Foliocrew personal Agent connection",
         token_verifier=Verifier(),
         auth=AuthSettings(
             issuer_url=oauth.config.issuer,
