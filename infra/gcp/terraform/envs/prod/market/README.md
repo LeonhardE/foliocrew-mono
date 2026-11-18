@@ -37,6 +37,16 @@ the bootstrap's explicit project, region and source repository. Production execu
 reviewed trigger configuration, binding its exact bytes, instance, source and target to the saved
 plan. Remote Cloud Build cannot use an operator's ignored local files.
 
+### Additional browser origins
+
+The optional `browser_origin_aliases` list defaults to empty. For a reviewed rollout, generate the
+[Market browser origin candidate](../../../../deployment-profiles/README.md#browser-origin-candidates-profile-v6)
+and combine it with the active deployment projection. The target declares its opt-in in
+`browser-origins.consumer.json`. The controller joins the canonical Web origin and reviewed aliases
+into `CORS_ORIGINS`. Inspect the full plan for that environment value only, then check browser
+preflight from the current workspace, additional origin and an unconfigured origin. Keep the
+extra origin admitted while users can still access it.
+
 The trusted runner selects the existing isolated state bucket with prefix `prod/market`. Preserve
 that backend and lineage, resource addresses, import destinations, runtime identity, toolchain and
 provider locks. The two declarative imports stay in place and must remain no-ops. Native service
