@@ -80,7 +80,7 @@ def install(directory):
     name = f"gitleaks_{metadata['version']}_{key}.tar.gz"
     url = f"https://github.com/gitleaks/gitleaks/releases/download/v{metadata['version']}/{name}"
     with urlopen(
-        Request(url, headers={"User-Agent": "FolioView-security-toolchain"}), timeout=60
+        Request(url, headers={"User-Agent": "Foliocrew-security-toolchain"}), timeout=60
     ) as r:
         archive = r.read(MAX_ARCHIVE_BYTES + 1)
     if (
@@ -297,7 +297,7 @@ def scan(executable, root=ROOT, policy=None):
         raise SecurityScanError("Explicit repository secret-scanning policy is required.")
     if git(root, "rev-parse", "--is-shallow-repository").strip() != b"false":
         raise SecurityScanError("Fetch complete history before running the required secret scan.")
-    with tempfile.TemporaryDirectory(prefix="folioview-secret-scan-") as name:
+    with tempfile.TemporaryDirectory(prefix="foliocrew-secret-scan-") as name:
         temporary = Path(name)
         index, current = snapshots(root, temporary)
         findings = []

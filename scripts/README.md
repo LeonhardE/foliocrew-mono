@@ -251,8 +251,9 @@ credentials against a provider.
 CI fetches full history, installs the same checksum-pinned CLI, runs its
 integration tests and performs the required repository scan in the Repository
 checks job. No licensed scanner Action is required. For isolated scanner tests,
-set `FOLIOVIEW_GITLEAKS_PATH` to that verified executable; `npm run check` installs
-it at the default location before tests. A bare `test:ci` run without either
+set `FOLIOCREW_GITLEAKS_PATH` to that verified executable. Tests also accept the
+previous `FOLIOVIEW_GITLEAKS_PATH` override when the new variable is unset or empty.
+`npm run check` installs the scanner at the default location before tests. A bare `test:ci` run without either
 executable skips scanner integration cases, so it is not equivalent to the
 required security scan or full check.
 

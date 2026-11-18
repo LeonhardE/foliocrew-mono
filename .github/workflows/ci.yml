@@ -65,7 +65,7 @@ jobs:
         run: python scripts/ci/secret_scan.py install --directory "$RUNNER_TEMP/security-tools"
       - name: Test CI selection and required-check aggregation
         env:
-          FOLIOVIEW_GITLEAKS_PATH: ${{ runner.temp }}/security-tools/gitleaks
+          FOLIOCREW_GITLEAKS_PATH: ${{ runner.temp }}/security-tools/gitleaks
         run: python -m unittest discover -s scripts/ci/tests -v
       - name: Scan complete history, index and worktree with pinned Gitleaks
         run: python scripts/ci/secret_scan.py scan --gitleaks "$RUNNER_TEMP/security-tools/gitleaks"
@@ -162,7 +162,7 @@ jobs:
       - name: Build independent backend image
         env:
           DOCKERFILE: ${{ steps.target.outputs.dockerfile }}
-        run: docker build --file "$DOCKERFILE" --tag folioview-backend:test .
+        run: docker build --file "$DOCKERFILE" --tag foliocrew-backend:test .
       - name: Check isolated runtime health
         env:
           SERVICE: ${{ matrix.service }}

@@ -234,7 +234,7 @@ class IgnorePolicyTests(unittest.TestCase):
 class ScannerIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        path = os.getenv("FOLIOVIEW_GITLEAKS_PATH")
+        path = os.getenv("FOLIOCREW_GITLEAKS_PATH") or os.getenv("FOLIOVIEW_GITLEAKS_PATH")
         candidate = Path(path) if path else ROOT / ".security-tools/gitleaks"
         if not candidate.is_file():
             raise unittest.SkipTest(
