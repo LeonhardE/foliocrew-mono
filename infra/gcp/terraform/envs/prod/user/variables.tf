@@ -44,3 +44,28 @@ variable "deployment" {
     error_message = "Use distinct canonical lowercase HTTPS Web and Market origins, without userinfo, port, path, query or fragment."
   }
 }
+
+variable "browser_origin_aliases" {
+  description = "Reviewed additional exact HTTPS origins for Market browser requests."
+  type        = list(string)
+  default     = []
+  nullable    = false
+
+  validation {
+    condition = (
+      length(var.browser_origin_aliases) <= 7 &&
+      length(distinct(var.browser_origin_aliases)) == length(var.browser_origin_aliases) &&
+      alltrue([
+        for origin in var.browser_origin_aliases : try(
+          length(origin) <= 261 &&
+          origin != var.deployment.web_origin &&
+          origin != var.deployment.market_origin &&
+          !can(regex("\\.[0-9]+$", origin)) &&
+          can(regex("^https://[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$", origin)),
+          false,
+        )
+      ])
+    )
+    error_message = "Use up to seven distinct exact HTTPS browser origins in addition to the canonical Web origin."
+  }
+}
