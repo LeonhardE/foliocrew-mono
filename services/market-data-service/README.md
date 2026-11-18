@@ -76,6 +76,16 @@ preserved, with `Retry-After` exposed to permitted browser origins. The request
 slot is released when a handler fails or completes. Invalid configuration
 returns fixed `503`/no-store without echoing values.
 
+### Search access diagnostics
+
+For `/api/stocks/search`, the application writes a structured access event with
+the route category `stock_search` and the HTTP status. Requests handled by the
+application also include milliseconds to response headers and a fresh identifier
+returned in `X-Request-ID`. The event excludes search text, the raw URL, client
+addresses and request headers. Operators can locate a failed search by its
+response identifier. Cloud Run's platform request logs and upstream proxy logs
+have separate retention controls.
+
 ## What storage accounting covers
 
 - Process-local positive and negative cache hits do not consume Firestore units.
