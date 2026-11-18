@@ -85,7 +85,7 @@ def authority_head(unit, owner, vault, task):
     return cache[key]
 
 
-def stored_authority(unit, owner, vault, task, connection=None):
+def _authority_and_publication(unit, owner, vault, task, connection=None):
     row = authority_head(unit, owner, vault, task)
     scoped = row == {"taskCenter": True}
     if scoped:
@@ -93,7 +93,7 @@ def stored_authority(unit, owner, vault, task, connection=None):
             raise ContractError("version_conflict")
         row = unit.get(authority_path(owner, vault, task, connection))
     if row is None:
-        return None
+        return None, None
     try:
         if set(row) != {"context", "fingerprint", "publicationId"}:
             raise StoreUnavailable
@@ -113,7 +113,24 @@ def stored_authority(unit, owner, vault, task, connection=None):
             raise StoreUnavailable
     except (KeyError, TypeError):
         raise StoreUnavailable from None
-    return row
+    return row, saved
+
+
+def stored_authority(unit, owner, vault, task, connection=None):
+    authority, _ = _authority_and_publication(unit, owner, vault, task, connection)
+    return authority
+
+
+def stored_task_state(unit, owner, vault, task):
+    authority, saved = _authority_and_publication(unit, owner, vault, task)
+    return {
+        "contractVersion": CONTRACT_VERSION,
+        "profile": CONTENT_PROFILE,
+        "authority": authority,
+        "envelope": None
+        if saved is None
+        else strict_json_loads(saved["carrierJson"], max_bytes=524288),
+    }
 
 
 class PersistentPublicationService(ResourceConsentService):
@@ -204,20 +221,7 @@ class PersistentPublicationService(ResourceConsentService):
 
             owner = owner_key(uid)
             _current(unit, owner, self.now(), vault)
-            authority = stored_authority(unit, owner, vault, task)
-            saved = (
-                None
-                if authority is None
-                else stored_publication(unit, owner, vault, authority["publicationId"])
-            )
-            return {
-                "contractVersion": CONTRACT_VERSION,
-                "profile": CONTENT_PROFILE,
-                "authority": authority,
-                "envelope": None
-                if saved is None
-                else strict_json_loads(saved["carrierJson"], max_bytes=524288),
-            }
+            return stored_task_state(unit, owner, vault, task)
 
         return self.store.transact(read)
 

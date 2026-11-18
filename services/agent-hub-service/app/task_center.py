@@ -225,16 +225,50 @@ def center_reference(definition, assignment):
     }
 
 
+def task_metadata(unit, owner, vault, task):
+    head = _head(unit, owner, vault, task, _index(unit, owner, vault))
+    if head is None:
+        raise ContractError("not_found")
+    return head["metadata"]
+
+
 class TaskCenterOwnerService(PersistentPublicationService):
     def _owner_task(self, unit, uid, vault, task):
         for value in (vault, task):
             validate_schema("Identifier", value)
         owner = owner_key(uid)
         v, registry = _current(unit, owner, self.now(), vault)
-        head = _head(unit, owner, vault, task, _index(unit, owner, vault))
-        if head is None:
-            raise ContractError("not_found")
-        return owner, v, registry, head["metadata"]
+        return owner, v, registry, task_metadata(unit, owner, vault, task)
+
+    def _state(self, unit, owner, vault, task, meta):
+        row = definition_row(unit, owner, vault, task)
+        assignments = []
+        if row is not None and row["definition"]["status"] == "active":
+            for ident in row["assignmentIds"]:
+                record = assigned_row(unit, owner, vault, task, ident)
+                if record is None:
+                    raise StoreUnavailable
+                a = record["assignment"]
+                assignments.append(
+                    {
+                        **record,
+                        "authority": stored_authority(
+                            unit, owner, vault, task, a["credential"]["connectionId"]
+                        ),
+                        "plan": center_plan(unit, row["definition"], a, now=self.now()),
+                    }
+                )
+        return {
+            "contractVersion": CONTRACT_VERSION,
+            "profile": TASK_CENTER_PROFILE,
+            "taskId": task,
+            "taskVersion": meta["taskVersion"],
+            "executionEpoch": meta["executionEpoch"],
+            "rules": row,
+            "assignments": assignments,
+            "dispatchSupported": False,
+            "nativeScheduleAttested": False,
+        }
 
     def state(self, uid, vault, task):
         for value in (vault, task):
@@ -242,34 +276,7 @@ class TaskCenterOwnerService(PersistentPublicationService):
 
         def read(unit):
             owner, _, _, meta = self._owner_task(unit, uid, vault, task)
-            row = definition_row(unit, owner, vault, task)
-            assignments = []
-            if row is not None and row["definition"]["status"] == "active":
-                for ident in row["assignmentIds"]:
-                    record = assigned_row(unit, owner, vault, task, ident)
-                    if record is None:
-                        raise StoreUnavailable
-                    a = record["assignment"]
-                    assignments.append(
-                        {
-                            **record,
-                            "authority": stored_authority(
-                                unit, owner, vault, task, a["credential"]["connectionId"]
-                            ),
-                            "plan": center_plan(unit, row["definition"], a, now=self.now()),
-                        }
-                    )
-            return {
-                "contractVersion": CONTRACT_VERSION,
-                "profile": TASK_CENTER_PROFILE,
-                "taskId": task,
-                "taskVersion": meta["taskVersion"],
-                "executionEpoch": meta["executionEpoch"],
-                "rules": row,
-                "assignments": assignments,
-                "dispatchSupported": False,
-                "nativeScheduleAttested": False,
-            }
+            return self._state(unit, owner, vault, task, meta)
 
         return self.store.transact(read)
 

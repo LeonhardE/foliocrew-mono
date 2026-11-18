@@ -22,6 +22,8 @@ from .provider_connection_routes import provider_slots_enabled
 from .store import get_store
 from .task_center import TaskCenterAgentService
 from .task_center_results import TaskCenterResultService
+from .task_detail import read_task_detail
+from .tasks import _protocol
 
 owner_router = APIRouter(prefix="/api/v3/task-center", route_class=PrivateRoute)
 agent_router = APIRouter(
@@ -82,6 +84,18 @@ def owner_capabilities(uid):
 def state(vault: str, task: str, request: Request, user: Owner, service: OwnerService):
     _invoke(lambda: control_transport(request))
     return _invoke(lambda: service.state(user.uid, vault, task))
+
+
+@owner_router.post("/{vault}/tasks/{task}/detail/query")
+async def detail(vault: str, task: str, request: Request, user: Owner, service: OwnerService):
+    _invoke(lambda: control_transport(request))
+    _invoke(lambda: _protocol(request))
+    options = await body(
+        request, {"contractVersion", "includePacket", "includeAttribution"}, max_bytes=512
+    )
+    return await run_in_threadpool(
+        _invoke, lambda: read_task_detail(service, user.uid, vault, task, options)
+    )
 
 
 @owner_router.get("/{vault}/tasks/{task}/operations/{operation}")
