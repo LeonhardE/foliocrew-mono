@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "target": "config",
+  "configurationContract": "browser-origins.v1",
+  "terraformVariable": "browser_origin_aliases"
+}

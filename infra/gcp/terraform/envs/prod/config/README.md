@@ -37,6 +37,16 @@ bootstrap's explicit project, region and source repository. Production execution
 reviewed trigger configuration and binds its bytes, instance, source and target to the saved plan.
 Remote Cloud Build cannot obtain inputs from an operator's ignored local files.
 
+### Additional browser origins
+
+The optional `browser_origin_aliases` list defaults to empty. Combine the reviewed
+[Config browser origin candidate](../../../../deployment-profiles/README.md#browser-origin-candidates-profile-v6)
+with the active deployment. This source root declares its opt-in in `browser-origins.consumer.json`.
+The controller joins the canonical Web origin and reviewed aliases into `CORS_ORIGINS`.
+Firebase authentication and the Config store remain part of the existing deployment.
+Review the full plan and check preflight from the old workspace, the additional origin and an
+unconfigured origin. Keep both admissions available while users rely on them.
+
 ## Preserved service and ownership boundaries
 
 Preserve ingress `INGRESS_TRAFFIC_ALL`, public Cloud Run invocation using
