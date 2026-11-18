@@ -192,3 +192,51 @@ run "reject_malformed_owner_config_15" {
   variables { owner_environment = {} }
   expect_failures = [var.owner_environment]
 }
+
+run "workspace_edge_adds_only_public_key_and_origin" {
+  command = plan
+  variables {
+    owner_environment = {
+      FOLIOVIEW_OWNER_FIREBASE_PROJECT_ID = "demo-web-alpha"
+      FOLIOVIEW_PORTFOLIO_OWNER_ENABLED   = "true"
+      FOLIOVIEW_PORTFOLIO_ORIGIN          = "https://portfolio-api-111222333444.us-central1.run.app"
+      FOLIOVIEW_PORTFOLIO_AUDIENCE        = "https://portfolio-api-111222333444.us-central1.run.app"
+      FOLIOVIEW_HUB_OWNER_ENABLED         = "true"
+      FOLIOVIEW_HUB_ORIGIN                = "https://agent-hub-api-111222333444.us-central1.run.app"
+    }
+    workspace_edge = {
+      browser_origin = "https://hub.example.test"
+      public_key     = "m-cQA9lh6oJmA1Kn74lPpBu0TjkXtYoCBXco7JRq6EI"
+    }
+  }
+
+  assert {
+    condition = local.environment == tomap(merge(var.owner_environment, {
+      FOLIOCREW_EDGE_BROWSER_ORIGIN = var.workspace_edge.browser_origin
+      FOLIOCREW_EDGE_PUBLIC_KEY     = var.workspace_edge.public_key
+    })) && output.adoption_boundary.invoker_iam_disabled && output.adoption_boundary.service_max_instances == 2
+    error_message = "Add only the edge public key and origin while preserving Owner inputs, IAM mode, and service-wide scaling."
+  }
+}
+
+run "workspace_edge_rejects_origin_with_port" {
+  command = plan
+  variables {
+    workspace_edge = {
+      browser_origin = "https://hub.example.test:443"
+      public_key     = "m-cQA9lh6oJmA1Kn74lPpBu0TjkXtYoCBXco7JRq6EI"
+    }
+  }
+  expect_failures = [var.workspace_edge]
+}
+
+run "workspace_edge_rejects_noncanonical_key" {
+  command = plan
+  variables {
+    workspace_edge = {
+      browser_origin = "https://hub.example.test"
+      public_key     = "m-cQA9lh6oJmA1Kn74lPpBu0TjkXtYoCBXco7JRq6EJ"
+    }
+  }
+  expect_failures = [var.workspace_edge]
+}
