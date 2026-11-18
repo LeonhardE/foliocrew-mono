@@ -981,7 +981,6 @@ function ResourcesView({
         active={active}
         watchlist={watchlist}
         onOpenWatchlist={onOpenWatchlist}
-        onCreateTask={onCreateTask}
       >
         {(library) => (
           <div className={styles.workspace}>

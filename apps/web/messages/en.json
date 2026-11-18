@@ -737,7 +737,6 @@
     "discoveryDisabled": "Resource discovery is not enabled here. Your existing lists and holdings controls remain available.",
     "historyHelp": "Later edits update the current resource; saved task and run evidence keeps its original version.",
     "revision": "Revision {revision}",
-    "useInTask": "Use in task",
     "instruments": {
       "stock": "Stock",
       "index": "Index"

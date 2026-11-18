@@ -3,13 +3,7 @@ const test = require("node:test");
 const React = require("react");
 const { renderToStaticMarkup } = require("react-dom/server");
 const { createTranslator } = require("next-intl");
-const {
-  compile,
-  contracts,
-  catalogue,
-  channels,
-  stocks,
-} = require("./resource-library-helpers.cjs");
+const { compile, catalogue, channels, stocks } = require("./resource-library-helpers.cjs");
 const loaded = (data) => ({ data, loading: false, error: "", stale: false });
 function model(patch = {}) {
   return {
@@ -23,11 +17,10 @@ function model(patch = {}) {
     writeError: "",
     reload() {},
     saveFollows() {},
-    useForTask() {},
     ...patch,
   };
 }
-function render(value, { locale = "en", onCreateTask, filter = "holdings" } = {}) {
+function render(value, { locale = "en", filter = "holdings" } = {}) {
   const messages = require(`../messages/${locale}.json`);
   const { ResourceLibraryView } = compile("../components/ResourceLibrary.tsx", {
     react: {
@@ -42,7 +35,6 @@ function render(value, { locale = "en", onCreateTask, filter = "holdings" } = {}
     "./AuthProvider": {
       useAuth: () => ({ status: "authenticated", sessionKey: value.owner, profile: {} }),
     },
-    "@/lib/resource-library": contracts,
     "./ResourceLibrary.module.css": {
       __esModule: true,
       default: new Proxy({}, { get: (_object, name) => name }),
@@ -51,7 +43,7 @@ function render(value, { locale = "en", onCreateTask, filter = "holdings" } = {}
   return renderToStaticMarkup(
     React.createElement(
       ResourceLibraryView,
-      { model: value, onCreateTask, onOpenWatchlist() {} },
+      { model: value, onOpenWatchlist() {} },
       React.createElement("p", null, "EXISTING_ENCRYPTED_HOLDINGS"),
     ),
   );
@@ -98,19 +90,11 @@ test("source failure stays unavailable while empty lists have explicit distinct 
   assert.ok(emptyFollows.includes("Add creator"));
 });
 
-test("metadata task CTA requires consumer callback and hides pending/revoked/empty pointers", () => {
-  const value = catalogue();
-  for (const state of ["pending", "revoking", "disconnected", "deleted", "empty", "unavailable"]) {
-    const current = structuredClone(value);
-    current.groups.forEach((group) => group.items.forEach((item) => (item.state = state)));
-    assert.ok(
-      !render(model({ catalogue: loaded(current) }), { onCreateTask() {} }).includes("Use in task"),
-    );
-  }
+test("watchlist and YouTube follows remain editable without a task creation shortcut", () => {
   for (const filter of ["watchlist", "channel_follows"]) {
-    const html = render(model(), { filter, onCreateTask() {} });
-    assert.equal((html.match(/Use in task/g) || []).length, 1);
-    assert.ok(!html.includes("This catalogue identifies"));
+    const html = render(model(), { filter });
+    assert.doesNotMatch(html, /Use in task/);
+    assert.match(html, filter === "watchlist" ? /Manage in Market/ : /Add creator/);
   }
 });
 
@@ -131,7 +115,7 @@ test("account unavailable UI omits private list rows and escapes manual text in 
   assert.ok(zh.includes("不受持仓通行密钥加密保护"));
 });
 
-test("cached resource rows remain visible during refresh failure and stale task or list mutations stay disabled", () => {
+test("cached resource rows remain visible during refresh failure and stale follow edits stay disabled", () => {
   for (const locale of ["en", "zh", "zh-Hant"]) {
     const stale = (data) => ({ data, loading: false, stale: true, error: "unavailable" });
     const value = model({
@@ -139,13 +123,12 @@ test("cached resource rows remain visible during refresh failure and stale task 
       watchlist: stale(stocks()),
       follows: stale(channels()),
     });
-    const follows = render(value, { locale, filter: "channel_follows", onCreateTask() {} });
-    const watchlist = render(value, { locale, filter: "watchlist", onCreateTask() {} });
+    const follows = render(value, { locale, filter: "channel_follows" });
+    const watchlist = render(value, { locale, filter: "watchlist" });
     assert.match(follows, /Synthetic Creator/);
     assert.match(watchlist, /SYNTH/);
     assert.match(follows, /role="status"/);
     assert.match(follows, /disabled=""/);
-    assert.match(watchlist, /disabled=""/);
     assert.doesNotMatch(follows, /No creators yet/);
   }
 });

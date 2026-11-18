@@ -480,7 +480,7 @@ test("the actual ResourcesPanel binds only the selected current source metadata 
     ui.close();
   }
 });
-test("a legitimate shared-watchlist refresh changes the read serial without allowing an old publication observer to supplement", async () => {
+test("a watchlist edit leaves holdings discovery alone and an explicit retry must verify the pending snapshot", async () => {
   const h = harness();
   try {
     h.render();
@@ -489,9 +489,13 @@ test("a legitimate shared-watchlist refresh changes the read serial without allo
     assert.equal(h.calls.length, 1);
     h.watchlist("NEXT");
     await settle();
+    assert.equal(h.calls.length, 1);
+    const retry = h.model.reload("catalogue");
+    await settle();
     assert.equal(h.calls.length, 2);
     await h.reply(0);
     await h.reply(1, snapshot("snapshot_OLD"));
+    await retry;
     assert.equal(h.calls.length, 2);
     assert.equal(h.model.catalogue.stale, true);
     assert.equal(h.model.catalogue.error, "reload_required");

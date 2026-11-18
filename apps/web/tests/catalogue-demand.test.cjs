@@ -277,7 +277,7 @@ test("actual ResourcesView names scope holds catalogue through unknown current a
     h.close();
   }
 });
-test("locked and approval-needed holdings remain unknown, while explicit other filters retain Google-only lists and original catalogue demand", async () => {
+test("locked holdings stay unknown while list categories load their own data without task discovery", async () => {
   const h = harness();
   try {
     h.render();
@@ -285,7 +285,7 @@ test("locked and approval-needed holdings remain unknown, while explicit other f
     assert.equal(h.cats().length, 0);
     h.filter("channel_follows");
     await h.settle();
-    assert.equal(h.cats().length, 1);
+    assert.equal(h.cats().length, 0);
     assert.equal(h.model.follows.data.items[0].name, "Synthetic Creator");
     h.filter("holdings");
     await h.settle();
@@ -296,9 +296,11 @@ test("locked and approval-needed holdings remain unknown, while explicit other f
     await h.settle();
     assert.equal(h.model.catalogue.data, null);
     h.modelPatch({ phase: "locked", needsDeviceApproval: false });
+    const beforeWatchlist = h.cats().length;
     h.filter("watchlist");
     await h.settle();
-    assert.ok(h.model.catalogue.data);
+    assert.equal(h.model.catalogue.data, null);
+    assert.equal(h.cats().length, beforeWatchlist);
     assert.equal(
       h.calls.filter((c) => c.path.endsWith("/channel-follows") && c.options.method === "GET")
         .length,
@@ -308,7 +310,7 @@ test("locked and approval-needed holdings remain unknown, while explicit other f
     h.close();
   }
 });
-test("catalogue demand cancellation does not abort a User write, and the acknowledgement cannot force an unneeded catalogue request", async () => {
+test("leaving and reopening YouTube follows preserves its write without requesting the task catalogue", async () => {
   const h = harness();
   try {
     h.render();
@@ -331,7 +333,8 @@ test("catalogue demand cancellation does not abort a User write, and the acknowl
     assert.equal(h.calls.filter((c) => c.options.method === "PUT").length, 1);
     h.filter("channel_follows");
     await h.settle();
-    assert.equal(h.cats().length, before + 1);
+    assert.equal(h.cats().length, before);
+    assert.equal(before, 0);
   } finally {
     h.close();
   }

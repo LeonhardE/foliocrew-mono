@@ -186,10 +186,11 @@ domain.** The encryption behavior below applies to CSV holdings and the encrypte
 Current discovery metadata comes from Hub's fixed owner catalogue through the existing Web
 forwarder. Available/empty/uninitialized/partial/unavailable/pending/revoked states are distinct;
 source failure is never interpreted as an empty list. Discovery is not encrypted Run evidence or
-agent authorization. An optional `onCreateTask({ref, sourceEpoch})` integration appears only for
-current ready/active resources when a task consumer is present; it carries no content or keys and
-creates no task automatically. Current-source changes do not rewrite historical task/Run evidence. The holdings settings dialog
-uses the same Task Center handoff; it never grants access automatically.
+agent authorization. Owners can select their watchlist or YouTube follows while editing a task in
+Task Center. Holdings settings can also hand off a current ready or active source through
+`onCreateTask({ref, sourceEpoch})`. The handoff sends only the reference and epoch. The owner finishes creating the task in Task Center
+and grants access separately. Source changes preserve historical task
+and Run evidence.
 
 Reads enforce actual streamed response limits and deadlines, and never cache private rows in
 browser storage. Reentry from Market, tab visibility restoration, creator saves and holdings
@@ -589,7 +590,7 @@ window refreshes the data. Refresh failure keeps the previous rows and explicitl
 stale catalogue selections and stale follow-list writes stay unavailable until a successful read.
 No timer prewarms these services. Explicit retry always reads again. Follow writes invalidate the
 catalogue before dispatch, and uncertain writes cannot be repeated by leaving and returning; their
-original state must be read back first. Watchlist and holdings updates still invalidate discovery.
+original state must be read back first. Holdings updates still invalidate discovery.
 Account or vault scope changes mask old rows during render and fence delayed callbacks.
 
 The default holdings category waits for the existing verified workspace scope before requesting
@@ -599,7 +600,7 @@ During initialization the catalogue remains unknown. Becoming eligible starts th
 with the existing 30-second same-scope receipt reuse and all Owner, vault, generation and source
 fences. Losing this prerequisite cancels only pending catalogue discovery and hides its selection
 context; it does not cancel User list reads or follow-list writes. Watchlist and channel categories
-retain their original catalogue and Google-only list behavior. Explicit retry and task selection
+read their account lists without requesting the Hub catalogue. Explicit holdings retry and task selection
 also require the current catalogue demand. Legacy library callers retain their default discovery.
 
 Eligible automatic resource discovery and private-name reads share one
@@ -634,8 +635,7 @@ without the bound snapshot context retain their existing version invalidation.
 The channel-follows list is requested when its category is selected, using the same bounded read,
 30-second freshness, explicit retry and revision-based writes. The default holdings category does
 not wait for that unused list. Until requested, channels remain unknown rather than an empty list;
-selecting the category shows its real loading, failure or saved rows. Changing categories cancels
-only an unfinished channel read, preserving catalogue reads and explicit follow-list writes.
+selecting the category shows its real loading, failure or saved rows. Leaving this category cancels an unfinished channel read and preserves explicit follow-list writes.
 
 An unlocked holdings error retries the selected source through the existing `readStored` path,
 including current vault/authority/metadata checks. It no longer takes the read-only unlock path

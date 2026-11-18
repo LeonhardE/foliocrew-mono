@@ -4,13 +4,7 @@ import type { ResourceDisplayAccess } from "@/lib/resource-display";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { useResourceLibrary, type ResourceLibraryModel } from "./useResourceLibrary";
-import {
-  resourceSelection,
-  type ChannelInput,
-  type ResourceGroup,
-  type ResourceKind,
-  type ResourceSelection,
-} from "@/lib/resource-library";
+import type { ChannelInput, ResourceKind } from "@/lib/resource-library";
 import styles from "./ResourceLibrary.module.css";
 import type { WatchlistModel } from "./useWatchlist";
 import { LoadingIndicator, InlineError } from "./WorkspaceFeedback";
@@ -238,53 +232,10 @@ function Failure({ code, retry }: { code: string; retry: () => void }) {
     </div>
   );
 }
-function CatalogueDetail({
-  group,
-  model,
-  onCreateTask,
-}: {
-  group?: ResourceGroup;
-  model: ResourceLibraryModel;
-  onCreateTask?: (selection: ResourceSelection) => void;
-}) {
-  const t = useTranslations("resourceLibrary");
-  if (!onCreateTask || !model.authenticated) return null;
-  const items =
-    group?.items.filter(
-      (item) => resourceSelection(item) && ["ready", "active"].includes(item.state),
-    ) ?? [];
-  return (
-    <div className={styles.actions}>
-      {items.map((item) => (
-        <button
-          type="button"
-          key={item.ref!.resourceId}
-          disabled={
-            model.catalogue.loading || model.catalogue.stale || Boolean(model.catalogue.error)
-          }
-          onClick={() => model.useForTask(item, onCreateTask)}
-        >
-          {t("useInTask")}
-        </button>
-      ))}
-      {model.catalogue.loading && (
-        <LoadingIndicator busy hasContent={items.length > 0} label={t("loading")} />
-      )}
-      {model.catalogue.error && (
-        <InlineError
-          message={t("taskUnavailable")}
-          onRetry={() => void model.reload("catalogue")}
-          retryLabel={t("retry")}
-        />
-      )}
-    </div>
-  );
-}
 export function ResourceLibraryView({
   model,
   children,
   onOpenWatchlist,
-  onCreateTask,
   watchlist: sharedWatchlist,
   filter: selectedFilter,
   onFilterChange,
@@ -293,7 +244,6 @@ export function ResourceLibraryView({
   watchlist?: WatchlistModel;
   children: ReactNode | ((model: ResourceLibraryModel) => ReactNode);
   onOpenWatchlist?: () => void;
-  onCreateTask?: (selection: ResourceSelection) => void;
   filter?: ResourceKind;
   onFilterChange?: (kind: ResourceKind) => void;
 }) {
@@ -321,16 +271,6 @@ export function ResourceLibraryView({
       setSymbol("");
     }
   };
-  const listSignature = shared?.items.map((i) => i.symbol).join("|");
-  const prior = useRef(listSignature);
-  useEffect(() => {
-    if (prior.current !== listSignature) {
-      prior.current = listSignature;
-      if (model.authenticated && model.configured) void model.reload("catalogue");
-    }
-  }, [listSignature, model.authenticated, model.configured]);
-  const group = (kind: ResourceKind) =>
-    model.catalogue.data?.groups.find((item) => item.kind === kind);
   return (
     <div className={styles.library}>
       {(model.catalogue.stale ||
@@ -439,7 +379,6 @@ export function ResourceLibraryView({
               </ul>
             </>
           )}
-          <CatalogueDetail group={group("watchlist")} model={model} onCreateTask={onCreateTask} />
         </section>
       )}
       {filter === "channel_follows" && (
@@ -455,11 +394,6 @@ export function ResourceLibraryView({
           ) : (
             <FollowsEditor key={model.owner} model={model} />
           )}
-          <CatalogueDetail
-            group={group("channel_follows")}
-            model={model}
-            onCreateTask={onCreateTask}
-          />
         </section>
       )}
     </div>
@@ -484,7 +418,6 @@ export default function ResourceLibrary({
   watchlist?: WatchlistModel;
   children: ReactNode | ((model: ResourceLibraryModel) => ReactNode);
   onOpenWatchlist?: () => void;
-  onCreateTask?: (selection: ResourceSelection) => void;
 }) {
   const auth = useAuth();
   const owner = auth.status === "authenticated" && auth.profile ? auth.sessionKey : null;
@@ -501,7 +434,7 @@ export default function ResourceLibrary({
     workspaceScope,
     externalWatchlist: Boolean(watchlist),
     followsNeeded: filter === "channel_follows",
-    catalogueNeeded: filter !== "holdings" || holdingsCatalogueNeeded,
+    catalogueNeeded: filter === "holdings" && holdingsCatalogueNeeded,
     resourceDisplay,
     holdingsPublication,
   });

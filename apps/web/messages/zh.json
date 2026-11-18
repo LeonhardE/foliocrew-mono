@@ -737,7 +737,6 @@
     "discoveryDisabled": "此环境尚未启用资源目录。现有列表及持仓操作仍可使用。",
     "historyHelp": "后续修改更新当前资源；已保存的任务和运行证据保留原版本。",
     "revision": "版本 {revision}",
-    "useInTask": "用于任务",
     "instruments": {
       "stock": "股票",
       "index": "指数"

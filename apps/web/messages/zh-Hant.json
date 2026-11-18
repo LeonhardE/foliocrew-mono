@@ -737,7 +737,6 @@
     "discoveryDisabled": "此環境尚未啟用資源目錄。現有列表及持倉操作仍可使用。",
     "historyHelp": "後續修改更新當前資源；已儲存的任務和執行證據保留原版本。",
     "revision": "版本 {revision}",
-    "useInTask": "用於任務",
     "instruments": {
       "stock": "股票",
       "index": "指數"
