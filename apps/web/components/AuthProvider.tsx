@@ -179,21 +179,18 @@ function hubOwnerRule(path: string, method: PrivateMethod): EncryptedRule | null
   if (center) {
     rule = {
       method: method as EncryptedRule["method"],
-      ...(center.kind === "read"
+      ...(center.kind !== "center"
         ? {}
         : {
-            keys:
-              center.kind === "task-detail"
-                ? ["contractVersion", "includePacket", "includeAttribution"]
-                : /\/(commands|manual)$/.test(pathname)
-                  ? ["contractVersion", "command"]
-                  : pathname.endsWith("/trash/query")
-                    ? ["contractVersion", "cursor"]
-                    : /\/operations\/[^/]+\/cancel$/.test(pathname)
-                      ? ["contractVersion", "fingerprint"]
-                      : /\/(maintenance|cancel)$/.test(pathname)
-                        ? ["contractVersion"]
-                        : ["contractVersion", "request"],
+            keys: /\/(commands|manual)$/.test(pathname)
+              ? ["contractVersion", "command"]
+              : pathname.endsWith("/trash/query")
+                ? ["contractVersion", "cursor"]
+                : /\/operations\/[^/]+\/cancel$/.test(pathname)
+                  ? ["contractVersion", "fingerprint"]
+                  : /\/(maintenance|cancel)$/.test(pathname)
+                    ? ["contractVersion"]
+                    : ["contractVersion", "request"],
           }),
       taskDetail: center.kind === "task-detail",
       idempotent: center.operation,
@@ -489,7 +486,9 @@ function encryptedRequestHeaders(
   const method = options.method ?? "GET";
   // Snapshot reads and writes share a path, but have independently closed bodies.
   if (method !== rule.method) throw new Error("Invalid private API request");
-  if (rule.keys) {
+  if (rule.taskDetail) {
+    if (!taskDetailRequest(options.json)) throw new Error("Invalid private API request");
+  } else if (rule.keys) {
     const value = options.json;
     if (
       !value ||
@@ -501,8 +500,6 @@ function encryptedRequestHeaders(
       throw new Error("Invalid private API request");
   } else if (options.json !== undefined) throw new Error("Invalid private API request");
   if (rule.holdingsView && !holdingsViewRequest(options.json, rule.holdingsView))
-    throw new Error("Invalid private API request");
-  if (rule.taskDetail && !taskDetailRequest(options.json))
     throw new Error("Invalid private API request");
   if (rule.taskOverview && !taskOverviewRequest(options.json))
     throw new Error("Invalid private API request");

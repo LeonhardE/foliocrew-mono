@@ -176,6 +176,7 @@ function harness({ count = 2, respond, open, overviewEnabled = true, readDetail 
   return {
     workspace,
     calls,
+    requestPrivate,
     opens,
     render,
     async ready() {
@@ -904,6 +905,13 @@ test("late Worker success or failure cannot cross an Owner or unlock generation 
   }
 });
 
+function currentVaultFixture() {
+  return {
+    contractVersion: types.TASK_CONTRACT,
+    vault: { vaultId: "vault_A", version: 1 },
+    sources: [],
+  };
+}
 function detailFixture(id, packet, patch = {}) {
   return {
     contractVersion: types.TASK_CONTRACT,
@@ -920,13 +928,16 @@ function detailFixture(id, packet, patch = {}) {
     legacy: null,
     attribution: null,
     packet,
+    taskMetadata: fixtures.metadata(Number(id.split("_")[1])),
+    vaultResponse: { status: "ready", data: currentVaultFixture() },
     ...patch,
   };
 }
 const syntheticForm = () =>
   compile("../lib/task-forms.ts", { "./task-types": types }).defaultTask("custom");
-test("one selected-task query starts beside vault verification, supplies the body and verified executor state, and a fresh revisit sends nothing", async () => {
+test("one selected-task query and manual history start together; verified vault unlocks the body and executor state and a fresh revisit sends nothing", async () => {
   let releaseVault,
+    receivedVault,
     verifications = 0;
   const h = harness({
     open: () => ({ ...syntheticForm(), name: "Synthetic", goal: "Research" }),
@@ -952,10 +963,14 @@ test("one selected-task query starts beside vault verification, supplies the bod
       verifications++;
       return s;
     };
-    h.workspace.refreshVault = () =>
-      new Promise((resolve) => {
+    h.workspace.refreshVault = async (signal, forWrite, response) => {
+      assert.equal(signal.aborted, false);
+      assert.equal(forWrite, false);
+      receivedVault = await (await response()).json();
+      return new Promise((resolve) => {
         releaseVault = resolve;
       });
+    };
     const before = h.calls.length;
     const opening = h.current.m.openTask("task_1");
     let result = await h.ready();
@@ -963,13 +978,20 @@ test("one selected-task query starts beside vault verification, supplies the bod
     const query = h.calls.slice(before).filter((c) => c.path.endsWith("/detail/query"));
     assert.equal(query.length, 1);
     assert.equal(query[0].options.json.includePacket, true);
-    assert.equal(verifications, 1);
+    assert.equal(query[0].options.json.includeVault, true);
+    assert.deepEqual(receivedVault, currentVaultFixture());
+    assert.equal(verifications, 0);
     assert.equal(result.m.selected, null);
+    assert.deepEqual(
+      h.calls.slice(before).map((c) => c.path.split("/").at(-1)),
+      ["query", "manual"],
+    );
     releaseVault(h.workspace.vault);
     await opening;
     result = await h.ready();
     assert.equal(result.m.selected.taskId, "task_1");
     assert.equal(result.c.executors.status, "ready");
+    assert.equal(verifications, 1);
     const paths = h.calls.slice(before).map((c) => c.path);
     assert.equal(
       paths.some(
@@ -1095,7 +1117,7 @@ test("a new selection discards a late body, state and early manual history even 
   }
 });
 
-test("a fresh included packet opens after vault verification while an independent state query is still outstanding", async () => {
+test("a fresh inline packet cannot open until the selected vault response is verified", async () => {
   let finish;
   const h = harness({
     readDetail: require("./task-overview-helpers.cjs").detail.readTaskDetail,
@@ -1118,13 +1140,13 @@ test("a fresh included packet opens after vault verification while an independen
     const opened = h.current.m.openTask("task_1");
     let result = await h.ready();
     assert.equal(typeof finish, "function");
-    assert.equal(result.m.selected?.taskId, "task_1");
+    assert.equal(result.m.selected, null);
     assert.equal(result.c.executors.status, "loading");
     finish();
     await opened;
     result = await h.ready();
-    assert.equal(result.m.selected?.taskId, "task_1");
-    assert.equal(result.c.executors.status, "error");
+    assert.equal(result.m.selected, null);
+    assert.ok(result.m.error);
     assert.equal(h.calls.filter((c) => c.path === "/api/v2/tasks/task_1").length, 0);
     assert.equal(h.calls.filter((c) => c.path.endsWith("/tasks/task_1/manual")).length, 1);
   } finally {
@@ -1161,6 +1183,257 @@ test("opening a task whose historical run is already in the overview keeps the f
     assert.equal(m.m.overview.receipt, receipt);
     assert.equal(m.r.unreadCounts.task_1, 1);
     assert.equal(h.calls.filter((c) => c.path.includes("?limit=")).length, 0);
+  } finally {
+    h.close();
+  }
+});
+
+function selectedReadFixture(id, options, patch = {}) {
+  const meta = fixtures.metadata(Number(id.split("_")[1]));
+  const wire = detailFixture(
+    id,
+    options.includePacket ? { status: "ready", data: fixtures.packet(meta) } : null,
+    patch,
+  );
+  if (!options.includeVault) {
+    delete wire.taskMetadata;
+    delete wire.vaultResponse;
+  }
+  return Response.json(wire);
+}
+
+function selectionHarness(patch = () => ({})) {
+  const h = harness({
+    readDetail: require("./task-overview-helpers.cjs").detail.readTaskDetail,
+    open: () => ({ ...syntheticForm(), name: "Synthetic", goal: "Research" }),
+    respond: (path, options) => {
+      if (path.endsWith("/detail/query")) {
+        const id = path.split("/").at(-3);
+        return selectedReadFixture(id, options.json, patch(id));
+      }
+      if (path.endsWith("/manual")) return Response.json({ items: [] });
+      if (path === "/api/v2/vaults/current") return Response.json(currentVaultFixture());
+      if (path === "/api/v2/tasks/task_1")
+        return Response.json(fixtures.packet(fixtures.metadata(1)));
+    },
+  });
+  h.workspace.loadTaskCenterPending = async () => null;
+  h.workspace.verifyTaskCenterState = async (s) => s;
+  h.workspace.refreshVault = async (signal, forWrite, bundled) => {
+    assert.equal(forWrite, false);
+    const response = bundled
+      ? await bundled()
+      : await h.requestPrivate("agent-hub", "/api/v2/vaults/current", h.workspace.owner, {
+          signal,
+        });
+    const dto = await response.json();
+    assert.deepEqual(dto, currentVaultFixture());
+    return h.workspace.vault;
+  };
+  return h;
+}
+
+test("an unavailable vault retries only its normal GET, without repeating the detail, body or controls", async () => {
+  const h = selectionHarness(() => ({ vaultResponse: { status: "unavailable" } }));
+  try {
+    await h.ready();
+    h.advance(30_001);
+    const before = h.calls.length;
+    const opening = h.current.m.openTask("task_1");
+    await h.ready();
+    await opening;
+    const result = await h.ready();
+    assert.equal(result.m.selected.taskId, "task_1");
+    assert.equal(result.c.runState, "ready");
+    const paths = h.calls.slice(before).map((c) => c.path);
+    assert.equal(paths.length, 3);
+    assert.equal(paths.filter((p) => p.endsWith("/detail/query")).length, 1);
+    assert.equal(paths.filter((p) => p.endsWith("/manual")).length, 1);
+    assert.equal(paths.filter((p) => p === "/api/v2/vaults/current").length, 1);
+  } finally {
+    h.close();
+  }
+});
+
+test("an inline carrier is renewed only by a new complete head and verified bundled vault, dated at network receipt", async () => {
+  const h = selectionHarness();
+  try {
+    await h.ready();
+    h.advance(29_000);
+    let release;
+    const refresh = h.workspace.refreshVault;
+    let vaultReads = 0;
+    h.workspace.refreshVault = async (...args) => {
+      vaultReads++;
+      const verified = await refresh(...args);
+      if (vaultReads === 1)
+        await new Promise((resolve) => {
+          release = resolve;
+        });
+      return verified;
+    };
+    const before = h.calls.length;
+    const select = async () => {
+      const opening = h.current.m.openTask("task_1");
+      await h.ready();
+      await opening;
+      const result = await h.ready();
+      assert.equal(result.m.selected?.taskId, "task_1");
+      assert.equal(result.c.runState, "ready");
+    };
+    const first = h.current.m.openTask("task_1");
+    await h.ready();
+    assert.equal(typeof release, "function");
+    h.advance(7_000);
+    release();
+    await first;
+    assert.equal((await h.ready()).m.selected.taskId, "task_1");
+    // Overview evidence has now expired, while the new network receipt is only seven seconds old.
+    h.advance(20_000);
+    await select();
+    assert.equal(vaultReads, 1);
+    // Neither decrypt completion nor the intervening control-only read extends the new receipt.
+    h.advance(3_001);
+    await select();
+    assert.equal(vaultReads, 2);
+    const queries = h.calls.slice(before).filter((c) => c.path.endsWith("/detail/query"));
+    assert.deepEqual(
+      queries.map((c) => [!!c.options.json.includeVault, c.options.json.includePacket]),
+      [
+        [true, false],
+        [false, false],
+        [true, false],
+      ],
+    );
+    assert.equal(
+      h.calls
+        .slice(before)
+        .filter((c) => c.path === "/api/v2/tasks/task_1" || c.path === "/api/v2/vaults/current")
+        .length,
+      0,
+    );
+  } finally {
+    h.close();
+  }
+});
+
+test("expired local ciphertext needs a fresh head GET when the vault was read separately", async () => {
+  let unavailable = false;
+  const h = selectionHarness(() =>
+    unavailable ? { vaultResponse: { status: "unavailable" } } : {},
+  );
+  try {
+    await h.ready();
+    const first = h.current.m.openTask("task_1");
+    await h.ready();
+    await first;
+    await h.ready();
+    unavailable = true;
+    h.advance(30_001);
+    const before = h.calls.length;
+    const second = h.current.m.openTask("task_1");
+    await h.ready();
+    await second;
+    assert.equal((await h.ready()).m.selected.taskId, "task_1");
+    const paths = h.calls.slice(before).map((c) => c.path);
+    assert.equal(paths.filter((p) => p === "/api/v2/vaults/current").length, 1);
+    assert.equal(paths.filter((p) => p === "/api/v2/tasks/task_1").length, 1);
+  } finally {
+    h.close();
+  }
+});
+
+test("invalid scope, metadata, or vault verification hides the selected body and controls and never falls back", async () => {
+  for (const fault of ["head", "vault-scope", "missing-data", "revoked", "vault-version", "root"]) {
+    let bad = true;
+    const h = selectionHarness(() => {
+      if (!bad) return {};
+      if (fault === "head") return { taskMetadata: { ...fixtures.metadata(1), objectRevision: 7 } };
+      if (fault === "vault-scope")
+        return {
+          vaultResponse: {
+            status: "ready",
+            data: { ...currentVaultFixture(), vault: { vaultId: "vault_B" } },
+          },
+        };
+      if (fault === "missing-data") return { vaultResponse: { status: "ready" } };
+      return {};
+    });
+    try {
+      await h.ready();
+      const before = h.calls.length;
+      const verify = h.workspace.refreshVault;
+      h.workspace.refreshVault = async (...args) => {
+        const v = await verify(...args);
+        if (!bad) return v;
+        if (fault === "revoked") throw new Error("revoked");
+        if (fault === "vault-version") return { ...v, version: 2 };
+        if (fault === "root") return { ...v, rootKeyId: "root_B" };
+        return v;
+      };
+      const namesOpens = h.opens.length;
+      const opening = h.current.m.openTask("task_1");
+      await h.ready();
+      await opening;
+      let result = await h.ready();
+      assert.equal(result.m.selected, null, fault);
+      assert.ok(result.m.error, fault);
+      assert.equal(result.c.selectedRecord?.taskId, undefined, fault);
+      assert.equal(h.opens.length, namesOpens, fault);
+      assert.equal(
+        h.calls
+          .slice(before)
+          .some((c) => c.path === "/api/v2/vaults/current" || c.path === "/api/v2/tasks/task_1"),
+        false,
+        fault,
+      );
+      bad = false;
+      const next = result.m.openTask("task_1");
+      await h.ready();
+      await next;
+      result = await h.ready();
+      assert.equal(result.m.selected?.taskId, "task_1", fault);
+      assert.equal(result.c.runState, "ready", fault);
+      assert.equal(
+        h.calls.slice(before).filter((c) => c.options.json?.includeVault).length,
+        2,
+        fault,
+      );
+    } finally {
+      h.close();
+    }
+  }
+});
+
+test("a late vault verification cannot publish the former selection or its available actions", async () => {
+  const h = selectionHarness();
+  try {
+    await h.ready();
+    const verifier = h.workspace.refreshVault;
+    let release,
+      count = 0;
+    h.workspace.refreshVault = async (...args) => {
+      const vault = await verifier(...args);
+      if (++count === 1)
+        await new Promise((resolve) => {
+          release = resolve;
+        });
+      return vault;
+    };
+    const a = h.current.m.openTask("task_1");
+    await h.ready();
+    assert.equal(typeof release, "function");
+    const b = h.current.m.openTask("task_2");
+    await h.ready();
+    await b;
+    let result = await h.ready();
+    assert.equal(result.m.selected.taskId, "task_2");
+    release();
+    await a;
+    result = await h.ready();
+    assert.equal(result.m.selected.taskId, "task_2");
+    assert.equal(result.c.selectedRecord.taskId, "task_2");
+    assert.equal(result.c.runState, "ready");
   } finally {
     h.close();
   }

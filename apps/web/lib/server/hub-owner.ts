@@ -91,6 +91,11 @@ function detailResponse(path: string, body: unknown, request: unknown, uid: stri
     const v = parseTaskDetail(body, vault, task, request);
     return (
       taskCenterResponse(`/api/v3/task-center/${vault}/tasks/${task}`, v.state) &&
+      (v.vaultResponse?.status !== "ready" ||
+        (hubResponse("/api/v2/vaults/current", "GET", v.vaultResponse.data) &&
+          (!v.vaultResponse.data.vault.archive ||
+            v.vaultResponse.data.vault.archive.ownerSubject ===
+              createHash("sha256").update(uid).digest("hex")))) &&
       (v.packet?.status !== "ready" ||
         hubResponse(`/api/v2/tasks/${task}`, "GET", v.packet.data)) &&
       (v.legacy?.status !== "ready" ||

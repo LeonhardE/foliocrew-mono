@@ -807,24 +807,27 @@ export function useTasks(
       const serial = ++selection.current;
       const listItem = stateRef.current.items.find((item) => item.taskId === taskId);
       const vaultVersion = live.current.workspace.vault?.version;
-      const key = JSON.stringify([scope, vaultVersion, taskId]);
+      const rootKeyId = live.current.workspace.vault?.rootKeyId;
+      const key = JSON.stringify([scope, rootKeyId, vaultVersion, taskId]);
       const previousRead = version === undefined && listItem ? details.current.get(key) : undefined;
       const age = previousRead ? Date.now() - previousRead.at : Infinity;
-      const cached =
+      const matchingRead =
         previousRead &&
         age >= 0 &&
-        age < 30_000 &&
         listItem &&
         sameTaskMetadata(previousRead.packet.metadata, listItem)
           ? previousRead
           : undefined;
+      const cached = age < 30_000 ? matchingRead : undefined;
       clearSelectedDetail();
       const listedHead = version === undefined ? listItem : undefined;
       const knownPacket = !cached && listedHead && overview.current!.currentTaskPacket(listedHead);
+      const localPacket = knownPacket ? knownPacket.packet : matchingRead?.packet;
       let detail: SelectedTaskDetail | null = null;
+      let verifiedReceiptAt: number | undefined;
       if (readDetail && listedHead && vaultVersion !== undefined) {
         const controller = new AbortController();
-        const includePacket = !cached && !knownPacket;
+        const includePacket = !cached && !localPacket;
         let pending: Promise<TaskDetailRead> | undefined;
         let cancelled = false;
         const current = () =>
@@ -833,6 +836,7 @@ export function useTasks(
           scope === live.current.scope &&
           live.current.active &&
           live.current.visible &&
+          live.current.workspace.vault?.rootKeyId === rootKeyId &&
           live.current.workspace.vault?.version === vaultVersion;
         detail = {
           id: Symbol(),
@@ -861,8 +865,10 @@ export function useTasks(
                 includePacket,
                 true,
                 controller.signal,
+                !cached,
               )
-                .then((value) => {
+                .then(async (value) => {
+                  const receivedAt = Date.now();
                   if (!current()) throw new TaskError("cancelled");
                   if (
                     value.state.taskId !== taskId ||
@@ -870,6 +876,28 @@ export function useTasks(
                     value.state.executionEpoch !== listedHead.executionEpoch
                   )
                     throw new TaskError("version_conflict");
+                  if (!cached) {
+                    if (!value.taskMetadata || !value.vaultResponse)
+                      throw new TaskError("invalid_response");
+                    if (!sameTaskMetadata(value.taskMetadata, listedHead))
+                      throw new TaskError("version_conflict");
+                    const bundledVault = value.vaultResponse;
+                    const verified = await live.current.workspace.refreshVault(
+                      controller.signal,
+                      false,
+                      bundledVault.status === "ready"
+                        ? async () => Response.json(bundledVault.data)
+                        : undefined,
+                    );
+                    if (!current()) throw new TaskError("cancelled");
+                    if (
+                      verified.vaultId !== listedHead.vaultId ||
+                      verified.version !== vaultVersion ||
+                      verified.rootKeyId !== rootKeyId
+                    )
+                      throw new TaskError("version_conflict");
+                    if (bundledVault.status === "ready") verifiedReceiptAt = receivedAt;
+                  }
                   return value;
                 })
                 .catch((error) => {
@@ -895,6 +923,7 @@ export function useTasks(
       try {
         await operation(true, async (context) => {
           let head: EncryptedTask, packet: EncryptedTask, form: TaskContent;
+          let inlineAt: number | undefined;
           if (cached) {
             ({ packet, form } = structuredClone(cached));
             head = packet;
@@ -903,31 +932,39 @@ export function useTasks(
               encryptedTask(
                 await api(`/api/v2/tasks/${taskId}`, context, { retryAdmission: true }),
               );
-            const readSelectedPacket = async () => {
-              if (knownPacket) return null;
-              if (!detail) return readHead();
+            if (detail) {
               const combined = await detail.read();
+              context.assert();
+              if (!detail.current()) throw new TaskError("cancelled");
               const section = combined.packet;
-              if (!section) throw new TaskError("invalid_response");
-              if (section.status === "unavailable") return readHead();
-              if (!sameTaskMetadata(section.data.metadata, detail.metadata))
+              // Reopen local ciphertext only after this selection verifies its full head and vault.
+              if (localPacket && verifiedReceiptAt !== undefined) {
+                head = localPacket;
+              } else if (localPacket) {
+                const included = overview.current!.currentTaskPacket(detail.metadata);
+                inlineAt = included?.at;
+                head = included?.packet ?? (await readHead());
+              } else if (section?.status === "ready") {
+                head = section.data;
+              } else if (section?.status === "unavailable") {
+                head = await readHead();
+              } else {
+                throw new TaskError("invalid_response");
+              }
+              if (!sameTaskMetadata(head.metadata, detail.metadata))
                 throw new TaskError("version_conflict");
-              return section.data;
-            };
-            // Start the encrypted read alongside vault verification. Only the verified
-            // vault and a still-current receipt may supply content to the Worker.
-            const [verifiedVault, fetched] = await Promise.all([
-              live.current.workspace.refreshVault(context.signal),
-              readSelectedPacket(),
-            ]);
-            context.assert();
-            if (detail && (!detail.current() || vaultVersion !== verifiedVault.version))
-              throw new TaskError("version_conflict");
-            const included =
-              !fetched && listedHead && vaultVersion === verifiedVault.version
-                ? overview.current!.currentTaskPacket(listedHead)
-                : null;
-            head = fetched ?? included?.packet ?? (await readHead());
+            } else {
+              const [verifiedVault, fetched] = await Promise.all([
+                live.current.workspace.refreshVault(context.signal),
+                knownPacket ? null : readHead(),
+              ]);
+              const included =
+                !fetched && listedHead && vaultVersion === verifiedVault.version
+                  ? overview.current!.currentTaskPacket(listedHead)
+                  : null;
+              inlineAt = included?.at;
+              head = fetched ?? included?.packet ?? (await readHead());
+            }
             context.assert();
             packet =
               version === undefined || version === head.metadata.taskVersion
@@ -941,19 +978,19 @@ export function useTasks(
               throw new TaskError("invalid_response");
             form = await live.current.workspace.openTask(packet);
             context.assert();
-            if (serial !== selection.current) return;
+            if (serial !== selection.current || (detail && !detail.current())) return;
             if (version === undefined && vaultVersion === live.current.workspace.vault?.version) {
               details.current.set(
                 key,
-                structuredClone({ at: included?.at ?? Date.now(), packet, form }),
+                structuredClone({ at: verifiedReceiptAt ?? inlineAt ?? Date.now(), packet, form }),
               );
             }
           }
           context.assert();
-          if (serial !== selection.current) return;
+          if (serial !== selection.current || (detail && !detail.current())) return;
           const existingDrafts = await live.current.workspace.listTaskDrafts();
           context.assert();
-          if (serial !== selection.current) return;
+          if (serial !== selection.current || (detail && !detail.current())) return;
           const draft = existingDrafts.find((row) => row.slot === taskId);
           editor.current = {
             scope: live.current.scope!,

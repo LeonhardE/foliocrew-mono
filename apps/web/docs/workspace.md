@@ -688,7 +688,10 @@ verification queue. Owner, lock and unlock-generation changes still discard late
 and cannot mark the homepage ready.
 
 Selecting a current task uses the Owner-only `POST /api/v3/task-center/{vault}/tasks/{task}/detail/query`.
-The task and executor views share a request within that selection. The vault is verified independently.
+The task and executor views share a request within that selection. A client can request the original
+current-vault response and full task metadata in the same transaction. The browser passes the response
+through the usual vault and source checks. If that section is unavailable it fetches the original
+vault endpoint. Only a fresh, matching full task head can reconfirm an already verified inline packet.
 The browser requests a packet only when it needs the ciphertext. For older tasks, the response can
 also include the original grant and its provider attribution. Existing packet, task state, ownership
 and version checks apply to the corresponding sections. An explicitly unavailable section can use
