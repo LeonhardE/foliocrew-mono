@@ -207,6 +207,19 @@ def require_web_owner_consumer(directory):
     )
 
 
+def require_workspace_edge_consumer(directory):
+    require_consumer_marker(
+        directory / "workspace-edge.consumer.json",
+        {
+            "schemaVersion": 1,
+            "target": "web",
+            "configurationContract": "workspace-edge.v1",
+            "terraformVariable": "workspace_edge",
+        },
+        "Web source has not adopted the reviewed Workbench edge contract.",
+    )
+
+
 def require_browser_origins_consumer(directory, target):
     require_consumer_marker(
         directory / "browser-origins.consumer.json",
@@ -377,6 +390,8 @@ def registry(root, target, instance=None):
         require_web_owner_consumer(directory)
     if instance is not None and "browserOrigins" in instance:
         require_browser_origins_consumer(directory, target)
+    if instance is not None and "workspaceEdge" in instance:
+        require_workspace_edge_consumer(directory)
     return policy, selected, directory
 
 

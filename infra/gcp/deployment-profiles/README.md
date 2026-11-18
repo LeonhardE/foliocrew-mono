@@ -557,3 +557,19 @@ consumer adopts the candidate in its own change. Verify the canonical origin,
 service identity and audience in that target's plan and compare the exact admitted
 origins. On rollback of a public link or owner default, keep allowing both
 workspace origins until the retiring origin's consumers are verified clear.
+
+## Managed Workbench edge deployment
+
+An adopted Web target can add a closed `workspaceEdge` object with `browserOrigin`
+and `publicKey`. The origin is an exact HTTPS DNS origin. The key is the canonical
+unpadded base64url representation of a 32-byte Ed25519 public key. Use
+`add_workspace_edge` with the current reviewed Web deployment fingerprint to
+build a candidate. The result retains the existing source, adoption anchors,
+public build inputs and owner configuration. Other targets do not accept this
+option. The private signing key stays in the Worker.
+
+Render the updated `_DEPLOYMENT_CONFIG` with `canonical` and
+`_DEPLOYMENT_SHA256` with `digest`. The generic runner accepts the optional
+projection only after the exact Web consumer marker is present. It sends
+`workspace_edge` alongside the other reviewed inputs. Review the target plan
+and retain the prior complete projection for rollback.
