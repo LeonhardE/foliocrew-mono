@@ -23,6 +23,8 @@ function compile(file, imports = {}, globals = {}) {
         return compile("../lib/resource-display.ts", {}, globals);
       if (["../display-name-contract", "./display-name-contract"].includes(name))
         return compile("../lib/display-name-contract.ts");
+      if (name === "@/lib/report-provider-attribution")
+        return compile("../lib/report-provider-attribution.ts");
       if (name === "./task-types") return compile("../lib/task-types.ts");
       if (name === "./resource-library") return contracts;
       if (

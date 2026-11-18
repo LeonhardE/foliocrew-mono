@@ -570,9 +570,19 @@ reload, and display actual pickup/Run/result stages. Explicit copy-to-Agent
 continuation is offered while waiting; this release does not claim automatic
 native dispatch. No production migration or online acceptance is performed.
 
-Task-list navigation does not discover Agent credentials or load the resource catalogue. Opening a
-task detail or a new/edit workflow explicitly requests executor, assignment and resource-choice
-metadata; Agent Management always requests connection discovery. A resource handoff waits for a
+Reopening a recently viewed task can reuse its verified current detail for 30 seconds. The
+eight-entry, 4 MiB page-memory cache requires matching task metadata, vault version and unlock
+scope. It clears on explicit metadata refresh, mutation, route exit, visibility loss or lock.
+On first open, the current overview can supply the original encrypted packet after a fresh vault
+check. The worker still verifies it and its original receipt time bounds reuse. Historical detail
+requests read the requested version. Saves still verify the current vault, task head and resource
+bindings before sealing a change.
+
+Task-list navigation does not discover Agent credentials or load the resource catalogue. A task
+detail reads the verified assignments for that task. A legacy task with resource bindings can
+read its original authority and resolve its connection through the current vault’s provider map.
+An executor read failure offers retry in that field. The task editor and Agent Management request
+credential discovery when they need the available connections. A resource handoff waits for a
 confirmed catalogue before seeding the task, and source read failures keep a local retry.
 Leaving the route cancels display discovery while preserving the existing operation lane and
 same-session verified state. Task metadata and real report unread feeds still load in full on the

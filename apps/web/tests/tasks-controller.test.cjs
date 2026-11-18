@@ -45,6 +45,7 @@ function compile(file, imports = {}, globals = {}) {
     Date,
     Intl,
     crypto: webcrypto,
+    structuredClone,
     ...globals,
   });
   return module.exports;
@@ -904,6 +905,38 @@ test("deferred HTTP body is fenced before private open after lock; deadlines rel
   slow.resolve(content());
   h2.unmount();
 });
+test("returning to a verified task reuses its exact current detail until refresh or hiding", async () => {
+  const a = meta();
+  const b = meta(1, { taskId: "task_B" });
+  const h = harness({
+    rows: [a, b],
+    transport({ route }) {
+      if (route === "/api/v2/tasks/task_B") return response(task(b));
+    },
+  });
+  const countA = () => h.calls.filter((c) => c.route === "/api/v2/tasks/task_A").length;
+  let model = await h.ready();
+  await model.openTask(a.taskId);
+  await h.render().openTask(b.taskId);
+  const reads = countA();
+  const opens = h.opens.length;
+  await h.render().openTask(a.taskId);
+  model = h.render();
+  assert.equal(model.selected.taskId, a.taskId);
+  assert.equal(countA(), reads);
+  assert.equal(h.opens.length, opens);
+  await model.reload();
+  await h.render().openTask(a.taskId);
+  assert.equal(countA(), reads + 1);
+  h.visibility(false);
+  h.render();
+  h.visibility(true);
+  model = await h.ready();
+  await model.openTask(a.taskId);
+  assert.equal(countA(), reads + 2);
+  h.unmount();
+});
+
 test("late selected-task draft listing cannot overwrite the more recent selected task", async () => {
   const h = harness({
     transport({ route }) {

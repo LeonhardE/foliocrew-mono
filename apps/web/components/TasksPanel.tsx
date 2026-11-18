@@ -966,14 +966,14 @@ export default function TasksPanel({
     overview: true,
     catalogueRequested: Boolean(request && request.owner === workspace.owner),
   });
-  // A task list and its real unread counts do not need Agent discovery.
-  // Details and every new/edit workflow still enable executor/assignment reads.
+  const [editing, setEditing] = useState(false);
+  // Only the editor needs eligible connection and credential discovery.
   const needsAgents =
     active &&
     model.unlocked &&
     workspace.owner === model.owner &&
     workspace.phase === "unlocked" &&
-    Boolean(model.selected || model.form);
+    Boolean(editing || model.dirty || (model.form && !model.selected));
   useEffect(() => {
     onAgentConnectionsNeeded?.(needsAgents);
   }, [needsAgents, onAgentConnectionsNeeded]);
@@ -1041,6 +1041,7 @@ export default function TasksPanel({
         {linkedTask && model.dirty && <InlineError message={tc("unsavedLink")} />}
         <TaskCenterView
           active={active}
+          onEditingChange={setEditing}
           workspace={workspace}
           model={model}
           center={center}
