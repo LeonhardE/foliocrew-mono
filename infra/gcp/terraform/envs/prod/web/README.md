@@ -129,6 +129,20 @@ Web receives only its separately reviewed service invoker, with no Firestore,
 KMS, Secret, Firebase user-directory or token-creator grants. Muse OAuth/adapter
 activation remains separate from owner forwarding.
 
+## Managed Workbench edge settings
+
+The optional `workspace_edge` object adds two server-only settings to the reviewed
+owner environment. Supply the exact `browser_origin` and an unpadded base64url
+`public_key` for the Worker. Only the public verification key is configured on Cloud
+Run. The Worker holds the signing key. Keep the value null until the paired Web
+image and Worker are ready to rehearse together.
+
+The complete plan should change only these settings on Web's existing guarded
+controller. Review it with the same source, saved-plan and release checks as the
+owner environment. Compare the existing image digest, traffic and service UID
+after apply. To disable branded proof admission, restore the previous reviewed
+profile and confirm the legacy origin still works.
+
 ## Shared browser contract releases
 
 The existing Web image trigger also watches `packages/encrypted-workspace/**`,

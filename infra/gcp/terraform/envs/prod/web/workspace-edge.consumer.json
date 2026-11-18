@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "target": "web",
+  "configurationContract": "workspace-edge.v1",
+  "terraformVariable": "workspace_edge"
+}

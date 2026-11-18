@@ -2,7 +2,13 @@ locals {
   project_id       = var.deployment.project_id
   region           = var.deployment.region
   existing_web_uid = var.deployment.existing_service_uid
-  environment      = var.owner_environment == null ? {} : var.owner_environment
+  environment = tomap(merge(
+    var.owner_environment == null ? {} : var.owner_environment,
+    var.workspace_edge == null ? {} : {
+      FOLIOCREW_EDGE_BROWSER_ORIGIN = var.workspace_edge.browser_origin
+      FOLIOCREW_EDGE_PUBLIC_KEY     = var.workspace_edge.public_key
+    },
+  ))
 }
 
 provider "google" {
