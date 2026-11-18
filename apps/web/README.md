@@ -1,4 +1,4 @@
-# FolioView Web
+# Foliocrew Web
 
 Next.js frontend for Market, encrypted holdings/resources, Task Center with results, Agent Management and
 Settings. `/` and `/market` are equivalent; `/resources`, `/tasks`, `/agents`, `/inbox` and

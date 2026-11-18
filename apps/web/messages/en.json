@@ -1,7 +1,7 @@
 {
   "nav": {
     "skip": "Skip to chart",
-    "home": "FolioView home",
+    "home": "Foliocrew home",
     "primary": "Workspace navigation",
     "markets": "Markets",
     "settings": "Settings",
@@ -157,7 +157,7 @@
   "settings": {
     "eyebrow": "Your workspace",
     "title": "Settings",
-    "description": "Make FolioView feel right for you.",
+    "description": "Make Foliocrew feel right for you.",
     "accountNote": "Changes save automatically to your account and follow you across devices.",
     "guestNote": "Sign in to keep settings across devices.",
     "appearance": "Appearance",
@@ -1377,7 +1377,7 @@
     "reportReceived": "Report received",
     "runReceived": "Run received",
     "notObserved": "No run receipt yet",
-    "planEvidenceHelp": "Muse reports plan status. The latest activity reflects receipts received by FolioView.",
+    "planEvidenceHelp": "Muse reports plan status. The latest activity reflects receipts received by Foliocrew.",
     "openInbox": "Open Inbox",
     "linkedAt": "Connected at",
     "connectionId": "Connection ID",
@@ -1445,7 +1445,7 @@
     "confirm": "Authorize and connect",
     "cancel": "Cancel",
     "connect": "Connect {provider}",
-    "reconnectHelp": "Reconnect FolioView in {provider}, then open the authorization link it provides. For first-time setup, use the connection address below.",
+    "reconnectHelp": "Reconnect Foliocrew in {provider}, then open the authorization link it provides. For first-time setup, use the connection address below.",
     "copyAddress": "Copy connection address",
     "copied": "Copied",
     "close": "Close",

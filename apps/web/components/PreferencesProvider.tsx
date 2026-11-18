@@ -343,10 +343,10 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     document.documentElement.lang = languageTag(preferences.language);
     document.title =
       preferences.language === "zh-Hant"
-        ? "FolioView — 你的投資工作台"
+        ? "Foliocrew — 你的投資工作台"
         : preferences.language === "zh"
-          ? "FolioView — 你的投资工作台"
-          : "FolioView — Your investing workspace";
+          ? "Foliocrew — 你的投资工作台"
+          : "Foliocrew — Your investing workspace";
   }, [owner, preferencesPending, preferences.theme, preferences.language, visible, systemTheme]);
 
   const value = useMemo<PreferencesContextValue>(

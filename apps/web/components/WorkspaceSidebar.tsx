@@ -159,14 +159,14 @@ export function WorkspaceSidebar({
               }
             }}
             aria-label={t("nav.home")}
-            title={compact ? "FolioView" : undefined}
+            title={compact ? "Foliocrew" : undefined}
           >
             <svg viewBox="0 0 32 32" fill="none" className={styles.brandMark} aria-hidden="true">
               <path d="M7 24V8h18M7 16h13" stroke="currentColor" strokeWidth="3" />
               <path d="m14 25 5-6 4 3 5-8" stroke="currentColor" strokeWidth="2" />
             </svg>
             <strong className={styles.label}>
-              Folio<span>View</span>
+              Folio<span>crew</span>
             </strong>
           </a>
           <p className={`${styles.slogan} ${styles.label}`}>{t("nav.workspace")}</p>

@@ -141,7 +141,7 @@ export function CandlestickChart({
           if (!performance.getEntriesByName("folioview:first-chart").length) {
             performance.mark("folioview:first-chart");
             console.info(
-              `[FolioView performance] first chart painted at ${Math.round(performance.now())} ms from navigation`,
+              `[Foliocrew performance] first chart painted at ${Math.round(performance.now())} ms from navigation`,
             );
           }
         });

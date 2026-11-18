@@ -186,8 +186,8 @@ test("creation defaults to local platform UV/PRF without exporting the credentia
   assert.equal(options.authenticatorSelection.residentKey, "required");
   assert.equal(options.hints.join(","), "client-device");
   assert.equal(options.attestation, "none");
-  assert.equal(options.user.name, "FolioView account");
-  assert.equal(options.user.displayName, "FolioView encrypted resources");
+  assert.equal(options.user.name, "Foliocrew account");
+  assert.equal(options.user.displayName, "Foliocrew encrypted resources");
   const domain = new TextEncoder().encode("FolioView/device-keystore/v1");
   assert.deepEqual(options.extensions.prf.eval.first.slice(0, domain.length), domain);
   assert.equal(options.extensions.prf.eval.first[domain.length], 0);

@@ -393,7 +393,7 @@ export function TaskCenterView({
     if (!task || !currentRequest) return;
     try {
       await navigator.clipboard.writeText(
-        `FolioView: use your saved private connection to execute the existing manual request ${currentRequest.snapshot.requestId} for task ${task} (${form?.name ?? ""}). Pick up the original request with pendingManual/beginManual; do not create another request, change scope, renew credentials or share secrets. Return the authorized report through FolioView.`,
+        `Foliocrew: use your saved private connection to execute the existing manual request ${currentRequest.snapshot.requestId} for task ${task} (${form?.name ?? ""}). Pick up the original request with pendingManual/beginManual; do not create another request, change scope, renew credentials or share secrets. Return the authorized report through Foliocrew.`,
       );
       setCopied(provider);
     } catch {

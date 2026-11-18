@@ -307,7 +307,7 @@ test("home and section links share local navigation while modified clicks keep t
   const sidebar = mountSidebar();
   const tree = sidebar.render();
   for (const [name, href, view] of [
-    ["FolioView home", "/market", "markets"],
+    ["Foliocrew home", "/market", "markets"],
     ["Resources", "/resources", "resources"],
   ]) {
     const link = button(tree, name);
