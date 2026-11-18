@@ -38,6 +38,16 @@ must match the bootstrap's explicit project, region and source repository. Produ
 uses the reviewed trigger configuration and binds its exact bytes, instance, source and target to
 the saved plan; remote Cloud Build cannot read a developer's ignored local input file.
 
+### Additional browser origins
+
+The optional `browser_origin_aliases` list defaults to empty. Combine the reviewed
+[User browser origin candidate](../../../../deployment-profiles/README.md#browser-origin-candidates-profile-v6)
+with the active deployment. This source root declares its opt-in in `browser-origins.consumer.json`.
+The controller joins the canonical Web origin and reviewed aliases into `CORS_ORIGINS`.
+User and Hub delegation settings and the Market upstream remain part of the existing deployment.
+Review the full plan and check preflight from the old workspace, the additional origin and an
+unconfigured origin. Keep both admissions available while users rely on them.
+
 ## Ownership and unchanged deployment boundaries
 
 Keep the existing backend, state lineage, lockfiles, resource addresses, import destinations,
