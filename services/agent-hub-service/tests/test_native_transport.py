@@ -3,6 +3,7 @@
 import copy
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
@@ -11,6 +12,7 @@ from test_oauth import CALLBACK, CLIENT, VERIFIER, authorization_params, configu
 
 from app.native_transport import PROFILE, REFRESH_IDLE_SECONDS, SCOPE, NativeTransportService
 from app.oauth import OAuthFailure, OAuthService
+from app.oauth_config import Client, digest
 from app.store import SQLiteHubStore, document_path
 from app.vaults import VaultService
 from folioview_shared.encrypted.errors import ContractError
@@ -56,6 +58,67 @@ class NativeTransportTests(unittest.TestCase):
         status, tokens, _ = self.exchange(code)
         self.assertEqual(status, 200)
         return tokens
+
+    def test_native_records_follow_the_issuing_resource_on_shared_storage(self):
+        origin = "https://second-hub.example"
+        second_client = Client("second_chat", [CALLBACK], provider="chatgpt")
+        config = replace(configuration(), clients=(*configuration().clients, second_client))
+        other = NativeTransportService(
+            self.store,
+            replace(config, issuer=origin, consent_url=origin + "/oauth/consent"),
+            clock=lambda: self.now,
+        )
+        request = self.service.authorize(self.authorize_params, BROWSER)
+        with self.assertRaises(ContractError):
+            other.pending(UID, request, BROWSER)
+        self.assertEqual(self.service.pending(UID, request, BROWSER)["requestId"], request)
+        _, _, code = self.authorize()
+
+        def read_record(service, table, token):
+            path = document_path(table, digest(token))
+            return service.transact(lambda unit: unit.get(path))
+
+        self.assertIsNone(read_record(other, "hub_oauth_codes", code))
+        self.assertFalse(read_record(self.service, "hub_oauth_codes", code)["used"])
+        status, tokens, _ = self.exchange(code)
+        self.assertEqual(status, 200)
+        for field, table in [
+            ("access_token", "hub_oauth_access"),
+            ("refresh_token", "hub_oauth_refresh"),
+        ]:
+            self.assertIsNone(read_record(other, table, tokens[field]))
+            self.assertEqual(
+                read_record(self.service, table, tokens[field])["resource"],
+                self.service.config.resource,
+            )
+        second_request = other.authorize(
+            authorization_params(
+                client_id=second_client.client_id, scope=SCOPE, resource=other.config.resource
+            ),
+            BROWSER,
+        )
+        callback = other.approve(UID, second_request, BROWSER, self.f.vault)
+        second_code = dict(parse_qsl(urlsplit(callback).query))["code"]
+        status, second_tokens, _ = other.protocol(
+            {
+                "grant_type": "authorization_code",
+                "client_id": second_client.client_id,
+                "code": second_code,
+                "redirect_uri": CALLBACK,
+                "code_verifier": VERIFIER,
+                "resource": other.config.resource,
+            },
+            {},
+            "token",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            other.authenticate(second_tokens["access_token"]).owner_subject, self.f.owner
+        )
+        self.assertIsNone(
+            read_record(self.service, "hub_oauth_access", second_tokens["access_token"])
+        )
+        self.assertEqual(self.refresh(tokens["refresh_token"])[0], 200)
 
     def refresh(self, token):
         return self.service.protocol(

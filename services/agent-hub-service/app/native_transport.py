@@ -58,17 +58,28 @@ AUTH_TABLES = {
 
 
 class NativeUnit:
-    """Only five Authlib credential tables are remapped; authority tables stay put."""
+    """Expose native credential records only to their issuing resource."""
 
-    def __init__(self, unit):
+    def __init__(self, unit, resource):
         self.unit = unit
+        self.resource = resource
 
     def _path(self, path):
         table, identifier = path.split("/", 1)
         return AUTH_TABLES.get(table, table) + "/" + identifier
 
     def get(self, path):
-        return self.unit.get(self._path(path))
+        row = self.unit.get(self._path(path))
+        table = path.partition("/")[0]
+        # Authlib may consume or revoke a record immediately after lookup. Match
+        # the resource already persisted by previous releases before returning it.
+        if (
+            row is not None
+            and table in {"hub_oauth_codes", "hub_oauth_access", "hub_oauth_refresh"}
+            and row["resource"] != self.resource
+        ):
+            return None
+        return row
 
     def put(self, path, value):
         return self.unit.put(self._path(path), value)
@@ -209,7 +220,7 @@ class NativeTransportService(OwnerConnectionService):
         self.config = NativeConfig(config)
 
     def transact(self, callback):
-        return self.store.transact(lambda u: callback(NativeUnit(u)))
+        return self.store.transact(lambda u: callback(NativeUnit(u, self.config.resource)))
 
     def metadata(self):
         return {
@@ -315,6 +326,7 @@ class NativeTransportService(OwnerConnectionService):
         if (
             row is None
             or row["expiresAt"] <= self.now()
+            or row["params"]["resource"] != self.config.resource
             or not secrets.compare_digest(row["browserHash"], digest(browser))
             or row["ownerSubject"] not in (None, owner)
         ):

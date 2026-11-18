@@ -38,7 +38,7 @@ class NativeCredentialService:
 
     def _context(self, token):
         def read(unit):
-            p = self.native.principal(NativeUnit(unit), token)
+            p = self.native.principal(NativeUnit(unit, self.native.config.resource), token)
             owner, _, _, conn = self.credentials._native(unit, p)
             identity = stored_identity(unit, owner, p.vault_id, p.connection_id)
             return p, conn, identity
@@ -88,7 +88,7 @@ class NativeCredentialService:
 
     def activation(self, token, intent):
         def read(unit):
-            p = self.native.principal(NativeUnit(unit), token)
+            p = self.native.principal(NativeUnit(unit, self.native.config.resource), token)
             owner, _, _, conn = self.credentials._native(unit, p)
             setup = self.credentials._setup(
                 unit, intent, owner, p.vault_id, p.connection_id, conn, live=False
