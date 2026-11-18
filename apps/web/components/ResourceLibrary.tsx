@@ -418,7 +418,7 @@ export function ResourceLibraryView({
           {model.authenticated && watchlist.data && (
             <>
               {!watchlist.data.items.length && <p className={styles.empty}>{t("noWatchlist")}</p>}
-              <ul className={styles.list}>
+              <ul className={styles.watchlistRows} data-editable={Boolean(shared)}>
                 {watchlist.data.items.map((item) => (
                   <li key={item.symbol}>
                     <strong>{item.symbol}</strong>

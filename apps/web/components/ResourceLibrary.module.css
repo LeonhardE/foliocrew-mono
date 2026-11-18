@@ -127,10 +127,31 @@
   color: var(--muted);
   font-size: 11px;
 }
-.list {
+.list,
+.watchlistRows {
   list-style: none;
   padding: 0;
   margin: 14px 0;
+}
+.watchlistRows li {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 2fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 14px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.watchlistRows[data-editable="true"] li {
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 2fr) minmax(0, 1fr) auto;
+}
+.watchlistRows small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.watchlistRows button {
+  justify-self: end;
 }
 .list li {
   display: flex;
@@ -218,4 +239,18 @@
   padding: 8px 12px;
   background: var(--bg);
   color: var(--text);
+}
+
+@media (max-width: 560px) {
+  .watchlistRows li,
+  .watchlistRows[data-editable="true"] li {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .watchlistRows li > :not(button) {
+    grid-column: 1;
+  }
+  .watchlistRows button {
+    grid-column: 2;
+    grid-row: 1 / 4;
+  }
 }

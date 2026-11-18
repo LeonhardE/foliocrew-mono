@@ -221,6 +221,12 @@ test("real category tabs reveal operative watchlist and follows, with shared-own
   assert.deepEqual(edits, [["add", "AAPL"]]);
   button(render(), "remove").props.onClick();
   assert.deepEqual(edits[1], ["remove", "SYNTH"]);
+  const watchlistRows = () => all(render(), (n) => n.props?.className === "watchlistRows")[0];
+  assert.equal(watchlistRows().props["data-editable"], true);
+  shared.busy = true;
+  const pendingRows = watchlistRows();
+  assert.equal(button(pendingRows, "remove").props.disabled, true);
+  assert.equal(all(pendingRows, (n) => n.type === "strong")[0].props.children, "SYNTH");
   shared.sessionKey = "B";
   assert.equal(all(render(), (n) => n.props?.children === "SYNTH").length, 0);
   h.close();
