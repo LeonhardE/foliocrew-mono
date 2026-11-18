@@ -63,10 +63,54 @@ run "adopt_existing_config_and_preserve_external_access_and_service_cap" {
       output.runtime_service_account == "alpha-config-runtime@demo-config-alpha.iam.gserviceaccount.com" &&
       output.adoption_boundary.uid == local.existing_config_uid &&
       output.adoption_boundary.invoker_iam_disabled &&
-      output.adoption_boundary.service_max_instances == 1
+      output.adoption_boundary.service_max_instances == 1 &&
+      local.browser_cors_origins == var.deployment.web_origin
     )
     error_message = "The Config root must retain its existing service identity, runtime, public invocation mode, and service-wide instance cap."
   }
+}
+
+run "admit_the_canonical_and_additional_browser_origins" {
+  command = plan
+
+  variables {
+    browser_origin_aliases = ["https://workspace.alpha.example.invalid"]
+  }
+
+  assert {
+    condition     = local.browser_cors_origins == "https://web.alpha.example.invalid,https://workspace.alpha.example.invalid"
+    error_message = "Config must admit the canonical and additional exact browser origins."
+  }
+}
+
+run "reject_the_canonical_origin_as_an_alias" {
+  command = plan
+
+  variables {
+    browser_origin_aliases = ["https://web.alpha.example.invalid"]
+  }
+
+  expect_failures = [var.browser_origin_aliases]
+}
+
+run "reject_duplicate_aliases" {
+  command = plan
+
+  variables {
+    browser_origin_aliases = ["https://workspace.alpha.example.invalid", "https://workspace.alpha.example.invalid"]
+  }
+
+  expect_failures = [var.browser_origin_aliases]
+}
+
+run "reject_a_wildcard_browser_origin" {
+  command = plan
+
+  variables {
+    browser_origin_aliases = ["https://*.alpha.example.invalid"]
+  }
+
+  expect_failures = [var.browser_origin_aliases]
 }
 
 run "reject_same_name_service_with_different_uid" {

@@ -1,7 +1,8 @@
 locals {
-  project_id          = var.deployment.project_id
-  region              = var.deployment.region
-  existing_config_uid = var.deployment.existing_service_uid
+  project_id           = var.deployment.project_id
+  region               = var.deployment.region
+  existing_config_uid  = var.deployment.existing_service_uid
+  browser_cors_origins = join(",", concat([var.deployment.web_origin], var.browser_origin_aliases))
 }
 
 provider "google" {
@@ -46,7 +47,7 @@ module "config" {
   ingress           = "INGRESS_TRAFFIC_ALL"
 
   environment = {
-    CORS_ORIGINS         = var.deployment.web_origin
+    CORS_ORIGINS         = local.browser_cors_origins
     FIREBASE_PROJECT_ID  = local.project_id
     FIRESTORE_DATABASE   = "(default)"
     CONFIG_STORE_BACKEND = "firestore"
