@@ -960,13 +960,14 @@ export default function TasksPanel({
   onAgentConnectionsNeeded?: (needed: boolean) => void;
   onNavigate?: (view: "agents" | "inbox") => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [resultsVisible, setResultsVisible] = useState(false);
   const model = useTasks(workspace, {
     active,
     catalogueOnDemand: true,
     overview: true,
-    catalogueRequested: Boolean(request && request.owner === workspace.owner),
+    catalogueRequested: editing || Boolean(request && request.owner === workspace.owner),
   });
-  const [editing, setEditing] = useState(false);
   // Only the editor needs eligible connection and credential discovery.
   const needsAgents =
     active &&
@@ -978,7 +979,7 @@ export default function TasksPanel({
     onAgentConnectionsNeeded?.(needsAgents);
   }, [needsAgents, onAgentConnectionsNeeded]);
   useEffect(() => () => onAgentConnectionsNeeded?.(false), [onAgentConnectionsNeeded]);
-  const center = useTaskCenter(workspace, active, model.selected, model.overview);
+  const center = useTaskCenter(workspace, active, model.opening ?? model.selected, model.overview);
   const observed = Object.values(center.manual)
     .flatMap((rows) =>
       rows.flatMap(
@@ -997,6 +998,7 @@ export default function TasksPanel({
     observed,
     center,
     model.overview,
+    resultsVisible,
   );
 
   const [linkedTask, setLinkedTask] = useState<string | null>(null);
@@ -1046,7 +1048,13 @@ export default function TasksPanel({
           model={model}
           center={center}
           persistent={persistent}
-          results={<TaskResultsPanel model={results} taskId={model.selected?.taskId ?? ""} />}
+          results={
+            <TaskResultsPanel
+              model={results}
+              taskId={model.selected?.taskId ?? ""}
+              onVisibleChange={setResultsVisible}
+            />
+          }
           unreadCounts={results.unreadCounts}
           resultState={results}
           navigating={Boolean(linkedTask)}

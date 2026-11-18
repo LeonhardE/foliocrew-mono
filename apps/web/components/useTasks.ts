@@ -59,6 +59,7 @@ type State = {
   notice: string;
   items: TaskMetadata[];
   catalogue: TaskResourceOption[];
+  opening: TaskMetadata | null;
   selected: TaskMetadata | null;
   form: TaskContent | null;
   bindings: ResourceBindingMetadata[];
@@ -85,6 +86,7 @@ const initial: State = {
   notice: "",
   items: [],
   catalogue: [],
+  opening: null,
   selected: null,
   form: null,
   bindings: [],
@@ -135,7 +137,9 @@ export function useTasks(
     !catalogueOnDemand ||
     catalogueRequested ||
     Boolean(
-      state.owner === owner && state.privateScope === scope && (state.form || state.selected),
+      state.owner === owner &&
+      state.privateScope === scope &&
+      (state.dirty || (state.form && !state.selected)),
     );
   const live = useRef({ owner, configured, scope, visible, active, workspace, catalogueNeeded });
   live.current = { owner, configured, scope, visible, active, workspace, catalogueNeeded };
@@ -681,6 +685,7 @@ export function useTasks(
       setState((previous) => ({
         ...previous,
         privateScope: scope,
+        opening: null,
         selected: null,
         form,
         bindings: seed ? [clone(seed)] : [],
@@ -796,7 +801,8 @@ export function useTasks(
         ...previous,
         busy: true,
         error: "",
-        ...(cached ? {} : { form: null, selected: null }),
+        opening: version === undefined ? (listItem ?? null) : null,
+        ...(cached && previous.selected?.taskId === taskId ? {} : { form: null, selected: null }),
         preview: null,
         confirmation: null,
       }));
@@ -807,17 +813,24 @@ export function useTasks(
             ({ packet, form } = structuredClone(cached));
             head = packet;
           } else {
-            const verifiedVault = await live.current.workspace.refreshVault(context.signal);
-            context.assert();
-            const included =
-              version === undefined && listItem && vaultVersion === verifiedVault.version
-                ? overview.current!.currentTaskPacket(listItem)
-                : null;
-            head =
-              included?.packet ??
+            const listedHead = version === undefined && listItem;
+            const readHead = async () =>
               encryptedTask(
                 await api(`/api/v2/tasks/${taskId}`, context, { retryAdmission: true }),
               );
+            const hasPacket = listedHead && overview.current!.currentTaskPacket(listedHead);
+            // Start the encrypted read alongside vault verification. Only the verified
+            // vault and a still-current receipt may supply content to the Worker.
+            const [verifiedVault, fetched] = await Promise.all([
+              live.current.workspace.refreshVault(context.signal),
+              hasPacket ? null : readHead(),
+            ]);
+            context.assert();
+            const included =
+              !fetched && listedHead && vaultVersion === verifiedVault.version
+                ? overview.current!.currentTaskPacket(listedHead)
+                : null;
+            head = fetched ?? included?.packet ?? (await readHead());
             context.assert();
             packet =
               version === undefined || version === head.metadata.taskVersion
@@ -856,6 +869,7 @@ export function useTasks(
           reviewed.current = null;
           updatePrivate((previous) => ({
             ...previous,
+            opening: null,
             selected: packet.metadata,
             form,
             bindings: packet.metadata.resourceBindings,
@@ -873,7 +887,7 @@ export function useTasks(
         if (serial === selection.current) fail(error);
       } finally {
         if (serial === selection.current)
-          updatePrivate((previous) => ({ ...previous, busy: false }));
+          updatePrivate((previous) => ({ ...previous, opening: null, busy: false }));
       }
     },
     [api, fail, operation, owner, scope, updatePrivate],
@@ -892,7 +906,7 @@ export function useTasks(
       )
         return;
       const serial = ++selection.current;
-      updatePrivate((previous) => ({ ...previous, busy: true, error: "" }));
+      updatePrivate((previous) => ({ ...previous, opening: null, busy: true, error: "" }));
       try {
         await operation(true, async (context) => {
           const restored = await live.current.workspace.loadTaskDraft(slot);
@@ -1353,6 +1367,7 @@ export function useTasks(
         ++selection.current;
         updatePrivate((previous) => ({
           ...previous,
+          opening: null,
           selected: null,
           form: null,
           bindings: [],
@@ -1456,6 +1471,7 @@ export function useTasks(
       ...(previous.owner === owner ? previous : initial),
       owner,
       privateScope: visible ? scope : null,
+      opening: null,
       selected: null,
       form: null,
       bindings: [],
@@ -1493,6 +1509,7 @@ export function useTasks(
       ++readSerial.current.catalogue;
       setState((previous) => ({
         ...previous,
+        opening: null,
         busy: false,
         loading: false,
         catalogueLoading: false,
@@ -1718,6 +1735,8 @@ export function useTasks(
     }
     updatePrivate((previous) => ({
       ...previous,
+      opening: null,
+      busy: previous.opening ? false : previous.busy,
       items: previous.items.filter((row) => row.taskId !== taskId),
       drafts: previous.drafts.filter((row) => row.taskId !== taskId),
       pendingOperations: previous.pendingOperations.filter((row) => row.taskId !== taskId),
@@ -1741,6 +1760,7 @@ export function useTasks(
     ? display
     : {
         ...display,
+        opening: null,
         form: null,
         selected: null,
         bindings: [],

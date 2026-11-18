@@ -8,11 +8,23 @@ import type { TaskResultsModel } from "./useTaskResults";
 import type { ResultRow } from "@/lib/task-result-reader";
 import styles from "./TaskResultsPanel.module.css";
 const agentName = (p: string) => (p === "muse" ? "Muse" : p === "chatgpt" ? "ChatGPT" : "Agent");
-export function TaskResultsPanel({ model, taskId }: { model: TaskResultsModel; taskId: string }) {
+export function TaskResultsPanel({
+  model,
+  taskId,
+  onVisibleChange,
+}: {
+  model: TaskResultsModel;
+  taskId: string;
+  onVisibleChange?: (visible: boolean) => void;
+}) {
   const t = useTranslations("taskResults"),
     locale = useLocale(),
     list = useRef<HTMLDivElement>(null);
   const detail = model.scope && model.detail?.row.metadata.taskId === taskId ? model.detail : null;
+  useEffect(() => {
+    onVisibleChange?.(true);
+    return () => onVisibleChange?.(false);
+  }, [onVisibleChange]);
   useEffect(() => {
     if (list.current) list.current.scrollTop = model.scroll.current.get(taskId) ?? 0;
   }, [taskId]);

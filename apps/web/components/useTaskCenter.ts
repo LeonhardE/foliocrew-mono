@@ -108,7 +108,19 @@ export function useTaskCenter(
   ]);
   const live = useRef({ scope, workspace, owner, active, selected, selectedKey });
   live.current = { scope, workspace, owner, active, selected, selectedKey };
+  const runVisit = useRef({ key: selectedKey, active });
+  if (runVisit.current.key !== selectedKey || runVisit.current.active !== active)
+    runVisit.current = { key: selectedKey, active };
+  const visit = runVisit.current;
   const recordHeads = useRef(new Map<string, { key: string; at: number }>());
+  const runReceipts = useRef(new WeakMap<J, number>());
+  const [runRead, setRunRead] = useState<{
+    visit: typeof visit;
+    record: J | undefined;
+    status: "ready" | "error";
+  } | null>(null);
+  const [runAttempt, setRunAttempt] = useState(0);
+  const runGate = useRef({ key: "", ready: false, running: false });
   const legacyCache = useRef(new WeakMap<J, string[]>());
   const [legacy, setLegacy] = useState<{
     key: string;
@@ -214,17 +226,7 @@ export function useTaskCenter(
         key = start.selectedKey;
       const receipt = recordHeads.current.get(task);
       const age = receipt ? Date.now() - receipt.at : Infinity;
-      if (!force && receipt?.key === key && age >= 0 && age < 15000) {
-        // The encrypted outbox can change while another task is on screen.
-        try {
-          const pending = await start.workspace.loadTaskCenterPending(task);
-          if (live.current.selectedKey === key && recordHeads.current.get(task) === receipt)
-            update({ pending, detailFailure: null, detailLoading: null }, start.scope);
-        } catch {
-          if (live.current.selectedKey === key) update({ detailFailure: key }, start.scope);
-        }
-        return null;
-      }
+      if (!force && receipt?.key === key && age >= 0 && age < 15000) return null;
       const inFlight = reads.current.get(task);
       if (inFlight?.key === key) return inFlight.promise;
       const generation = Symbol();
@@ -236,11 +238,7 @@ export function useTaskCenter(
       const promise = (async () => {
         update({ detailLoading: key, detailFailure: null }, start.scope);
         try {
-          const [data, manual, pending] = await Promise.all([
-            api(base(task)),
-            api(base(task) + "/manual"),
-            start.workspace.loadTaskCenterPending(task),
-          ]);
+          const data = await api(base(task));
           const checked = await start.workspace.verifyTaskCenterState(data);
           if (!sameGeneration()) return {};
           if (
@@ -255,8 +253,7 @@ export function useTaskCenter(
             ...s,
             scope: start.scope,
             records: { ...s.records, [task]: checked },
-            manual: { ...s.manual, [task]: manual.items },
-            ...(visible ? { pending, detailLoading: null, detailFailure: null } : {}),
+            ...(visible ? { detailLoading: null, detailFailure: null } : {}),
           }));
           return data;
         } catch (e) {
@@ -333,8 +330,22 @@ export function useTaskCenter(
   const command = useCallback(
     async (task: string, action: string, value: unknown = null, provided?: J) => {
       const start = live.current;
+      const startingVisit = runVisit.current;
       if (!start.scope || writes.current || !start.workspace.canWriteState)
         throw Error("unlock_required");
+      const requireRunState = () => {
+        if (action !== "manual_intent") return;
+        const gate = runGate.current;
+        if (
+          runVisit.current !== startingVisit ||
+          live.current.selected?.taskId !== task ||
+          gate.key !== start.selectedKey ||
+          !gate.ready
+        )
+          throw Error("request_failed");
+        if (gate.running) throw Error("operation_pending");
+      };
+      requireRunState();
       writes.current = true;
       update({ busy: true, error: "" }, start.scope);
       try {
@@ -343,7 +354,19 @@ export function useTaskCenter(
           update({ pending: existing }, start.scope);
           throw Error("operation_pending");
         }
-        const current = provided ?? (await api(base(task)));
+        const definition = provided && action !== "manual_intent" ? provided : api(base(task));
+        const [current, history] = await Promise.all([
+          definition,
+          action === "manual_intent" ? api(base(task) + "/manual") : null,
+        ]);
+        requireRunState();
+        if (history) {
+          if (!Array.isArray(history.items)) throw Error("invalid_response");
+          const items = history.items;
+          setState((s) => ({ ...s, manual: { ...s.manual, [task]: items } }));
+          // Another client may have started this task since its detail was opened.
+          if (items.some((item: J) => item.aggregate?.hasActiveExecutors)) return;
+        }
         const packet = await start.workspace.prepareTaskCenterControl({
           state: current,
           action,
@@ -352,7 +375,8 @@ export function useTaskCenter(
         update({ pending: packet }, start.scope);
         return await send(packet);
       } catch (e) {
-        update({ error: error(e) }, start.scope);
+        if (action !== "manual_intent" || runVisit.current === startingVisit)
+          update({ error: error(e) }, start.scope);
         throw e;
       } finally {
         writes.current = false;
@@ -478,6 +502,8 @@ export function useTaskCenter(
     for (const c of controllers.current) c.abort();
     reads.current.clear();
     generations.current.clear();
+    runReceipts.current = new WeakMap();
+    setRunRead(null);
     legacyCache.current = new WeakMap();
     recordHeads.current.clear();
     setLegacy(null);
@@ -536,9 +562,10 @@ export function useTaskCenter(
       if (stopped || document.visibilityState === "hidden") return;
       for (const task of tasks) {
         if (stopped || live.current.scope !== scope) break;
+        const generation = generations.current.get(task);
         try {
-          const generation = generations.current.get(task);
           const data = await api(base(task) + "/manual");
+          if (!Array.isArray(data.items)) throw Error("invalid_response");
           if (
             !stopped &&
             live.current.scope === scope &&
@@ -546,8 +573,18 @@ export function useTaskCenter(
           )
             setState((s) => ({ ...s, manual: { ...s.manual, [task]: data.items } }));
         } catch (e) {
-          if (!stopped && live.current.selected?.taskId === task && error(e) !== "cancelled")
-            update({ error: error(e) }, scope);
+          if (
+            !stopped &&
+            live.current.scope === scope &&
+            generation === generations.current.get(task) &&
+            live.current.selected?.taskId === task &&
+            error(e) !== "cancelled"
+          ) {
+            const currentVisit = runVisit.current;
+            setRunRead((previous) =>
+              previous?.visit === currentVisit ? { ...previous, status: "error" } : previous,
+            );
+          }
         }
       }
     };
@@ -560,7 +597,12 @@ export function useTaskCenter(
   const current = scope && state.scope === scope ? state : null;
   const task = selected?.taskId;
   const record =
-    task && recordHeads.current.get(task)?.key === selectedKey ? current?.records[task] : undefined;
+    task &&
+    current?.detailLoading !== selectedKey &&
+    current?.detailFailure !== selectedKey &&
+    recordHeads.current.get(task)?.key === selectedKey
+      ? current?.records[task]
+      : undefined;
   const needsLegacy = Boolean(
     active &&
     selected?.status === "active" &&
@@ -571,7 +613,6 @@ export function useTaskCenter(
   useEffect(() => {
     const vault = workspace.vault;
     if (!needsLegacy || !record || !selected || !vault || !scope) return;
-    if (reads.current.has(selected.taskId)) return;
     const previous = legacyCache.current.get(record);
     if (previous) {
       setLegacy({ key: selectedKey, record, value: ready(previous) });
@@ -626,6 +667,51 @@ export function useTaskCenter(
     void read(selected, vault, record);
     return () => control.abort();
   }, [scope, selectedKey, needsLegacy, record, attempt, api, overview, auth.profile?.uid]);
+  // Dispatch the primary state and, when necessary, its original authority first.
+  // Run history and the encrypted outbox govern actions, not executor presentation.
+  const recordFailed = current?.detailFailure === selectedKey;
+  useEffect(() => {
+    if (!active || !scope || !task || (!record && !recordFailed)) return;
+    const control = new AbortController();
+    const generation = generations.current.get(task);
+    const valid = () =>
+      !control.signal.aborted &&
+      runVisit.current === visit &&
+      generations.current.get(task) === generation;
+    setRunRead(null);
+    const readHistory = async () => {
+      const at = record && runReceipts.current.get(record);
+      const age = at === undefined ? Infinity : Date.now() - at;
+      if (age >= 0 && age < 15000) return;
+      const data = await api(base(task) + "/manual", { signal: control.signal });
+      if (!Array.isArray(data.items)) throw Error("invalid_response");
+      if (!valid()) return;
+      if (record) runReceipts.current.set(record, Date.now());
+      setState((s) => ({ ...s, manual: { ...s.manual, [task]: data.items } }));
+    };
+    const readPending = async () => {
+      const pending = await live.current.workspace.loadTaskCenterPending(task);
+      if (valid() && !writes.current) update({ pending }, scope);
+    };
+    void Promise.all([readHistory(), readPending()]).then(
+      () => {
+        if (valid()) setRunRead({ visit, record, status: "ready" });
+      },
+      () => {
+        if (valid()) setRunRead({ visit, record, status: "error" });
+      },
+    );
+    return () => control.abort();
+  }, [active, scope, visit, task, record, recordFailed, runAttempt, api, base, update]);
+  const runState =
+    active && runRead?.visit === visit && runRead.record === record ? runRead.status : "loading";
+  runGate.current = {
+    key: selectedKey,
+    ready: runState === "ready" && Boolean(record),
+    running: Boolean(
+      task && current?.manual[task]?.some((item) => item.aggregate?.hasActiveExecutors),
+    ),
+  };
   const currentAssignments: J[] =
     selected?.status === "active" &&
     record?.rules?.definition.taskVersion === selected.taskVersion &&
@@ -663,6 +749,11 @@ export function useTaskCenter(
     currentAssignments,
     executors,
     retryExecutors,
+    runState,
+    retryRunState: () => {
+      if (record) runReceipts.current.delete(record);
+      setRunAttempt((n) => n + 1);
+    },
     manual: current?.manual ?? {},
     pending:
       current?.pending && (!task || current.pending.taskId === task) ? current.pending : null,

@@ -106,6 +106,22 @@ export function TaskCenterView({
   }, [resultsFocusKey]);
   const busy = model.busy || center.busy || localBusy,
     writable = model.canWrite && !model.historical && selected?.status !== "archived";
+  const canStartRun = Boolean(
+    center.runState === "ready" &&
+    record &&
+    record.taskId === task &&
+    record.taskVersion === selected?.taskVersion &&
+    record.executionEpoch === selected?.executionEpoch &&
+    center.enabled &&
+    writable &&
+    selected?.status === "active" &&
+    !running &&
+    !center.pending &&
+    currentAssignments.length,
+  );
+  const chosenAgentsCurrent =
+    runAgents.length > 0 &&
+    runAgents.every((id) => currentAssignments.some((row) => row.assignment.assignmentId === id));
   useEffect(() => {
     onEditingChange?.(mode === "edit");
     return () => onEditingChange?.(false);
@@ -336,7 +352,7 @@ export function TaskCenterView({
     } else void configure();
   };
   const run = async () => {
-    if (!task || !runAgents.length) return;
+    if (!task || busy || !canStartRun || !chosenAgentsCurrent) return;
     setChoosingRun(false);
     try {
       await center.command(task, "manual_intent", runAgents);
@@ -489,7 +505,7 @@ export function TaskCenterView({
           retryLabel={t("retry")}
         />
       )}
-      {model.catalogueError && (model.form || model.selected || request) && (
+      {model.catalogueError && (mode === "edit" || request) && (
         <InlineError
           message={t("errors.request_failed")}
           retryLabel={t("retry")}
@@ -1094,6 +1110,13 @@ export function TaskCenterView({
                         )}
                       </dd>
                     </dl>
+                    {center.runState === "error" && (
+                      <InlineError
+                        message={t("runStatusFailed")}
+                        retryLabel={t("retry")}
+                        onRetry={center.retryRunState}
+                      />
+                    )}
                     {currentRequest && !running && (
                       <p className={styles.hint}>
                         {t("lastRun", {
@@ -1119,12 +1142,13 @@ export function TaskCenterView({
                       </button>
                       <button
                         className={styles.primary}
+                        aria-busy={!running && center.runState === "loading"}
                         disabled={
                           busy ||
                           !center.enabled ||
                           !writable ||
                           selected.status !== "active" ||
-                          (!running && !currentAssignments.length)
+                          (!running && !canStartRun)
                         }
                         onClick={() => {
                           if (running) setProgress(true);
@@ -1184,7 +1208,7 @@ export function TaskCenterView({
           </fieldset>
           <button
             className={styles.primary}
-            disabled={busy || !runAgents.length}
+            disabled={busy || !canStartRun || !chosenAgentsCurrent}
             onClick={() => void run()}
           >
             {t("runNow")}
@@ -1223,7 +1247,24 @@ export function TaskCenterView({
               </div>
             );
           })}
-          {!currentRequest && <p>{t(center.pending ? "unknownSave" : "noRun")}</p>}
+          {!currentRequest &&
+            (center.runState === "error" ? (
+              <InlineError
+                message={t("runStatusFailed")}
+                retryLabel={t("retry")}
+                onRetry={center.retryRunState}
+              />
+            ) : (
+              <p>
+                {t(
+                  center.pending
+                    ? "unknownSave"
+                    : center.runState === "ready"
+                      ? "noRun"
+                      : "loading",
+                )}
+              </p>
+            ))}
           {currentRequest?.canCancel && task && (
             <button onClick={() => void center.cancel(task, currentRequest.snapshot.requestId)}>
               {t("cancelRun")}

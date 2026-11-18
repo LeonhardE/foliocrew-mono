@@ -1571,6 +1571,7 @@
     "delete": "刪除任務",
     "viewProgress": "檢視進度",
     "runNow": "立即執行",
+    "runStatusFailed": "無法確認現有執行要求，請重試後再發起新的執行。",
     "runNotEnabled": "此帳戶暫未啟用立即執行。",
     "selectTask": "選擇一項任務",
     "selectTaskHint": "也可以新建任務，從一個目標開始。",
