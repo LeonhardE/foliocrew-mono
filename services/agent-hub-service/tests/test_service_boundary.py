@@ -40,6 +40,7 @@ class AgentHubBoundaryTests(unittest.TestCase):
                     "/api/v3/task-center/{vault}/trash/query",
                     "/api/v3/task-center/{vault}/tasks/{task}/maintenance",
                     "/api/v3/task-center/{vault}/tasks/{task}",
+                    "/api/v3/task-center/{vault}/tasks/{task}/detail/query",
                     "/api/v3/task-center/{vault}/tasks/{task}/operations/{operation}",
                     "/api/v3/task-center/{vault}/tasks/{task}/operations/{operation}/cancel",
                     "/api/v3/task-center/{vault}/tasks/{task}/commands",

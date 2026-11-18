@@ -129,6 +129,39 @@ class TaskCenterRouteTests(unittest.TestCase):
         self.app.dependency_overrides.pop(require_owner)
         self.assertEqual(self.client.get(self.path, headers=self.headers).status_code, 401)
 
+    def test_detail_is_a_closed_owner_only_read_without_operation_or_worker_headers(self):
+        path = self.path + "/detail/query"
+        value = {
+            "contractVersion": CONTRACT_VERSION,
+            "includePacket": True,
+            "includeAttribution": False,
+        }
+        with patch(
+            "app.task_center_routes.read_task_detail", return_value={"synthetic": True}
+        ) as read:
+            self.assertEqual(
+                self.client.post(path, headers=self.headers, json=value).json(), {"synthetic": True}
+            )
+            self.assertEqual(
+                read.call_args.args[1:], ("synthetic_owner", "vault_A", "task_A", value)
+            )
+            for headers, target, payload in [
+                (self.write, path, value),
+                ({**self.headers, "x-folioview-author-key": "device_key"}, path, value),
+                ({**self.headers, "x-serverless-authorization": "wrong"}, path, value),
+                (self.headers, path + "?all=true", value),
+                (self.headers, path, {**value, "taskIds": []}),
+            ]:
+                self.assertGreaterEqual(
+                    self.client.post(target, headers=headers, json=payload).status_code, 400
+                )
+            self.assertEqual(read.call_count, 1)
+        for flag in ("includePacket", "includeAttribution"):
+            result = self.client.post(path, headers=self.headers, json={**value, flag: 1})
+            self.assertEqual(result.status_code, 400)
+        self.app.dependency_overrides.pop(require_owner)
+        self.assertEqual(self.client.post(path, headers=self.headers, json=value).status_code, 401)
+
     def test_trash_pagination_uses_closed_post_body_not_url_queries(self):
         response = self.client.post(
             "/api/v3/task-center/vault_A/trash/query",

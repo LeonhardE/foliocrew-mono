@@ -321,6 +321,7 @@ fail closed through the existing bounded body/error transport.
 | Endpoint                                                              | Behavior                                                           |
 | --------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | `POST /api/v3/tasks/{vault}/overview/query`                           | Fixed task, report and attribution snapshot; optional four packets |
+| `POST /api/v3/task-center/{vault}/tasks/{task}/detail/query`          | Verified Task Center state and optional data for one current task  |
 | `GET /api/v2/tasks`                                                   | Bounded public metadata page; `limit` and `cursor` only            |
 | `POST /api/v2/tasks/packets/query`                                    | Owner display batch of up to four current encrypted packets        |
 | `GET /api/v2/tasks/{taskId}`                                          | Current encrypted version                                          |
@@ -464,6 +465,34 @@ The operation ID uses the existing 22–128 character base64url form, including 
 first character. This read rejects query selectors, request bodies, author/idempotency headers,
 delegation/serverless selectors and duplicate contract/identity headers. It returns the existing
 historical task proof, not a new receipt for the complete original transition-intent body.
+
+### Selected task detail
+
+`POST /api/v3/task-center/{vault}/tasks/{task}/detail/query` reads one visible task in a
+single Owner transaction. The closed JSON body contains `contractVersion` and two required
+booleans, `includePacket` and `includeAttribution`. The body limit is 512 bytes.
+The result uses profile `folioview.owner-task-detail.v1` and contains `contractVersion`,
+`profile`, `state`, `legacy`, `attribution` and `packet`. The required `state` is the original
+Task Center response, including its signed controls and current assignment plans.
+
+Each optional field is either `null` when inapplicable or unrequested,
+`{"status":"ready","data":…}`, or `{"status":"unavailable"}` when its read or byte budget failed.
+
+- `legacy` reads the original authority response only for an active task with resource bindings
+  and no Task Center rules. A successful read with no authority has `authority:null` and
+  `envelope:null` inside its data.
+- `attribution` resolves one current legacy authority's connection when requested. It returns
+  the existing account-list response containing that one record after checking the Owner
+  index, vault, connection and provider. A revoked record keeps its original author label.
+- `packet` contains the unmodified current encrypted packet when requested. The Hub runs the
+  original single-task checks and compares the complete packet metadata with the current head.
+
+Owner authentication, vault, head, visibility and required state failures reject the request.
+The whole response fits the original 1 MiB read budget. If needed the service omits the optional
+packet first, then the legacy section and its dependent attribution. The client may retry the
+unavailable section through its original read. Browsing still requires the browser's existing
+proof checks, current private scope, and worker verification before decryption. Execution,
+settings changes and historical reads use their existing dedicated endpoints.
 
 ### Root-approved upload cancellation
 
