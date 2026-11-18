@@ -12,6 +12,10 @@
 .filters {
   margin-bottom: 16px;
 }
+.library > [role="alert"],
+.library > [role="status"] {
+  margin-block-end: 16px;
+}
 :where(.library) button {
   border: 1px solid var(--border);
   border-radius: 7px;

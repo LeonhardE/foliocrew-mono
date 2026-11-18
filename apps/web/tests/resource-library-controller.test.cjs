@@ -16,6 +16,7 @@ function harness({
   configured = true,
   externalWatchlist = false,
   followsNeeded = true,
+  online = true,
 } = {}) {
   let owner = "owner_A:1",
     workspaceScope = "vault_A:1",
@@ -85,6 +86,8 @@ function harness({
     removeEventListener: (event) => events.delete(event),
   };
   const window = {
+    addEventListener: (event, callback) => events.set(event, callback),
+    removeEventListener: (event) => events.delete(event),
     setTimeout(callback) {
       timers.set(++timer, callback);
       return timer;
@@ -109,6 +112,11 @@ function harness({
     {
       document,
       window,
+      navigator: {
+        get onLine() {
+          return online;
+        },
+      },
       Date: class extends Date {
         static now() {
           return now;
@@ -144,6 +152,10 @@ function harness({
     visibility(next) {
       visible = next;
       events.get("visibilitychange")?.();
+    },
+    connectivity(next) {
+      online = next;
+      events.get(next ? "online" : "offline")?.();
     },
     async ready() {
       render();
@@ -534,6 +546,89 @@ test("shared Market watchlist suppresses a second User list read without disabli
   h.unmount();
 });
 
+test("an uninterrupted visit keeps verified resources actionable with no timer reads or preflight before a revision-guarded write", async () => {
+  const h = harness();
+  try {
+    const original = await h.ready();
+    const reads = h.calls.length;
+    const item = original.catalogue.data.groups[1].items[0];
+    for (const ms of [30_001, 120_000]) {
+      h.advance(ms);
+      const view = h.render();
+      for (const source of ["catalogue", "watchlist", "follows"]) {
+        assert.ok(view[source].data);
+        assert.equal(view[source].stale, false);
+        assert.equal(view[source].loading, false);
+      }
+      let selected;
+      view.useForTask(item, (value) => (selected = value));
+      assert.equal(selected.ref.resourceId, item.ref.resourceId);
+      assert.equal(h.calls.length, reads);
+      assert.equal(h.timers.size, 0);
+    }
+    assert.equal(await h.render().saveFollows([]), true);
+    assert.equal(h.calls[reads].options.method, "PUT");
+    assert.equal(h.calls[reads].options.json.expectedRevision, original.follows.data.revision);
+  } finally {
+    h.unmount();
+  }
+});
+
+test("an offline event retains rows and blocks mutations; reconnection verifies only demanded sources once", async () => {
+  const h = harness({ externalWatchlist: true });
+  try {
+    const before = await h.ready();
+    const item = before.catalogue.data.groups[1].items[0];
+    const reads = h.calls.length;
+    h.connectivity(false);
+    const offline = h.render();
+    assert.equal(offline.follows.data.items[0].name, "CREATOR_A");
+    assert.equal(offline.follows.stale, true);
+    assert.equal(offline.catalogue.stale, true);
+    let selected = false;
+    before.useForTask(item, () => (selected = true));
+    assert.equal(selected, false);
+    assert.equal(await before.saveFollows([]), false);
+    await offline.reload("catalogue");
+    assert.equal(h.calls.length, reads);
+    h.followsNeeded(false);
+    h.render();
+    h.connectivity(true);
+    const recovered = await h.ready();
+    assert.equal(h.calls.length, reads + 1);
+    assert.equal(h.calls.at(-1).route, "/api/v2/resources/catalogue");
+    assert.equal(recovered.catalogue.stale, false);
+    assert.equal(recovered.follows.stale, true);
+    recovered.useForTask(item, () => (selected = true));
+    assert.equal(selected, true);
+    h.followsNeeded(true);
+    assert.equal((await h.ready()).follows.stale, false);
+    assert.equal(h.calls.length, reads + 2);
+  } finally {
+    h.unmount();
+  }
+});
+
+test("opening while offline reports unavailability, then defers recovery until the page is visible", async () => {
+  const h = harness({ online: false, externalWatchlist: true, followsNeeded: false });
+  try {
+    const offline = await h.ready();
+    assert.equal(offline.catalogue.error, "unavailable");
+    assert.equal(offline.catalogue.loading, false);
+    assert.equal(h.calls.length, 0);
+    h.visibility(false);
+    h.render();
+    h.connectivity(true);
+    await h.ready();
+    assert.equal(h.calls.length, 0);
+    h.visibility(true);
+    assert.ok((await h.ready()).catalogue.data);
+    assert.equal(h.calls.length, 1);
+  } finally {
+    h.unmount();
+  }
+});
+
 test("expired refresh retains successful resources with explicit stale state and blocks stale actions until recovery", async () => {
   let fail = false;
   const h = harness({ transport: () => (fail ? response({}, 503) : undefined) });
@@ -546,7 +641,7 @@ test("expired refresh retains successful resources with explicit stale state and
   h.active(true);
   const refreshing = h.render();
   assert.equal(refreshing.catalogue.loading, true);
-  assert.equal(refreshing.catalogue.stale, true);
+  assert.equal(refreshing.catalogue.stale, false);
   assert.equal(refreshing.catalogue.data.groups[1].items[0].ref.resourceId, item.ref.resourceId);
   let selected = 0;
   before.useForTask(item, () => selected++);

@@ -256,17 +256,45 @@ export function ResourceLibraryView({
   };
   const [symbol, setSymbol] = useState("");
   const shared = sharedWatchlist?.sessionKey === model.owner ? sharedWatchlist : null;
+  const pendingWatchlistOwner = useRef<string | null>(null);
+  useEffect(() => {
+    if (!model.owner || shared?.sessionKey !== model.owner) {
+      pendingWatchlistOwner.current = null;
+    } else if (model.offline) {
+      pendingWatchlistOwner.current = model.owner;
+    } else if (
+      pendingWatchlistOwner.current === model.owner &&
+      filter === "watchlist" &&
+      model.canRefresh &&
+      !shared.busy
+    ) {
+      pendingWatchlistOwner.current = null;
+      void shared.reload();
+    }
+  }, [model.owner, model.offline, model.canRefresh, shared, filter]);
+  const sharedHasData = shared && (shared.loaded || shared.items.length > 0);
   const watchlist = sharedWatchlist
     ? {
-        data: shared ? { items: shared.items, limit: shared.limit } : null,
-        loading: !shared || shared.loading,
-        error: shared?.error ?? "",
-        stale: false,
+        data: sharedHasData ? { items: shared.items, limit: shared.limit } : null,
+        loading: !model.offline && (!shared || shared.loading),
+        error: model.offline && !sharedHasData ? "unavailable" : (shared?.error ?? ""),
+        stale: Boolean(sharedHasData && (model.offline || shared.error)),
       }
     : model.watchlist;
+  const canEditWatchlist =
+    shared?.loaded &&
+    !shared.busy &&
+    !shared.error &&
+    !model.offline &&
+    pendingWatchlistOwner.current !== shared.sessionKey;
+  const retryWatchlist = () => {
+    if (model.offline) return;
+    if (sharedWatchlist) void shared?.reload();
+    else void model.reload("watchlist");
+  };
   const submitWatchlist = (event: React.FormEvent) => {
     event.preventDefault();
-    if (shared && !shared.busy && symbol.trim()) {
+    if (canEditWatchlist && symbol.trim()) {
       void shared.add(symbol.trim().toUpperCase());
       setSymbol("");
     }
@@ -280,11 +308,11 @@ export function ResourceLibraryView({
           <p>{t("cachedData")}</p>
           <button
             type="button"
-            disabled={model.busy}
+            disabled={model.busy || model.offline}
             onClick={() => {
               if (model.catalogue.stale) void model.reload("catalogue");
               if (filter === "channel_follows" && model.follows.stale) void model.reload("follows");
-              if (filter === "watchlist" && watchlist.stale) void model.reload("watchlist");
+              if (filter === "watchlist" && watchlist.stale) retryWatchlist();
             }}
           >
             {t("retry")}
@@ -337,10 +365,10 @@ export function ResourceLibraryView({
                   onChange={(e) => setSymbol(e.target.value)}
                   maxLength={20}
                   placeholder={t("symbolPlaceholder")}
-                  disabled={shared.busy}
+                  disabled={!canEditWatchlist}
                 />
               </label>
-              <button type="submit" disabled={shared.busy || !symbol.trim()}>
+              <button type="submit" disabled={!canEditWatchlist || !symbol.trim()}>
                 {t("addStock")}
               </button>
             </form>
@@ -352,7 +380,7 @@ export function ResourceLibraryView({
           {model.authenticated && watchlist.error && (
             <Failure
               code={sharedWatchlist ? "unavailable" : watchlist.error}
-              retry={() => (shared ? void shared.reload() : void model.reload("watchlist"))}
+              retry={retryWatchlist}
             />
           )}
           {model.authenticated && watchlist.data && (
@@ -367,7 +395,7 @@ export function ResourceLibraryView({
                     {shared && (
                       <button
                         type="button"
-                        disabled={shared.busy}
+                        disabled={!canEditWatchlist}
                         aria-label={t("removeStock", { symbol: item.symbol })}
                         onClick={() => void shared.remove(item.symbol)}
                       >

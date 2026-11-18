@@ -595,12 +595,14 @@ v3 attribution takes precedence; absent attribution remains unknown. This map us
 read cannot mark the result view complete; real unread totals are still computed from the full feeds.
 
 Resource lists retain successful same-owner, vault, unlock-generation, vault-version and source-epoch
-snapshots across internal navigation, with a 30-second display freshness window. Reentry after that
-window refreshes the data. Refresh failure keeps the previous rows and explicitly marks them stale;
-stale catalogue selections and stale follow-list writes stay unavailable until a successful read.
-No timer prewarms these services. Explicit retry always reads again. Follow writes invalidate the
-catalogue before dispatch, and uncertain writes cannot be repeated by leaving and returning; their
-original state must be read back first. Holdings updates still invalidate discovery.
+snapshots across internal navigation. Returning after 30 seconds revalidates the requested lists.
+An uninterrupted foreground visit keeps verified rows usable without polling. Follow-list saves
+submit the verified revision, so a concurrent edit is rejected. Starting a refresh temporarily
+blocks dependent actions. Going offline or a failed refresh keeps previous rows visible and marks
+them stale. Reconnecting rereads the requested sources once when the page is visible. The shared
+Market watchlist uses its existing reload path. Failed checks leave an explicit retry.
+Follow writes invalidate the catalogue before dispatch, and uncertain writes require a successful
+read before another attempt. Holdings updates still invalidate discovery.
 Account or vault scope changes mask old rows during render and fence delayed callbacks.
 
 The default holdings category waits for the existing verified workspace scope before requesting

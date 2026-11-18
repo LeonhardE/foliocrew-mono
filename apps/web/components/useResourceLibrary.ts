@@ -60,6 +60,7 @@ const initial = (owner: string | null, scope: string | null): State => ({
   busy: false,
   writeError: "",
 });
+const browserOnline = () => typeof navigator === "undefined" || navigator.onLine !== false;
 const errorCode = (error: unknown) => (error instanceof ResourceError ? error.code : "unavailable");
 const selectionKey = (item: ResourceItem) => {
   const selection = resourceSelection(item);
@@ -96,9 +97,11 @@ export function useResourceLibrary({
   const owner = auth.status === "authenticated" && auth.profile ? auth.sessionKey : null;
   const configured = auth.agentHubConfigured;
   const scope = owner ? JSON.stringify([owner, workspaceScope]) : null;
-  const [visible, setVisible] = useState(
+  const [documentVisible, setDocumentVisible] = useState(
     () => typeof document === "undefined" || document.visibilityState !== "hidden",
   );
+  const [online, setOnline] = useState(browserOnline);
+  const foreground = documentVisible && online;
   const [state, setState] = useState<State>(() => initial(owner, scope));
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -107,11 +110,11 @@ export function useResourceLibrary({
     scope,
     configured,
     active,
-    visible,
+    foreground,
     catalogueNeeded,
     resourceDisplay,
   });
-  live.current = { owner, scope, configured, active, visible, catalogueNeeded, resourceDisplay };
+  live.current = { owner, scope, configured, active, foreground, catalogueNeeded, resourceDisplay };
   const jobs = useRef(new Map<string, AbortController>());
   const serials = useRef({ catalogue: 0, watchlist: 0, follows: 0 });
   const writing = useRef<object | null>(null);
@@ -152,8 +155,11 @@ export function useResourceLibrary({
     previousPublication.current.value = bound;
   }
   const currentPublication = publication.current;
+  const verifiedAt = (source: Source) =>
+    freshness.current.scope === scope ? freshness.current.at[source] : undefined;
+  // Age governs reuse on reentry, not the validity of an uninterrupted, verified view.
   const isFresh = (source: Source) => {
-    const at = freshness.current.scope === scope ? freshness.current.at[source] : undefined;
+    const at = verifiedAt(source);
     const age = at === undefined ? Infinity : Date.now() - at;
     return age >= 0 && age < 30_000;
   };
@@ -170,7 +176,7 @@ export function useResourceLibrary({
         start.owner !== owner ||
         start.scope !== scope ||
         !start.active ||
-        !start.visible ||
+        !start.foreground ||
         (hub && !start.configured) ||
         (key === "catalogue" && !start.catalogueNeeded)
       )
@@ -191,7 +197,7 @@ export function useResourceLibrary({
           now.owner !== owner ||
           now.scope !== scope ||
           !now.active ||
-          !now.visible ||
+          !now.foreground ||
           (hub && !now.configured) ||
           (key === "catalogue" &&
             (!now.catalogueNeeded ||
@@ -332,7 +338,7 @@ export function useResourceLibrary({
         !owner ||
         live.current.scope !== scope ||
         !live.current.active ||
-        !live.current.visible ||
+        !live.current.foreground ||
         (!force && isFresh(source) && !stateRef.current[source].stale) ||
         (source === "follows" && writing.current) ||
         (source === "catalogue" && (!configured || !live.current.catalogueNeeded))
@@ -364,7 +370,7 @@ export function useResourceLibrary({
           ...(previous.scope === scope ? previous[source] : empty()),
           loading: true,
           error: "",
-          stale: Boolean(previous.scope === scope && previous[source].data),
+          stale: previous.scope === scope && previous[source].stale,
         },
       }));
       try {
@@ -449,7 +455,10 @@ export function useResourceLibrary({
         before.owner !== owner ||
         before.scope !== scope ||
         live.current.scope !== scope ||
-        !isFresh("follows") ||
+        !live.current.active ||
+        !live.current.foreground ||
+        verifiedAt("follows") === undefined ||
+        jobs.current.has("follows") ||
         !before.follows.data ||
         before.follows.stale ||
         before.follows.loading ||
@@ -524,9 +533,20 @@ export function useResourceLibrary({
   );
 
   useEffect(() => {
-    const update = () => setVisible(document.visibilityState !== "hidden");
-    document.addEventListener("visibilitychange", update);
-    return () => document.removeEventListener("visibilitychange", update);
+    const visibility = () => setDocumentVisible(document.visibilityState !== "hidden");
+    const connectivity = () => {
+      const connected = browserOnline();
+      if (!connected) freshness.current.at = {};
+      setOnline(connected);
+    };
+    document.addEventListener("visibilitychange", visibility);
+    window.addEventListener?.("offline", connectivity);
+    window.addEventListener?.("online", connectivity);
+    return () => {
+      document.removeEventListener("visibilitychange", visibility);
+      window.removeEventListener?.("offline", connectivity);
+      window.removeEventListener?.("online", connectivity);
+    };
   }, []);
   useEffect(() => {
     for (const controller of jobs.current.values()) controller.abort();
@@ -574,15 +594,15 @@ export function useResourceLibrary({
           }
         : initial(owner, scope),
     );
-    if (owner && active && visible) {
+    if (owner && active && foreground) {
       if (!externalWatchlist) void reload("watchlist", false);
     }
     return () => {
       for (const controller of jobs.current.values()) controller.abort();
     };
-  }, [owner, scope, active, visible, configured, reload, externalWatchlist]);
+  }, [owner, scope, active, foreground, configured, reload, externalWatchlist]);
   useEffect(() => {
-    if (owner && active && visible && configured && catalogueNeeded && !writing.current)
+    if (owner && active && foreground && configured && catalogueNeeded && !writing.current)
       void reload("catalogue", false);
     return () => {
       // The private workspace prerequisite controls only discovery, never User writes.
@@ -603,7 +623,7 @@ export function useResourceLibrary({
     owner,
     scope,
     active,
-    visible,
+    foreground,
     configured,
     catalogueNeeded,
     resourceDisplay?.readKey,
@@ -611,7 +631,7 @@ export function useResourceLibrary({
     externalWatchlist,
   ]);
   useEffect(() => {
-    if (owner && active && visible && followsNeeded) void reload("follows", false);
+    if (owner && active && foreground && followsNeeded) void reload("follows", false);
     return () => {
       jobs.current.get("follows")?.abort();
       ++serials.current.follows;
@@ -622,7 +642,7 @@ export function useResourceLibrary({
             : previous,
         );
     };
-  }, [owner, scope, active, visible, followsNeeded, reload]);
+  }, [owner, scope, active, foreground, followsNeeded, reload]);
 
   useEffect(() => {
     const required = currentPublication;
@@ -630,7 +650,7 @@ export function useResourceLibrary({
       !required ||
       !owner ||
       !active ||
-      !visible ||
+      !foreground ||
       !configured ||
       !catalogueNeeded ||
       writing.current
@@ -643,7 +663,7 @@ export function useResourceLibrary({
       live.current.owner === owner &&
       live.current.scope === scope &&
       live.current.active &&
-      live.current.visible &&
+      live.current.foreground &&
       live.current.configured &&
       live.current.catalogueNeeded;
     const confirm = async () => {
@@ -685,7 +705,7 @@ export function useResourceLibrary({
     return () => {
       stopped = true;
     };
-  }, [owner, scope, active, visible, configured, catalogueNeeded, currentPublication, reload]);
+  }, [owner, scope, active, foreground, configured, catalogueNeeded, currentPublication, reload]);
 
   const useForTask = useCallback(
     (item: ResourceItem, callback?: (selection: ResourceSelection) => void) => {
@@ -695,13 +715,14 @@ export function useResourceLibrary({
         !owner ||
         live.current.owner !== owner ||
         !live.current.active ||
-        !live.current.visible ||
+        !live.current.foreground ||
         !live.current.configured ||
         !live.current.catalogueNeeded ||
         current.owner !== owner ||
         current.scope !== scope ||
         live.current.scope !== scope ||
-        !isFresh("catalogue") ||
+        verifiedAt("catalogue") === undefined ||
+        jobs.current.has("catalogue") ||
         (publication.current?.scope === scope && !publication.current.confirmed) ||
         current.catalogue.stale ||
         current.catalogue.loading ||
@@ -723,7 +744,9 @@ export function useResourceLibrary({
   const masked = state.scope === scope && owner ? state : initial(owner, scope);
   const display = <T>(source: Source, value: ResourceLoad<T>): ResourceLoad<T> => ({
     ...value,
-    stale: Boolean(value.data && (value.stale || !isFresh(source))),
+    loading: online && value.loading,
+    stale: Boolean(value.data && (value.stale || !online || verifiedAt(source) === undefined)),
+    error: owner && !online && !value.data ? "unavailable" : value.error,
   });
   return {
     ...masked,
@@ -733,13 +756,15 @@ export function useResourceLibrary({
       loading: Boolean(
         owner &&
         active &&
-        visible &&
+        foreground &&
         followsNeeded &&
         (masked.follows.loading || (!masked.follows.data && !masked.follows.error)),
       ),
     },
     owner,
     authenticated: Boolean(owner),
+    offline: !online,
+    canRefresh: Boolean(owner && active && foreground),
     configured,
     publicationBound: Boolean(currentPublication),
     catalogue:
