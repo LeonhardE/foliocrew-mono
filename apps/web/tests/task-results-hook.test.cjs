@@ -602,6 +602,128 @@ test("new results arriving during initial loading queue one fresh head read with
   h.close();
 });
 
+test("a run result reported during loading needs no refresh when the pending feed already contains it", async () => {
+  let release;
+  const h = harness({
+    transport: (p) => {
+      if (p.includes("persistent-results/") && p.includes("?limit="))
+        return new Promise((resolve) => {
+          release = resolve;
+        });
+    },
+  });
+  try {
+    h.render();
+    await tick();
+    h.observe("presult_A");
+    h.render();
+    release(
+      Response.json({
+        contractVersion: C,
+        profile: "folioview.persistent-content.v1",
+        items: [meta()],
+        nextCursor: null,
+      }),
+    );
+    const r = await h.ready();
+    assert.equal(h.calls.filter((c) => c.path.includes("?limit=")).length, 3);
+    assert.equal(r.unreadCounts.task_A, 1);
+  } finally {
+    h.close();
+  }
+});
+test("each newly reported ID refreshes once, a failed read waits for recovery, and a new Owner checks independently", async () => {
+  let items = [meta()],
+    fail = false;
+  const h = harness({
+    transport: (p) => {
+      if (p.includes("persistent-results/") && p.includes("?limit="))
+        return fail
+          ? Response.json({}, { status: 503 })
+          : Response.json({
+              contractVersion: C,
+              profile: "folioview.persistent-content.v1",
+              items,
+              nextCursor: null,
+            });
+    },
+  });
+  const count = () => h.calls.filter((c) => c.path.includes("?limit=")).length;
+  try {
+    await h.ready();
+    h.observe("presult_A");
+    await h.ready();
+    assert.equal(count(), 3);
+    items = [meta(), { ...meta(), resultId: "presult_new" }];
+    h.observe("presult_A|presult_new");
+    let r = await h.ready();
+    assert.equal(count(), 6);
+    assert.equal(r.unreadCounts.task_A, 2);
+    fail = true;
+    h.observe("presult_A|presult_new|presult_unknown");
+    r = await h.ready();
+    assert.ok(r.error);
+    await h.ready();
+    assert.equal(count(), 9);
+    h.observe("presult_new|presult_unknown");
+    await h.ready();
+    assert.equal(count(), 9);
+    fail = false;
+    items = [];
+    h.owner("owner_B");
+    r = await h.ready();
+    assert.equal(count(), 15);
+    assert.equal(r.unreadCounts.task_A, undefined);
+    await h.ready();
+    assert.equal(count(), 15);
+  } finally {
+    h.close();
+  }
+});
+
+test("a second result noticed during a forced refresh is checked after the pending response", async () => {
+  let readCount = 0,
+    release;
+  const item = (id) => ({ ...meta(), resultId: id });
+  const reply = (ids) =>
+    Response.json({
+      contractVersion: C,
+      profile: "folioview.persistent-content.v1",
+      items: ids.map(item),
+      nextCursor: null,
+    });
+  const h = harness({
+    transport: (path) => {
+      if (!path.includes("persistent-results/") || !path.includes("?limit=")) return;
+      readCount++;
+      if (readCount === 1) return reply(["presult_A"]);
+      if (readCount === 2)
+        return new Promise((resolve) => {
+          release = resolve;
+        });
+      return reply(["presult_A", "presult_B", "presult_C"]);
+    },
+  });
+  try {
+    await h.ready();
+    h.observe("presult_B");
+    h.render();
+    await tick();
+    h.observe("presult_B|presult_C");
+    h.render();
+    await tick();
+    assert.equal(readCount, 2);
+    release(reply(["presult_A", "presult_B"]));
+    const r = await h.ready();
+    assert.equal(r.unreadCounts.task_A, 3);
+    assert.equal(readCount, 3);
+    await h.ready();
+    assert.equal(readCount, 3);
+  } finally {
+    h.close();
+  }
+});
+
 test("task-specific results wait for the results tab and a matching verified task", async () => {
   const center = { selectedRecord: { taskId: "task_B", rules: {} } };
   const h = harness({

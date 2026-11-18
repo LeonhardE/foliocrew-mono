@@ -115,6 +115,7 @@ export function useTaskResults(
     loadSerial = useRef(0),
     loading = useRef(false),
     reloadAfter = useRef(false),
+    checkedRunResults = useRef(""),
     loadAgain = useRef<(force?: boolean) => Promise<void>>(async () => {}),
     fresh = useRef(0),
     evicted = useRef(false);
@@ -781,6 +782,7 @@ export function useTaskResults(
     cache.current.clear();
     attributions.current.clear();
     taskPages.current.clear();
+    checkedRunResults.current = "";
     reloadAfter.current = false;
     pending.current = null;
     attemptedRead.current.clear();
@@ -822,6 +824,7 @@ export function useTaskResults(
       if (reportProviders.current.scope === scope) reportProviders.current.loading = false;
       loading.current = false;
       reloadAfter.current = false;
+      checkedRunResults.current = "";
       titleQueue.current = [];
       for (const job of jobs.current) job.abort();
       update({ loading: false, busy: false }, scope);
@@ -938,8 +941,29 @@ export function useTaskResults(
       void loadTaskPage(task, selectedRules);
   }, [scope, active, taskResultsVisible, task, selectedRecord, selectedRules, loadTaskPage]);
   useEffect(() => {
-    if (scope && active && observedResults) void load(true);
-  }, [scope, active, observedResults, load]);
+    if (
+      !scope ||
+      !active ||
+      state.scope !== scope ||
+      state.loading ||
+      loading.current ||
+      checkedRunResults.current === observedResults
+    )
+      return;
+    // Let the current feed finish merging before treating a run receipt as a new report.
+    const previous = new Set(checkedRunResults.current.split("|"));
+    checkedRunResults.current = observedResults;
+    const missing = observedResults
+      .split("|")
+      .some(
+        (id) =>
+          id &&
+          !previous.has(id) &&
+          !rows.current.has(`persistent:${id}`) &&
+          !rows.current.has(`foreground:${id}`),
+      );
+    if (missing) void load(true);
+  }, [scope, active, observedResults, state.scope, state.loading, state.revision, load]);
   useEffect(() => {
     selectedSerial.current++;
     update({
