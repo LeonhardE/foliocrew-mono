@@ -1,0 +1,733 @@
+@font-face {
+  font-family: "Instrument Sans";
+  src: url("./instrument-sans.woff") format("woff");
+  font-weight: 400 700;
+  font-display: swap;
+}
+:root {
+  color-scheme: dark light;
+  --bg: #0a1019;
+  --ink: #f4f3ee;
+  --secondary: #c0c8d3;
+  --quiet: #a7b3c6;
+  --fine: #3c4658;
+  --cta: #efeee8;
+  --cta-ink: #121923;
+  --dialog-bg: #121926;
+  font-family:
+    "Instrument Sans", "PingFang SC", "PingFang TC", "Microsoft YaHei", system-ui, sans-serif;
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+}
+:lang(zh-Hant) {
+  font-family: "Instrument Sans", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #e9edf0;
+    --ink: #172531;
+    --secondary: #354956;
+    --quiet: #475b69;
+    --fine: #a7b4bd;
+    --cta: #1b2b36;
+    --cta-ink: #f7f7ef;
+    --dialog-bg: #f4f6f6;
+  }
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  color: var(--ink);
+  background: var(--bg);
+}
+button,
+select,
+input {
+  font: inherit;
+}
+button,
+select {
+  color: inherit;
+}
+button,
+a,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+button {
+  cursor: pointer;
+}
+a {
+  color: inherit;
+  text-decoration: none;
+}
+button:focus-visible,
+a:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 5px;
+}
+[hidden] {
+  display: none !important;
+}
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+#deck {
+  --accent: #b6c8fd;
+  --aura: #536fa4;
+  --rim: #776598;
+  --pad: clamp(26px, 5.4vw, 112px);
+  position: relative;
+  isolation: isolate;
+  min-height: 100vh;
+  min-height: 100svh;
+}
+#deck[data-index="1"] {
+  --accent: #aeceff;
+  --aura: #416a9f;
+  --rim: #517889;
+}
+#deck[data-index="2"] {
+  --accent: #b1ddd2;
+  --aura: #367c81;
+  --rim: #7767ad;
+}
+#deck[data-index="3"] {
+  --accent: #d2bdff;
+  --aura: #665488;
+  --rim: #536ba0;
+}
+#deck[data-index="4"] {
+  --accent: #c4ddd0;
+  --aura: #436d63;
+  --rim: #4f677e;
+}
+@media (prefers-color-scheme: light) {
+  #deck {
+    --accent: #334f8b;
+  }
+  #deck[data-index="1"] {
+    --accent: #2e5789;
+  }
+  #deck[data-index="2"] {
+    --accent: #166359;
+  }
+  #deck[data-index="3"] {
+    --accent: #664c89;
+  }
+  #deck[data-index="4"] {
+    --accent: #2a6151;
+  }
+}
+.atmosphere {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: -1;
+  background: var(--bg);
+}
+.atmosphere i,
+.atmosphere b {
+  position: absolute;
+  inset: -20%;
+  background:
+    radial-gradient(
+      ellipse at 73% 54%,
+      color-mix(in srgb, var(--aura) 47%, transparent),
+      transparent 38%
+    ),
+    radial-gradient(
+      ellipse at 87% 44%,
+      color-mix(in srgb, var(--rim) 26%, transparent),
+      transparent 26%
+    );
+  transition: transform 1.3s ease;
+}
+.atmosphere b {
+  inset: 0;
+  background: linear-gradient(
+    119deg,
+    transparent 43%,
+    color-mix(in srgb, var(--rim) 4%, transparent) 43.3%,
+    transparent 50%
+  );
+  opacity: 0.6;
+}
+#deck[data-index="2"] .atmosphere i {
+  transform: translate(-3%, 1%) scale(1.08);
+}
+#deck[data-index="4"] .atmosphere i {
+  transform: translate(2%, -4%) scale(0.97);
+}
+.signature {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  font-size: clamp(24px, 2vw, 34px);
+  line-height: 1;
+  font-weight: 650;
+  letter-spacing: -0.065em;
+  position: absolute;
+  top: max(30px, env(safe-area-inset-top));
+  left: var(--pad);
+  z-index: 3;
+}
+.brand-mark {
+  width: 30px;
+  height: 30px;
+  flex: none;
+}
+.brand-name {
+  font-weight: 700;
+  letter-spacing: -0.04em;
+}
+.brand-name > span {
+  font-weight: 400;
+  color: var(--secondary);
+}
+.chapter {
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 60px var(--pad);
+}
+.eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 clamp(16px, 2vh, 24px);
+  font-size: clamp(11px, 0.93vw, 14px);
+  font-weight: 570;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+}
+.eyebrow i {
+  display: block;
+  width: 24px;
+  height: 1px;
+  background: currentColor;
+  position: relative;
+}
+.eyebrow i:after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: -1px;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.chapter h1,
+.chapter h2 {
+  font-size: clamp(48px, 4.85vw, 86px);
+  letter-spacing: -0.045em;
+  line-height: 1.12;
+  font-weight: 550;
+  margin: 0;
+  text-wrap: balance;
+}
+.chapter h1 span,
+.chapter h2 span,
+.chapter .chapter-accent {
+  display: block;
+}
+.chapter .chapter-accent {
+  font-style: normal;
+  color: var(--accent);
+  font-weight: 550;
+}
+html[lang="en"] .chapter h1,
+html[lang="en"] .chapter h2 {
+  font-size: clamp(49px, 5.15vw, 91px);
+  letter-spacing: -0.052em;
+  line-height: 1.045;
+}
+.synopsis {
+  font-size: clamp(15px, 1.12vw, 19px);
+  line-height: 1.82;
+  color: var(--secondary);
+  max-width: 29em;
+  text-wrap: pretty;
+  margin: clamp(15px, 2.4vh, 28px) 0 0;
+}
+.actions {
+  margin: 24px var(--pad) 38px;
+  display: flex;
+  gap: 22px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.enter,
+.sample {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  font-size: 14px;
+  line-height: 1.2;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.sample {
+  border: 0;
+  border-radius: 100px;
+  padding: 14px 21px;
+  background: var(--cta);
+  color: var(--cta-ink);
+  transition: transform 0.2s ease;
+}
+.sample:hover {
+  transform: translateY(-2px);
+}
+.play-glyph {
+  width: 0;
+  height: 0;
+  border-block: 4.5px solid transparent;
+  border-left: 7px solid;
+}
+.enter {
+  padding: 12px 0;
+  color: var(--ink);
+  border-bottom: 1px solid transparent;
+}
+.enter:hover {
+  border-color: var(--accent);
+}
+.enter > span:last-child {
+  font-size: 1.2em;
+}
+.enhanced-only,
+.scene-field {
+  display: none;
+}
+.js #deck {
+  height: 100vh;
+  height: 100dvh;
+  min-height: 440px;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  overflow: clip;
+}
+.js .narrative {
+  position: relative;
+  align-self: center;
+  width: 48%;
+  padding: clamp(80px, 11vh, 140px) 0 54px var(--pad);
+  z-index: 2;
+  pointer-events: none;
+}
+.js .narrative .actions {
+  pointer-events: auto;
+  width: fit-content;
+  margin: clamp(21px, 3.2vh, 35px) 0 0;
+  gap: clamp(14px, 1.7vw, 26px);
+}
+.js .chapter {
+  min-height: 0;
+  display: block;
+  padding: 0;
+}
+.js .chapter[hidden] {
+  display: none;
+}
+.js .scene-field {
+  position: absolute;
+  display: block;
+  inset: 9% 0 13% 43%;
+  pointer-events: none;
+  z-index: 1;
+}
+#flow-stage {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.js .enhanced-only {
+  display: inline-flex;
+}
+.js .deck-dock {
+  display: flex;
+}
+.deck-dock {
+  position: relative;
+  z-index: 3;
+  margin: 0 var(--pad);
+  border-top: 1px solid color-mix(in srgb, var(--fine) 75%, transparent);
+  padding: 17px 0 max(19px, env(safe-area-inset-bottom));
+  align-items: center;
+  gap: clamp(12px, 2vw, 30px);
+}
+.position {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12px;
+  color: var(--quiet);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+}
+.position b {
+  font-weight: 600;
+  color: var(--ink);
+}
+.position i {
+  width: 14px;
+  height: 1px;
+  background: var(--fine);
+  transform: rotate(-53deg);
+}
+.progress-rail {
+  display: flex;
+  flex: 1;
+  gap: 5px;
+  max-width: 360px;
+}
+.progress-rail button {
+  background: none;
+  border: 0;
+  padding: 16px 0;
+  flex: 1;
+}
+.progress-rail span {
+  display: block;
+  height: 2px;
+  border-radius: 4px;
+  background: var(--fine);
+  overflow: hidden;
+}
+.progress-rail i {
+  display: block;
+  height: 100%;
+  background: var(--ink);
+  transform: scaleX(0);
+  transform-origin: left;
+}
+.progress-rail button[aria-current] span {
+  background: color-mix(in srgb, var(--accent) 50%, var(--fine));
+}
+.progress-rail button:hover span {
+  background: var(--accent);
+}
+.transport {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+.transport button {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  background: transparent;
+  border-radius: 50%;
+  color: var(--ink);
+}
+.transport button:hover {
+  background: color-mix(in srgb, var(--ink) 11%, transparent);
+}
+#prev i,
+#next i {
+  width: 8px;
+  height: 8px;
+  border-right: 1.5px solid;
+  border-top: 1.5px solid;
+  transform: rotate(45deg);
+}
+#prev i {
+  transform: rotate(-135deg);
+}
+#pause {
+  border: 1px solid var(--fine);
+}
+#pause i {
+  width: 8px;
+  height: 10px;
+  border-inline: 2px solid;
+}
+#deck[data-playing="false"] #pause i {
+  width: 0;
+  height: 0;
+  border: 0;
+  border-left: 8px solid;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  margin-left: 2px;
+}
+.language {
+  margin-left: auto;
+  display: grid;
+  align-items: center;
+  position: relative;
+}
+.language select {
+  appearance: none;
+  padding: 10px 26px 10px 8px;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  font-size: 12px;
+  color: var(--secondary);
+}
+.language option {
+  color: var(--ink);
+  background: var(--bg);
+}
+.language i {
+  pointer-events: none;
+  position: absolute;
+  right: 9px;
+  width: 6px;
+  height: 6px;
+  border-right: 1px solid var(--quiet);
+  border-bottom: 1px solid var(--quiet);
+  transform: translateY(-2px) rotate(45deg);
+}
+.chapter.arrive {
+  animation: arrive 0.65s cubic-bezier(0.2, 0.75, 0.2, 1) both;
+}
+@keyframes arrive {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (min-width: 1600px) {
+  .js .narrative {
+    width: 45%;
+  }
+  .js .scene-field {
+    left: 39%;
+  }
+}
+@media (max-width: 850px) and (min-width: 701px) {
+  .js .narrative {
+    width: 46%;
+    padding-left: 4vw;
+  }
+  #deck {
+    --pad: 4vw;
+  }
+  .chapter h1,
+  .chapter h2 {
+    font-size: clamp(36px, 4.8vw, 48px);
+  }
+  html[lang="en"] .chapter h1,
+  html[lang="en"] .chapter h2 {
+    font-size: 48px;
+  }
+  .js .scene-field {
+    left: 42%;
+  }
+  .synopsis {
+    font-size: 14px;
+  }
+}
+@media (max-width: 700px) and (min-aspect-ratio: 1/1) {
+  .js .narrative {
+    width: 46%;
+    padding-left: var(--pad);
+  }
+  .chapter h1,
+  .chapter h2,
+  html[lang="en"] .chapter h1,
+  html[lang="en"] .chapter h2 {
+    font-size: clamp(30px, 5.2vw, 43px);
+  }
+  .synopsis {
+    font-size: 13px;
+    line-height: 1.55;
+  }
+}
+@media (max-width: 700px) and (max-aspect-ratio: 1/1) {
+  #deck {
+    --pad: clamp(19px, 6vw, 40px);
+  }
+  .js #deck {
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    min-height: 0;
+  }
+  .signature {
+    position: relative;
+    top: auto;
+    left: auto;
+    margin: max(19px, env(safe-area-inset-top)) var(--pad) 0;
+    width: fit-content;
+    font-size: 24px;
+    gap: 8px;
+  }
+  .js .narrative {
+    align-self: start;
+    width: 100%;
+    padding: clamp(17px, 4dvh, 42px) var(--pad) 0;
+  }
+  .eyebrow {
+    font-size: 10px;
+    margin-bottom: 10px;
+  }
+  .chapter h1,
+  .chapter h2 {
+    font-size: clamp(34px, 8.4vw, 59px);
+    line-height: 1.09;
+  }
+  html[lang="en"] .chapter h1,
+  html[lang="en"] .chapter h2 {
+    font-size: clamp(37px, 9.2vw, 65px);
+  }
+  .synopsis {
+    font-size: clamp(13px, 3.45vw, 16px);
+    line-height: 1.65;
+    margin-top: 12px;
+    max-width: 34em;
+  }
+  .js .narrative .actions {
+    margin-top: 14px;
+    gap: 18px;
+  }
+  .enter,
+  .sample {
+    font-size: 12px;
+  }
+  .sample {
+    padding: 11px 16px;
+  }
+  .js .scene-field {
+    position: relative;
+    inset: auto;
+    min-height: 0;
+    margin: 0 0 0;
+  }
+
+  .deck-dock {
+    gap: 10px;
+    padding: 8px 0 max(10px, env(safe-area-inset-bottom));
+  }
+  .position {
+    gap: 4px;
+    font-size: 10px;
+  }
+  .position i {
+    width: 10px;
+  }
+  .progress-rail {
+    gap: 3px;
+  }
+  .transport {
+    gap: 0;
+  }
+  .transport button {
+    width: 31px;
+    height: 31px;
+  }
+  .language select {
+    font-size: 11px;
+    padding-left: 4px;
+    padding-right: 23px;
+  }
+  .atmosphere i {
+    background:
+      radial-gradient(
+        ellipse at 56% 68%,
+        color-mix(in srgb, var(--aura) 52%, transparent),
+        transparent 36%
+      ),
+      radial-gradient(
+        ellipse at 84% 53%,
+        color-mix(in srgb, var(--rim) 17%, transparent),
+        transparent 38%
+      );
+  }
+}
+@media (max-height: 560px) and (min-aspect-ratio: 1/1) {
+  .js #deck {
+    min-height: 305px;
+  }
+  .signature {
+    top: 12px;
+    font-size: 22px;
+  }
+  .js .narrative {
+    padding-top: 54px;
+    padding-bottom: 8px;
+  }
+  .eyebrow {
+    margin-bottom: 8px;
+    font-size: 10px;
+  }
+  .chapter h1,
+  .chapter h2,
+  html[lang="en"] .chapter h1,
+  html[lang="en"] .chapter h2 {
+    font-size: clamp(27px, 4.4vw, 45px);
+  }
+  .synopsis {
+    margin-top: 8px;
+    font-size: 12px;
+    line-height: 1.55;
+  }
+  .js .narrative .actions {
+    margin-top: 10px;
+  }
+  .enter,
+  .sample {
+    font-size: 12px;
+  }
+  .sample {
+    padding: 9px 16px;
+  }
+  .deck-dock {
+    padding: 5px 0;
+  }
+  .js .scene-field {
+    inset: 2% 0 13% 45%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0s !important;
+    transition-duration: 0s !important;
+  }
+}
+@media (forced-colors: active) {
+  .progress-rail span,
+  .transport button {
+    border: 1px solid CanvasText;
+  }
+  .chapter .chapter-accent {
+    color: CanvasText;
+  }
+}
+
+/* Let wider camera shots dissolve into the same surface as the text. */
+.js #flow-stage {
+  mask-image:
+    linear-gradient(90deg, transparent, black 9%, black 100%),
+    linear-gradient(180deg, transparent, black 5%, black 87%, transparent);
+  mask-composite: intersect;
+}
+@media (max-width: 700px) and (max-aspect-ratio: 1/1) {
+  .js #flow-stage {
+    mask-image: linear-gradient(180deg, transparent, black 5%, black 92%, transparent);
+  }
+}

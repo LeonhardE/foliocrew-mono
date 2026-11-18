@@ -51,3 +51,17 @@ The [Cloud Build pipeline](../../infra/gcp/cloudbuild.web.yaml) uses the guarded
 release path. Shared browser contract changes are included in the Web trigger. Verify exact
 source, image digest, ready revision and traffic; passing PR checks alone is not deployment proof.
 See the [delivery guide](../../infra/gcp/README.md) and [Web infrastructure](../../infra/gcp/terraform/envs/prod/web/README.md).
+
+## Public introduction
+
+Build the static introduction independently of the signed-in workspace. Set
+`FOLIOCREW_WORKSPACE_URL` to the accepted public HTTPS workspace URL and provide a new
+output directory. From the repository root:
+
+```sh
+FOLIOCREW_WORKSPACE_URL=https://workspace.example.com/market \
+  node apps/web/scripts/build-landing.mjs /tmp/foliocrew-landing-preview
+```
+
+Preview and serve the resulting directory as static files. A production release injects
+its reviewed URL. The page and research demo use local assets and fictional data.
