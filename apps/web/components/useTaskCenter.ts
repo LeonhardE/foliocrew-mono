@@ -257,8 +257,8 @@ export function useTaskCenter(
         try {
           const selectionRead = source?.read();
           if (source && !selectedHistories.current.has(source)) {
-            // The vault and combined read have first choice of the two display slots.
-            // Queue history now, then consume it only for this visit's verified task.
+            // Read run history beside the combined task/vault receipt. Its result is
+            // consumed only for this visit’s verified task.
             const history = api(base(task) + "/manual", { signal: source.signal });
             // Selection can end before the history consumer mounts.
             void history.catch(() => {});

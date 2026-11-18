@@ -1,20 +1,37 @@
-import type { EncryptedTask } from "./encrypted-types";
-import { encryptedTask, exact, identifier, object, TASK_CONTRACT } from "./task-types";
+import type { EncryptedTask, TaskMetadata } from "./encrypted-types";
+import {
+  encryptedTask,
+  exact,
+  identifier,
+  object,
+  taskMetadata,
+  sameTaskMetadata,
+  TASK_CONTRACT,
+} from "./task-types";
 import { boundedJson, untilSignal } from "./workspace-cache";
 import { readReportProviders } from "./report-provider-attribution";
 
 type JsonObject = Record<string, any>;
 type Section<T> = null | { status: "unavailable" } | { status: "ready"; data: T };
-type Request = { contractVersion: string; includePacket: boolean; includeAttribution: boolean };
+type Request = {
+  contractVersion: string;
+  includePacket: boolean;
+  includeAttribution: boolean;
+  includeVault?: true;
+};
 export type TaskDetailRead = {
   state: JsonObject;
+  taskMetadata?: TaskMetadata;
+  vaultResponse?: Exclude<Section<JsonObject>, null>;
   packet: Section<EncryptedTask>;
   legacy: Section<JsonObject>;
   attribution: Section<JsonObject>;
 };
 export function taskDetailRequest(value: unknown): value is Request {
+  const keys = ["contractVersion", "includePacket", "includeAttribution"];
+  if (object(value) && value.includeVault === true) keys.push("includeVault");
   return (
-    exact(value, ["contractVersion", "includePacket", "includeAttribution"]) &&
+    exact(value, keys) &&
     value.contractVersion === TASK_CONTRACT &&
     typeof value.includePacket === "boolean" &&
     typeof value.includeAttribution === "boolean"
@@ -33,8 +50,10 @@ export function parseTaskDetail(
   task: string,
   options: Request,
 ): TaskDetailRead {
+  const fields = ["contractVersion", "profile", "state", "packet", "legacy", "attribution"];
+  if (options.includeVault) fields.push("taskMetadata", "vaultResponse");
   if (
-    !exact(value, ["contractVersion", "profile", "state", "packet", "legacy", "attribution"]) ||
+    !exact(value, fields) ||
     value.contractVersion !== TASK_CONTRACT ||
     value.profile !== "folioview.owner-task-detail.v1" ||
     !object(value.state) ||
@@ -93,7 +112,29 @@ export function parseTaskDetail(
       throw Error("invalid_response");
     return raw;
   });
-  return { state: value.state, packet, legacy, attribution };
+  const detail = { state: value.state, packet, legacy, attribution };
+  if (!options.includeVault) return detail;
+  const metadata = taskMetadata(value.taskMetadata);
+  if (
+    metadata.vaultId !== vault ||
+    metadata.taskId !== task ||
+    metadata.taskVersion !== value.state.taskVersion ||
+    metadata.executionEpoch !== value.state.executionEpoch ||
+    (packet?.status === "ready" && !sameTaskMetadata(packet.data.metadata, metadata))
+  )
+    throw Error("invalid_response");
+  const vaultResponse = section(value.vaultResponse, (raw) => {
+    if (
+      !exact(raw, ["contractVersion", "vault", "sources"]) ||
+      raw.contractVersion !== TASK_CONTRACT ||
+      raw.vault?.vaultId !== vault ||
+      !Array.isArray(raw.sources)
+    )
+      throw Error("invalid_response");
+    return raw;
+  });
+  if (!vaultResponse) throw Error("invalid_response");
+  return { ...detail, taskMetadata: metadata, vaultResponse };
 }
 export async function readTaskDetail(
   send: (
@@ -105,9 +146,15 @@ export async function readTaskDetail(
   includePacket: boolean,
   includeAttribution: boolean,
   signal: AbortSignal,
+  includeVault = false,
 ): Promise<TaskDetailRead> {
   if (!identifier(vault) || !identifier(task)) throw Error("invalid_request");
-  const options = { contractVersion: TASK_CONTRACT, includePacket, includeAttribution };
+  const options: Request = {
+    contractVersion: TASK_CONTRACT,
+    includePacket,
+    includeAttribution,
+    ...(includeVault ? { includeVault: true } : {}),
+  };
   const response = await untilSignal(
     send(`/api/v3/task-center/${vault}/tasks/${task}/detail/query`, {
       method: "POST",

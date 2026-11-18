@@ -78,3 +78,70 @@ test("the owner detail query makes one read and accepts only the requested task 
   });
   assert.equal((await post(body)).status, 200);
 });
+
+test("only an explicit vault request can carry the original vault response and matching full task metadata", async (t) => {
+  const b = await stack();
+  t.after(() => b.close());
+  const owner = b.mount();
+  await owner.login("synthetic_detail_owner");
+  const vault = {
+    contractVersion: CONTRACT,
+    vault: {
+      vaultId: "vault_A",
+      rootJwk: { kty: "EC", crv: "P-256", x: "A".repeat(43), y: "A".repeat(43) },
+      rootKeyId: "root_A",
+      registryHistory: [],
+      archive: null,
+      version: 1,
+    },
+    sources: [],
+  };
+  const payload = () => ({
+    ...render(),
+    taskMetadata: metadata(1),
+    vaultResponse: ready(structuredClone(vault)),
+  });
+  let next = payload();
+  b.setUpstream(() => response(next));
+  const send = (route, opts) =>
+    owner.value.requestPrivate("agent-hub", route, owner.value.sessionKey, opts);
+  const full = { ...body, includeVault: true };
+  const post = (json) => send(path, { method: "POST", json });
+  const read = await readTaskDetail(
+    send,
+    "vault_A",
+    "task_1",
+    true,
+    false,
+    new AbortController().signal,
+    true,
+  );
+  assert.equal(read.vaultResponse.status, "ready");
+  assert.equal(read.taskMetadata.envelopeFingerprint, metadata(1).envelopeFingerprint);
+  assert.equal((await post(body)).status, 503);
+  await assert.rejects(post({ ...full, includeVault: false }));
+  for (const change of [
+    (v) => {
+      delete v.taskMetadata;
+    },
+    (v) => {
+      v.vaultResponse = null;
+    },
+    (v) => {
+      v.vaultResponse.data.vault.vaultId = "another_vault";
+    },
+    (v) => {
+      v.vaultResponse.data.vault.rootJwk.d = "invalid_field";
+    },
+    (v) => {
+      v.taskMetadata.deliveryRevision++;
+    },
+  ]) {
+    next = payload();
+    change(next);
+    assert.equal((await post(full)).status, 503);
+  }
+  next = payload();
+  next.vaultResponse = { status: "unavailable" };
+  assert.equal((await post(full)).status, 200);
+});
