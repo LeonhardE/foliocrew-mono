@@ -1,8 +1,8 @@
-# FolioView
+# Foliocrew
 
-FolioView combines US market browsing with a private, encrypted workspace for holdings, tasks,
+Foliocrew combines US market browsing with a private, encrypted workspace for holdings, tasks,
 agent permissions and reports. This repository is
-[`LeonhardE/folioview-mono`](https://github.com/LeonhardE/folioview-mono).
+[`LeonhardE/foliocrew-mono`](https://github.com/LeonhardE/foliocrew-mono).
 
 Anonymous visitors can browse markets and charts. Google sign-in enables private watchlists and
 preferences. The resource library imports holdings locally and saves encrypted snapshots; a Passkey
