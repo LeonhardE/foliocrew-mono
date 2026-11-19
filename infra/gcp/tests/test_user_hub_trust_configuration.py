@@ -66,11 +66,18 @@ class UserHubTrustConfigurationTests(unittest.TestCase):
     def test_pins_exact_web_workload_without_enabling_private_recovery(self):
         from test_browser_origin_configuration import with_aliases
 
-        value = with_aliases()
+        value = with_aliases(user=["https://workspace.example.test"])
         subject = "999000111222333444555"
         value["userHubTrust"]["ownerRecoveryWebSubject"] = subject
         artifacts = profile.compile_user_hub_trust_artifacts(value)
         deployment = artifacts["deployment-config.candidate.json"]
+        origins = profile.compile_browser_origin_artifacts(value, "user")
+        deployment = profile.add_browser_origins(
+            deployment,
+            profile.canonical(origins["browser-origins.candidate.json"]),
+            expected_sha256=origins["manifest.json"]["browserOriginsSha256"],
+        )
+        self.assertEqual(deployment["browserOrigins"], ["https://workspace.example.test"])
         trust = deployment["userHubTrust"]
         web = trust["webDeployment"]
         configuration = trust["configuration"]
@@ -95,6 +102,7 @@ class UserHubTrustConfigurationTests(unittest.TestCase):
         self.assertLessEqual(len(profile.canonical(deployment)), profile.MAX_TARGET_BYTES)
         for mutate in (
             lambda item: item["userHubTrust"].pop("webDeployment"),
+            lambda item: item["userHubTrust"]["webDeployment"].update(scopeSha256="0" * 64),
             lambda item: item["userHubTrust"]["configuration"]["environment"].update(
                 USER_PRIVATE_OWNER_WEB_CALLER='{"1":"wrong@example.invalid"}',
             ),
