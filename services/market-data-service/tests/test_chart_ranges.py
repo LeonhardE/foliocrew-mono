@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from yfinance.exceptions import YFPricesMissingError, YFRateLimitError
 
 from app.main import app
-from app.market_cache import SQLiteMarketCache
+from app.market_cache import CacheUnavailable, ReadOnlyMarketCache, SQLiteMarketCache
 from app.market_data import MarketService, get_market_service
 from app.yahoo_provider import (
     DEFAULT_BY_SYMBOL,
@@ -256,6 +256,26 @@ class ChartRangeServiceTests(unittest.TestCase):
         with self.assertRaises(HTTPException):
             self.service.candles("AAPL", "1d")
         self.assertEqual(self.provider.history.call_count, 2)
+
+    def test_read_only_cutover_serves_existing_history_and_rejects_new_shared_writes(self):
+        key = "candles:AAPL:1d"
+        payload = {**range_payload("AAPL", "1d"), "_refreshAfter": NOW - 30}
+        self.cache.put(key, payload, NOW - 60)
+        paused = ReadOnlyMarketCache(self.cache)
+        self.service.cache = paused
+        result = self.service.candles("AAPL", "1d")
+        self.assertEqual(result["symbol"], "AAPL")
+        self.assertIn("temporarily paused", result["warning"])
+        self.provider.history.assert_not_called()
+        self.assertEqual(self.cache.get(key).value, payload)
+        self.assertEqual(paused.get_many([key])[key], self.cache.get(key))
+        for write in (
+            lambda: paused.put(key, range_payload("AAPL", "1d"), NOW),
+            lambda: paused.fail(key, NOW, rate_limited=True),
+        ):
+            with self.assertRaises(CacheUnavailable):
+                write()
+        self.assertEqual(self.cache.get(key).value, payload)
 
     def test_confirmed_provider_rate_limit_still_defers_other_symbols(self):
         self.provider.history.side_effect = UpstreamError(rate_limited=True)

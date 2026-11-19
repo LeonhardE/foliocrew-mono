@@ -66,6 +66,40 @@ class MarketCache:
         """Discard an optional process-local read copy, never shared limits."""
 
 
+class ReadOnlyMarketCache(MarketCache):
+    """Serve cached data while rejecting refresh reservations and shared writes."""
+
+    def __init__(self, cache: MarketCache):
+        super().__init__()
+        self.cache = cache
+
+    def get(self, key: str) -> Entry | None:
+        return self.cache.get(key)
+
+    def get_many(self, keys: list[str]) -> dict[str, Entry | None]:
+        return self.cache.get_many(keys)
+
+    def invalidate(self, key: str) -> None:
+        self.cache.invalidate(key)
+
+    def claim(self, key: str, now: float, cost: int = 1, *, provider: str = "yahoo") -> str:
+        return "Market refresh is temporarily paused. Cached data will be used."
+
+    def put(self, key: str, value: dict[str, Any], now: float) -> None:
+        raise CacheUnavailable
+
+    def fail(
+        self,
+        key: str,
+        now: float,
+        *,
+        rate_limited: bool = False,
+        provider: str = "yahoo",
+        cool_provider: bool = True,
+    ) -> None:
+        raise CacheUnavailable
+
+
 def bounded_int(name: str, default: int, lower: int, upper: int) -> int:
     try:
         return max(lower, min(upper, int(os.getenv(name, str(default)))))
@@ -413,6 +447,9 @@ class FirestoreMarketCache(MarketCache):
 
 
 def create_cache() -> MarketCache:
+    paused = os.getenv("MARKET_CACHE_WRITES_PAUSED", "false")
+    if paused not in {"false", "true"}:
+        raise CacheUnavailable("Invalid Market cache write setting")
     on_cloud_run = bool(os.getenv("K_SERVICE"))
     backend = os.getenv("MARKET_CACHE_BACKEND", "firestore" if on_cloud_run else "sqlite")
     if on_cloud_run and os.getenv("FIRESTORE_EMULATOR_HOST"):
@@ -423,9 +460,11 @@ def create_cache() -> MarketCache:
         project = os.getenv("FIREBASE_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT")
         if not project:
             raise CacheUnavailable("A project ID is required for Firestore")
-        return FirestoreMarketCache(project, os.getenv("MARKET_FIRESTORE_DATABASE", "(default)"))
-    if backend == "sqlite":
-        return SQLiteMarketCache(
+        store = FirestoreMarketCache(project, os.getenv("MARKET_FIRESTORE_DATABASE", "(default)"))
+    elif backend == "sqlite":
+        store = SQLiteMarketCache(
             os.getenv("MARKET_CACHE_PATH", "/tmp/financial-analysis/market.sqlite3")
         )
-    raise CacheUnavailable("Unknown market cache backend")
+    else:
+        raise CacheUnavailable("Unknown market cache backend")
+    return ReadOnlyMarketCache(store) if paused == "true" else store
