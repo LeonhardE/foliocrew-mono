@@ -14,6 +14,7 @@ from app.private_resources.api import (
 )
 from app.private_resources.authority_cutover import UserAuthorityCutover
 from app.private_resources.authority_views import OWNER_CURRENT_PROFILE, PrivateAuthorityViews
+from app.private_resources.directory import PrivateResourceDirectory
 from app.private_resources.recovery import COLLECTION as HEADS
 from app.private_resources.report_sources import HOLDINGS_FENCES, holdings_fence_key
 from app.private_resources.source_invalidations import SOURCE_INDEX, SourceInvalidations
@@ -114,6 +115,16 @@ class AuthorityViewTests(unittest.TestCase):
             self.assertEqual(output["authority"]["resourceRef"], ref)
             self.assertEqual(output["authority"]["sourceEpoch"], 1)
             self.assertNotIn("sources", output["authority"])
+        directory = PrivateResourceDirectory(self.store)
+        before = directory.read(fixture.UID, fixture.VAULT, request["nonce"])
+        self.assertEqual(before["holdings"], [{**binding, "state": "active", "revision": 0}])
+        self.assertEqual(before["registry"]["registryEpoch"], 2)
+        self.assertEqual(
+            {item["kind"] for item in before["lists"]}, {"watchlist", "channel_follows"}
+        )
+        self.assertTrue(all(item["state"] == "uninitialized" for item in before["lists"]))
+        with self.assertRaisesRegex(ContractError, "not_found"):
+            directory.read("unrelated-synthetic-owner", fixture.VAULT, request["nonce"])
         SourceInvalidations(self.store, clock=lambda: 1000).invalidate(
             {
                 "contractVersion": CONTRACT_VERSION,
@@ -127,6 +138,9 @@ class AuthorityViewTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ContractError, "source_unavailable"):
             self.viewer.lookup(fixture.UID, request, now=1000)
+        after = directory.read(fixture.UID, fixture.VAULT, request["nonce"])
+        self.assertEqual(after["holdings"], [])
+        self.assertEqual(after["sourcesDigest"], source_index_digest([]))
 
     def test_each_route_limits_delegation_to_its_fixed_consumer_and_audience(self):
         verifier = Mock()
