@@ -126,10 +126,9 @@ client rules release. Market uses `(default)` during preparation. Verify the
 named release denies client reads and writes, then verify the migration identity
 before copying cache entries.
 
-`google_project_iam_member.market_cache` remains administrator-owned with its exact condition
-limiting the selected runtime's existing Datastore User role to this project's `(default)`
-database. The separate named-database grant serves the current configuration.
-Revoke the existing default-database grant after cutover and rollback verification.
+The Market runtime's Datastore User role is conditioned on the exact
+`market-cache` database. The reviewed administrator plan retires its original
+`(default)` grant after cutover and rollback verification.
 The [database migration runbook](database-iam-migration.md) describes the separate
 historical migration and recovery process, outside normal Market execution permissions.
 

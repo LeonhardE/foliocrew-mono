@@ -1,5 +1,9 @@
 # Market default-database IAM migration (INF-002)
 
+Historical procedure for the original shared-database setup. INF-022 retires
+this membership after named-database cutover and write/rollback verification.
+Use the named database in normal operation and in compatible rollback revisions.
+
 Examples use a fictitious deployment. Replace project and identity values from your reviewed private instance; the historical acceptance notes do not certify any other deployment.
 This procedure is a separately reviewed administrator operation for one Market
 membership. The committed change and offline tests do not apply production IAM,

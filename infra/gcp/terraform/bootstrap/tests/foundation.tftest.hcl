@@ -38,11 +38,6 @@ override_resource {
 }
 
 override_resource {
-  target = google_project_iam_member.market_cache
-  values = {}
-}
-
-override_resource {
   target          = google_project_iam_custom_role.market_service_read
   override_during = plan
   values = {
@@ -452,31 +447,9 @@ run "market_execution_business_roles_cannot_create_delete_or_administer_resource
       google_service_account_iam_member.market_runtime_deployer["terraform"].member == "serviceAccount:${module.target_execution["market"].service_accounts["apply"]}" &&
       google_cloud_run_v2_service_iam_member.market_image_deployer.name == "market-api" &&
       google_cloud_run_v2_service_iam_member.market_image_deployer.role == "roles/run.developer" &&
-      google_cloud_run_v2_service_iam_member.market_image_deployer.member == "serviceAccount:fa-build@${var.project_id}.iam.gserviceaccount.com" &&
-      google_project_iam_member.market_cache.role == "roles/datastore.user" &&
-      google_project_iam_member.market_cache.member == "serviceAccount:fa-api-runtime@${var.project_id}.iam.gserviceaccount.com"
+      google_cloud_run_v2_service_iam_member.market_image_deployer.member == "serviceAccount:fa-build@${var.project_id}.iam.gserviceaccount.com"
     )
-    error_message = "Preserve the existing image publisher and Market cache role/member; Terraform apply may attach only the Market runtime and must not impersonate fa-build."
-  }
-}
-
-run "market_cache_is_scoped_to_only_the_default_database" {
-  command = plan
-
-  assert {
-    condition = (
-      length(module.market_database_scope.grants) == 0 &&
-      length(google_firebaserules_release.market_cache) == 0 &&
-      module.market_database_scope.database_resource_name == "projects/${var.project_id}/databases/(default)" &&
-      google_project_iam_member.market_cache.project == var.project_id &&
-      google_project_iam_member.market_cache.role == "roles/datastore.user" &&
-      google_project_iam_member.market_cache.member == "serviceAccount:fa-api-runtime@${var.project_id}.iam.gserviceaccount.com" &&
-      length(google_project_iam_member.market_cache.condition) == 1 &&
-      google_project_iam_member.market_cache.condition[0].title == "database-default" &&
-      google_project_iam_member.market_cache.condition[0].description == module.market_database_scope.condition.description &&
-      google_project_iam_member.market_cache.condition[0].expression == "resource.type == 'firestore.googleapis.com/Database' && resource.name == 'projects/${var.project_id}/databases/(default)'"
-    )
-    error_message = "Only the existing Market IAM address may own its fixed Datastore User grant, with an exact default-database condition and no duplicate module grant."
+    error_message = "Preserve the existing image publisher; Terraform apply may attach only the Market runtime."
   }
 }
 
@@ -494,8 +467,7 @@ run "market_cache_provisioning_uses_the_owned_database_and_denies_clients" {
       module.market_cache_database[0].location_id == "northamerica-northeast2" &&
       google_firebaserules_release.market_cache[0].name == "cloud.firestore/market-cache" &&
       strcontains(one(google_firebaserules_ruleset.market_cache[0].source).files[0].content, "allow read, write: if false;") &&
-      module.market_database_scope.database_resource_name == "projects/${var.project_id}/databases/(default)" &&
-      module.market_cache_runtime_scope[0].grants["runtime"].member == google_project_iam_member.market_cache.member &&
+      module.market_cache_runtime_scope[0].grants["runtime"].member == "serviceAccount:fa-api-runtime@${var.project_id}.iam.gserviceaccount.com" &&
       module.market_cache_runtime_scope[0].grants["runtime"].role == "roles/datastore.user" &&
       module.market_cache_runtime_scope[0].grants["runtime"].condition.expression == "resource.type == 'firestore.googleapis.com/Database' && resource.name == 'projects/${var.project_id}/databases/market-cache'"
     )

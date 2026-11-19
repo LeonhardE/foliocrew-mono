@@ -57,11 +57,6 @@ override_resource {
 }
 
 override_resource {
-  target = google_project_iam_member.market_cache
-  values = {}
-}
-
-override_resource {
   target          = google_project_iam_custom_role.market_service_read
   override_during = plan
   values = {
