@@ -186,3 +186,66 @@ run "reject_extra_environment" {
   variables { hub_trust = { "USER_SERVICE_AUDIENCE" : "https://user-api-111222333444.us-central1.run.app", "USER_DELEGATION_AUDIENCE" : "https://user-api-111222333444.us-central1.run.app/internal/v2", "USER_DELEGATION_ISSUER" : "https://agent-hub-api-111222333444.us-central1.run.app", "USER_TRUSTED_HUB_CALLERS" : "{\"123456789012345678901\":\"alpha-hub-runtime@demo-user-alpha.iam.gserviceaccount.com\"}", "USER_JWKS_URL" : "https://wrong.invalid" } }
   expect_failures = [var.hub_trust]
 }
+
+run "private_recovery_accepts_one_distinct_web_workload_without_enabling_reads" {
+  command = plan
+  variables {
+    hub_trust = {
+      USER_SERVICE_AUDIENCE       = ""
+      USER_DELEGATION_AUDIENCE    = ""
+      USER_DELEGATION_ISSUER      = ""
+      USER_TRUSTED_HUB_CALLERS    = ""
+      USER_PRIVATE_OWNER_AUDIENCE = "https://user-api-111222333444.us-central1.run.app"
+      USER_PRIVATE_OWNER_WEB_CALLER = jsonencode({
+        "987654321098765432109" = "alpha-web-runtime@demo-user-alpha.iam.gserviceaccount.com"
+      })
+    }
+  }
+  assert {
+    condition = (
+      local.environment.USER_PRIVATE_OWNER_AUDIENCE == var.hub_trust.USER_PRIVATE_OWNER_AUDIENCE &&
+      local.environment.USER_PRIVATE_OWNER_WEB_CALLER == var.hub_trust.USER_PRIVATE_OWNER_WEB_CALLER &&
+      !contains(keys(local.environment), "USER_PRIVATE_RECOVERY_READ") &&
+      !contains(keys(local.environment), "USER_REPORT_DELEGATION_AUDIENCE")
+    )
+    error_message = "Consume the Web identity without activating recovery or unrelated Hub trust."
+  }
+}
+
+run "private_recovery_rejects_the_hub_as_its_web_workload" {
+  command = plan
+  variables {
+    hub_trust = {
+      USER_SERVICE_AUDIENCE    = "https://user-api-111222333444.us-central1.run.app"
+      USER_DELEGATION_AUDIENCE = "https://user-api-111222333444.us-central1.run.app/internal/v2"
+      USER_DELEGATION_ISSUER   = "https://agent-hub-api-111222333444.us-central1.run.app"
+      USER_TRUSTED_HUB_CALLERS = jsonencode({
+        "123456789012345678901" = "alpha-hub-runtime@demo-user-alpha.iam.gserviceaccount.com"
+      })
+      USER_PRIVATE_OWNER_AUDIENCE = "https://user-api-111222333444.us-central1.run.app"
+      USER_PRIVATE_OWNER_WEB_CALLER = jsonencode({
+        "987654321098765432109" = "alpha-hub-runtime@demo-user-alpha.iam.gserviceaccount.com"
+      })
+    }
+  }
+  expect_failures = [var.hub_trust]
+}
+
+run "private_recovery_rejects_a_different_numbered_user_audience" {
+  command = plan
+  variables {
+    hub_trust = {
+      USER_SERVICE_AUDIENCE    = "https://user-api-111222333444.us-central1.run.app"
+      USER_DELEGATION_AUDIENCE = "https://user-api-111222333444.us-central1.run.app/internal/v2"
+      USER_DELEGATION_ISSUER   = "https://agent-hub-api-111222333444.us-central1.run.app"
+      USER_TRUSTED_HUB_CALLERS = jsonencode({
+        "123456789012345678901" = "alpha-hub-runtime@demo-user-alpha.iam.gserviceaccount.com"
+      })
+      USER_PRIVATE_OWNER_AUDIENCE = "https://user-api-555555555555.us-central1.run.app"
+      USER_PRIVATE_OWNER_WEB_CALLER = jsonencode({
+        "987654321098765432109" = "alpha-web-runtime@demo-user-alpha.iam.gserviceaccount.com"
+      })
+    }
+  }
+  expect_failures = [var.hub_trust]
+}
