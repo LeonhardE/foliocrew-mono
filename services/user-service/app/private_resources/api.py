@@ -27,6 +27,7 @@ from ..resource_api import ResourceRoute, body, configured_verifier, require_v2
 from ..resources import FirestoreUserResourceStore, get_resource_store
 from .authority_cutover import UserAuthorityCutover
 from .authority_views import OWNER_CURRENT_PROFILE, PrivateAuthorityViews
+from .directory import DIRECTORY_PROFILE, PrivateResourceDirectory
 from .recovery import (
     ClosedModel,
     Digest,
@@ -271,6 +272,11 @@ class RegistryStartRequest(CutoverScope):
     nonce: OperationId
 
 
+class PrivateResourceDirectoryRequest(CutoverScope):
+    profile: Literal[DIRECTORY_PROFILE]
+    nonce: OperationId
+
+
 def _cutover_scope(value, uid, vault):
     if value["ownerSubject"] != owner_key(uid) or value["vaultId"] != vault:
         raise ContractError("not_found")
@@ -285,6 +291,28 @@ def owner_cutover() -> UserAuthorityCutover:
 def _uncached_private(response):
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-FolioView-Contract"] = CONTRACT_VERSION
+
+
+def owner_directory() -> PrivateResourceDirectory:
+    if os.getenv("USER_PRIVATE_RESOURCE_DIRECTORY") != "true":
+        raise ContractError("not_found")
+    return PrivateResourceDirectory(get_resource_store())
+
+
+@router.post("/{vault_id}/directory/read")
+async def read_owner_directory(
+    vault_id: str,
+    request: Request,
+    response: Response,
+    user: Annotated[CurrentUser, Depends(require_google_user)],
+    directory: Annotated[PrivateResourceDirectory, Depends(owner_directory)],
+    _: Annotated[None, Depends(require_owner_proxy)],
+):
+    value = await body(request, PrivateResourceDirectoryRequest, maximum=4096)
+    _cutover_scope(value.model_dump(), user.uid, vault_id)
+    result = await run_in_threadpool(directory.read, user.uid, vault_id, value.nonce)
+    _uncached_private(response)
+    return result
 
 
 class OwnerCurrentVaultRequest(ClosedModel):
