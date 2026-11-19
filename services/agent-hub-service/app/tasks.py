@@ -248,9 +248,13 @@ def _response(unit, owner, vault_row, task_id, version):
         ):
             raise StoreUnavailable
         validate_schema("KeyProofs", row["keyProofs"])
+        history = vault_row["registryHistory"]
+        prior_history = vault_row.get("priorRegistryHistory", ())
+        if any(_proofs(bundle) == row["keyProofs"] for bundle in prior_history):
+            history = prior_history
         matching = [
             position
-            for position, bundle in enumerate(vault_row["registryHistory"])
+            for position, bundle in enumerate(history)
             if _proofs(bundle) == row["keyProofs"]
         ]
         if len(matching) != 1:
@@ -266,11 +270,13 @@ def _response(unit, owner, vault_row, task_id, version):
         historical = None
         prefix_cache = getattr(unit, "registry_prefix_cache", None)
         if type(prefix_cache) is RegistryPrefixCache:
-            historical = prefix_cache.get(owner, vault_row, matching[0], written_at)
+            historical = prefix_cache.get(
+                owner, {**vault_row, "registryHistory": history}, matching[0], written_at
+            )
         if historical is None:
             # Legacy/custom units and full caches retain the complete original
             # history verification path; absence never means accepted authority.
-            for position, bundle in enumerate(vault_row["registryHistory"]):
+            for position, bundle in enumerate(history):
                 historical = verify_registry(
                     bundle,
                     root_jwk=vault_row["rootJwk"],

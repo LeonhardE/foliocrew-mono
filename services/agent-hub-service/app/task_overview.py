@@ -22,10 +22,11 @@ from .native_transport import NativeConnectionOwnerService
 from .persistent_results import PersistentOwnerResultService
 from .persistent_results import result_path as persistent_result_path
 from .persistent_routes import control_transport
-from .store import StoreUnavailable, document_path, get_store
+from .store import StoreUnavailable, document_path, get_store, private_resource_writer_fence_path
 from .task_center_routes import owner_capabilities
 from .task_lifecycle import lifecycle_path
 from .tasks import PACKET_BATCH_PROFILE, TaskService, _head, _index, _paths, _protocol, _response
+from .user_vault_authority import scoped_user_vaults
 from .vaults import _current, identifier
 
 PROFILE = "folioview.owner-task-overview.v1"
@@ -139,8 +140,9 @@ def _packet_page(view, owner, vault, selected, index):
 
 
 class TaskOverviewService:
-    def __init__(self, store, *, clock=time.time):
+    def __init__(self, store, *, clock=time.time, user_vaults=None):
         self.store, self.clock = store, clock
+        self.user_vaults = user_vaults or scoped_user_vaults(store)
 
     def overview(self, uid, vault_id, value):
         identifier(vault_id)
@@ -148,6 +150,7 @@ class TaskOverviewService:
         owner = owner_key(uid)
         issued_token = secrets.token_urlsafe(24)
         capabilities = owner_capabilities(uid)
+        current = self.user_vaults.read(uid, vault_id)
 
         def read(unit):
             tasks = TaskService(self.store, clock=self.clock)
@@ -156,10 +159,12 @@ class TaskOverviewService:
             native = NativeConnectionOwnerService(self.store, clock=lambda: now)
             view = _OverviewSnapshot(unit)
             root_path = document_path("hub_vaults", owner)
+            fence_path = private_resource_writer_fence_path(owner)
             persistent_index = document_path("hub_persistent_result_indexes", owner, vault_id)
             view.fetch(
                 [
                     root_path,
+                    fence_path,
                     document_path("hub_task_indexes", owner, vault_id),
                     persistent_index,
                     document_path("hub_oauth_owners", owner),
@@ -173,7 +178,23 @@ class TaskOverviewService:
                 and root.get("vaultId") == vault_id
             ):
                 view.fetch([document_path("hub_vault_lifecycle", owner, vault_id)])
-            vault, _ = _current(view, owner, now, vault_id)
+            if current is None:
+                if view.get(fence_path) is not None:
+                    raise ContractError("source_unavailable")
+                vault, _ = _current(view, owner, now, vault_id)
+            else:
+                current.require_current(view, now)
+                authority = current.authority
+                original, _ = _current(view, owner, now, vault_id)
+                if original["rootKeyId"] != authority["rootKeyId"]:
+                    raise ContractError("registry_conflict")
+                vault = {
+                    **{
+                        key: authority[key]
+                        for key in ("vaultId", "rootKeyId", "rootJwk", "registryHistory")
+                    },
+                    "priorRegistryHistory": original["registryHistory"],
+                }
             task_page = tasks._list(
                 view, owner, vault, now=now, limit=32, cursor=None, issued_token=issued_token
             )
