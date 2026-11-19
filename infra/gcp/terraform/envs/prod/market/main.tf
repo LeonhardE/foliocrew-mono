@@ -51,7 +51,7 @@ module "market" {
     FIREBASE_PROJECT_ID         = local.project_id
     MARKET_DATA_SOURCE          = "yfinance"
     MARKET_CACHE_BACKEND        = "firestore"
-    MARKET_FIRESTORE_DATABASE   = "(default)"
+    MARKET_FIRESTORE_DATABASE   = "market-cache"
     MARKET_CACHE_WRITES_PAUSED  = "true"
     MARKET_CACHE_TTL_SECONDS    = "3600"
     MARKET_UPSTREAM_DAILY_LIMIT = "200"
