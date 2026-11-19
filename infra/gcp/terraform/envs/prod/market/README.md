@@ -115,10 +115,10 @@ no-change plans remain required for integration.
 
 ## Existing database scope and historical evidence
 
-This configuration phase of INF-022 serves retained cache entries from
-`market-cache`. Apply its reviewed plan after the paused source has drained
-and final reconciliation matches the two scoped inventories. Verify cached
-queries from the named database before resuming provider refreshes.
+Market serves and refreshes the reconciled cache in `market-cache`. The
+refresh-resumption plan follows named-database read verification. Verify that
+new writes reach the named database and the compatible rollback revision reads
+those writes before retiring the old database grant.
 
 INF-022 uses `market_cache_database_enabled=true` in the administrator
 bootstrap root for the protected Toronto `market-cache` database and its named
