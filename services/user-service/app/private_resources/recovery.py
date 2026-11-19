@@ -31,6 +31,7 @@ EpochSeconds = Annotated[int, Field(ge=0, le=MAX_SAFE_INTEGER)]
 Digest = Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
 KeyId = Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{43}$")]
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")]
+OperationId = Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{22,128}$")]
 
 
 class ClosedModel(BaseModel):
@@ -58,6 +59,14 @@ class DevicePair(ClosedModel):
     expiresAt: EpochSeconds
 
 
+class AuthorityHandover(ClosedModel):
+    """Service-side proof reference installed with a scoped authoritative head."""
+
+    operationId: OperationId
+    baselineDigest: Digest
+    writerEpoch: Version
+
+
 class CurrentHead(ClosedModel):
     ownerSubject: Identifier
     vaultId: Identifier
@@ -68,6 +77,7 @@ class CurrentHead(ClosedModel):
     archive: ArchiveBoundary
     sourcesDigest: Digest
     devices: Annotated[list[DevicePair], Field(max_length=32)]
+    handover: AuthorityHandover | None = None
 
 
 class RecoveryRequest(ClosedModel):
@@ -128,7 +138,7 @@ def build_recovery_head(
         archive=archive,
         sourcesDigest=source_index_digest(sources),
         devices=pairs,
-    ).model_dump()
+    ).model_dump(exclude_unset=True)
     if len(canonical_json(head)) > MAX_CONTEXT_BYTES:
         raise ContractError("payload_too_large")
     return head
@@ -153,7 +163,7 @@ class RecoveryHeads:
         try:
             return CurrentHead.model_validate(
                 strict_json_loads(value, max_bytes=MAX_CONTEXT_BYTES)
-            ).model_dump()
+            ).model_dump(exclude_unset=True)
         except (ContractError, TypeError, ValueError):
             raise ContractError("authorization_unavailable") from None
 
@@ -207,6 +217,7 @@ class RecoveryHeads:
                 previous["vaultVersion"] != expected_version
                 or candidate["vaultVersion"] <= expected_version
                 or any(previous[key] != candidate[key] for key in ("vaultId", "rootKeyId"))
+                or previous.get("handover") != candidate.get("handover")
             ):
                 raise ContractError("version_conflict")
             prior, next_head = previous["registry"], candidate["registry"]
@@ -281,7 +292,7 @@ def current_recovery_evidence(heads: RecoveryHeads, uid: str, vault: str, reques
         "device": "active",
         "verifiedAt": now,
         "expiresAt": min(now + RECOVERY_EVIDENCE_SECONDS, matched["expiresAt"]),
-        **{key: value for key, value in head.items() if key != "devices"},
+        **{key: value for key, value in head.items() if key not in {"devices", "handover"}},
     }
     return verify_owner_recovery_evidence(
         result, request=request, pinned_root_key_id=head["rootKeyId"], now=now
