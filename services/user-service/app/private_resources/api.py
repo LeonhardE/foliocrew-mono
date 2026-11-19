@@ -12,7 +12,11 @@ from starlette.concurrency import run_in_threadpool
 
 from folioview_shared.auth import CurrentUser, require_google_user
 from folioview_shared.delegation import DelegationError, DelegationVerifier
-from folioview_shared.encrypted.constants import CONTRACT_VERSION, MAX_REGISTRY_BYTES
+from folioview_shared.encrypted.constants import (
+    CONTRACT_VERSION,
+    MAX_CONTROL_BYTES,
+    MAX_REGISTRY_BYTES,
+)
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import strict_json_loads
 from folioview_shared.encrypted.private_display_names import (
@@ -531,6 +535,43 @@ async def read_owner_archive_lifecycle(
     )
     _uncached_private(response)
     return result
+
+
+class OwnerArchiveLifecycleAdvance(CutoverScope):
+    profile: Literal[ARCHIVE_LIFECYCLE_PROFILE]
+    nonce: OperationId
+    operationId: OperationId
+    command: dict
+    archive: dict | None
+
+
+@router.post("/{vault_id}/archive-lifecycle/advance")
+async def advance_owner_archive_lifecycle(
+    vault_id: str,
+    request: Request,
+    response: Response,
+    user: Annotated[CurrentUser, Depends(require_google_user)],
+    lifecycle: Annotated[PrivateArchiveLifecycle, Depends(owner_archive_lifecycle)],
+    _: Annotated[None, Depends(require_owner_proxy)],
+):
+    if os.getenv("USER_PRIVATE_ARCHIVE_WRITES") != "true":
+        raise ContractError("not_found")
+    value = await body(request, OwnerArchiveLifecycleAdvance, maximum=MAX_CONTROL_BYTES)
+    _cutover_scope(value.model_dump(), user.uid, vault_id)
+    receipt = await run_in_threadpool(
+        lifecycle.advance, user.uid, vault_id, value.operationId, value.command, value.archive
+    )
+    _uncached_private(response)
+    return {
+        "contractVersion": CONTRACT_VERSION,
+        "profile": ARCHIVE_LIFECYCLE_PROFILE,
+        "ownerSubject": value.ownerSubject,
+        "vaultId": vault_id,
+        "rootKeyId": receipt["rootKeyId"],
+        "nonce": value.nonce,
+        "operationId": value.operationId,
+        "receipt": receipt,
+    }
 
 
 HOLDINGS_REGISTRATION_PROFILE = "folioview.owner-holdings-registration.v1"
