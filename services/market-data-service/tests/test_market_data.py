@@ -112,7 +112,8 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(download.call_args.kwargs["timeout"], 6)
 
     def test_empty_and_partial_downloads_are_not_replaced_by_mock(self):
-        with patch("yfinance.download", return_value=pd.DataFrame()):
+        with patch("yfinance.Ticker") as ticker:
+            ticker.return_value.history.return_value = pd.DataFrame()
             self.assertEqual(YahooProvider().history([DEFAULT_BY_SYMBOL["AAPL"]], NOW), {})
         partial = pd.concat({"AAPL": history_frame()}, axis=1)
         with patch("yfinance.download", return_value=partial):

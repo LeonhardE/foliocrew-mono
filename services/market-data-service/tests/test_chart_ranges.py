@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from yfinance.exceptions import YFPricesMissingError, YFRateLimitError
 
 from app.main import app
 from app.market_cache import SQLiteMarketCache
@@ -17,6 +18,7 @@ from app.yahoo_provider import (
     DEFAULT_BY_SYMBOL,
     DEFAULT_INSTRUMENTS,
     HISTORY_RANGES,
+    UpstreamError,
     YahooProvider,
     calendar_start,
     candle_payload,
@@ -150,17 +152,41 @@ class ChartRangeProviderTests(unittest.TestCase):
         for chart_range, (period, interval) in HISTORY_RANGES.items():
             with self.subTest(chart_range=chart_range):
                 frame = intraday_frame() if interval != "1d" else daily_frame()
-                with patch(
-                    "yfinance.download",
-                    return_value=pd.concat({"AAPL": frame}, axis=1),
-                ) as download:
+                with patch("yfinance.Ticker") as ticker:
+                    history = ticker.return_value.history
+                    history.return_value = frame
                     result = YahooProvider().history([DEFAULT_BY_SYMBOL["AAPL"]], NOW, chart_range)
+                ticker.assert_called_once_with("AAPL")
                 self.assertEqual(result["AAPL"]["range"], chart_range)
-                self.assertEqual(download.call_args.kwargs["period"], period)
-                self.assertEqual(download.call_args.kwargs["interval"], interval)
-                self.assertFalse(download.call_args.kwargs["prepost"])
-                self.assertEqual(download.call_args.kwargs["ignore_tz"], interval == "1d")
-                self.assertEqual(download.call_args.kwargs["timeout"], 6)
+                self.assertEqual(history.call_args.kwargs["period"], period)
+                self.assertEqual(history.call_args.kwargs["interval"], interval)
+                self.assertFalse(history.call_args.kwargs["prepost"])
+                self.assertTrue(history.call_args.kwargs["raise_errors"])
+                self.assertEqual(history.call_args.kwargs["timeout"], 6)
+
+    def test_single_symbol_no_prices_and_provider_rate_limit_are_distinct(self):
+        with patch("yfinance.Ticker") as ticker:
+            history = ticker.return_value.history
+            history.side_effect = YFPricesMissingError("AAPL", "")
+            self.assertEqual(YahooProvider().history([DEFAULT_BY_SYMBOL["AAPL"]], NOW, "1d"), {})
+            history.side_effect = YFRateLimitError()
+            with self.assertRaises(UpstreamError) as failure:
+                YahooProvider().history([DEFAULT_BY_SYMBOL["AAPL"]], NOW, "1d")
+            self.assertTrue(failure.exception.rate_limited)
+
+    def test_explicit_provider_failures_do_not_become_missing_history(self):
+        for provider_error in (
+            YFPricesMissingError("AAPL", "(Yahoo status_code = 503)"),
+            YFPricesMissingError("AAPL", "", yahoo_reason="Unauthorized"),
+        ):
+            with (
+                self.subTest(error=provider_error),
+                patch("yfinance.Ticker") as ticker,
+                self.assertRaises(UpstreamError) as failure,
+            ):
+                ticker.return_value.history.side_effect = provider_error
+                YahooProvider().history([DEFAULT_BY_SYMBOL["AAPL"]], NOW, "1d")
+            self.assertFalse(failure.exception.rate_limited)
 
 
 class ChartRangeServiceTests(unittest.TestCase):
@@ -216,9 +242,31 @@ class ChartRangeServiceTests(unittest.TestCase):
         self.provider.history.side_effect = None
         with self.assertRaises(HTTPException) as failure:
             self.service.candles("AAPL", "1d")
-        self.assertEqual(failure.exception.status_code, 503)
+        self.assertEqual(failure.exception.status_code, 404)
         self.assertIsNone(self.cache.get("candles:AAPL:1d"))
         self.assertEqual(self.service.candles("AAPL")["range"], "1m")
+
+    def test_missing_symbol_does_not_stop_other_symbols_or_repeat_yahoo_work(self):
+        self.cache.daily_limit = 200
+        self.provider.history.side_effect = [{}, {"MSFT": range_payload("MSFT", "1d")}]
+        with self.assertRaises(HTTPException) as first:
+            self.service.candles("AAPL", "1d")
+        self.assertEqual(first.exception.status_code, 404)
+        self.assertEqual(self.service.candles("MSFT", "1d")["symbol"], "MSFT")
+        with self.assertRaises(HTTPException):
+            self.service.candles("AAPL", "1d")
+        self.assertEqual(self.provider.history.call_count, 2)
+
+    def test_confirmed_provider_rate_limit_still_defers_other_symbols(self):
+        self.provider.history.side_effect = UpstreamError(rate_limited=True)
+        with self.assertRaises(HTTPException) as first:
+            self.service.candles("AAPL", "1d")
+        self.assertEqual(first.exception.status_code, 503)
+        with self.assertRaises(HTTPException) as second:
+            self.service.candles("MSFT", "1d")
+        self.assertEqual(second.exception.status_code, 429)
+        self.assertIn("Yahoo is temporarily unavailable", second.exception.detail)
+        self.provider.history.assert_called_once()
 
 
 class ChartRangeRouteTests(unittest.TestCase):
