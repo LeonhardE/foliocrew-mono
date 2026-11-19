@@ -490,6 +490,66 @@ test("data settings open a smooth dialog, preserve original pending-name recover
   h.close();
 });
 
+test("holdings choices hide confirmed deletion by source incarnation and retain pending recovery", () => {
+  const h = hooks();
+  const { HoldingsSourceBar } = compile("../components/HoldingsSourceBar.tsx", {
+    react: h.react,
+    "react/jsx-runtime": runtime,
+    "next-intl": { useTranslations: translations, useLocale: () => "en" },
+    "./useTasks": {},
+    "./ResourcesPanel.module.css": css,
+  });
+  const data = catalogue(),
+    holdings = data.groups.find((group) => group.kind === "holdings"),
+    removed = holdings.items[0],
+    liveRef = { ...removed.ref, resourceId: "source_B", incarnation: "incarnation_B" };
+  removed.state = "deleted";
+  holdings.items.push({ ...removed, ref: { ...liveRef, incarnation: "incarnation_A" } });
+  const model = {
+    sources: [{ resourceRef: removed.ref }, { resourceRef: liveRef }],
+    selectedSourceId: removed.ref.resourceId,
+    canWriteState: true,
+    phase: "unlocked",
+  };
+  const render = () =>
+    h.render(() =>
+      HoldingsSourceBar({
+        model,
+        names: {
+          scope: "A",
+          name: (ref) => (ref === removed.ref ? "Removed name" : "Active name"),
+          pending: () => false,
+          clearError() {},
+        },
+        library: { catalogue: loaded(data) },
+        onUpdate() {},
+      }),
+    );
+  const options = (tree) => all(tree, (n) => n.type === "option").map((n) => n.props.children);
+  model.sourceMutation = { action: "delete" };
+  let tree = render();
+  assert.deepEqual(options(tree), ["Removed name", "Active name"]);
+  assert.ok(button(tree, "manage.finishPending"));
+  button(tree, "lifecycle.settings").props.onClick();
+  assert.equal(all(render(), (n) => n.props.id === "holdings-source-settings")[0].props.open, true);
+
+  model.sourceMutation = null;
+  tree = render();
+  assert.deepEqual(options(tree), ["lifecycle.choose", "Active name"]);
+  assert.equal(all(tree, (n) => n.type === "select")[0].props.value, "");
+  assert.equal(all(tree, (n) => n.props.id === "holdings-source-settings")[0].props.open, false);
+  assert.equal(button(tree, "lifecycle.settings"), undefined);
+
+  model.sources.pop();
+  holdings.items.length = 0;
+  model.sourceMetadata = { state: "deleted", source: model.sources[0] };
+  tree = render();
+  assert.equal(all(tree, (n) => n.type === "select").length, 0);
+  assert.ok(all(tree, (n) => n.props.children === "lifecycle.empty").length);
+  assert.equal(button(tree, "manage.add").props.disabled, false);
+  h.close();
+});
+
 test("visible writable resource recovery reads one missing selected source per Owner/vault generation and never scans blocked views", () => {
   const h = hooks(),
     reads = [],

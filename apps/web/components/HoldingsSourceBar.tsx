@@ -92,33 +92,47 @@ export function HoldingsSourceBar({
 }) {
   const locale = useLocale();
   const t = useTranslations("resources"),
-    [settings, setSettings] = useState(false),
+    [settingsFor, setSettingsFor] = useState<string | null>(null),
     [draft, setDraft] = useState(""),
     [discardName, setDiscardName] = useState(false);
   const sources = model.sources ?? [];
-  const rows = sources.filter(
-    (source) =>
-      !library.catalogue.data?.groups
-        .find((g) => g.kind === "holdings")
-        ?.items.some(
-          (item) =>
-            item.ref?.resourceId === source.resourceRef.resourceId && item.state === "deleted",
-        ),
-  );
-  const selected =
+  const items = library.catalogue.data?.groups.find((group) => group.kind === "holdings")?.items;
+  const requested =
     sources.find((s) => s.resourceRef.resourceId === model.selectedSourceId) ??
     (!model.newSource ? sources.at(-1) : undefined);
+  const deleted =
+    model.sourceMetadata?.state === "deleted"
+      ? model.sourceMetadata.source?.resourceRef
+      : undefined;
+  const rows = sources.filter((source) => {
+    if (source === requested && model.sourceMutation?.action === "delete") return true;
+    const { resourceId, incarnation } = source.resourceRef;
+    return (
+      !(deleted?.resourceId === resourceId && deleted.incarnation === incarnation) &&
+      !items?.some(
+        (item) =>
+          item.state === "deleted" &&
+          item.ref?.resourceId === resourceId &&
+          item.ref.incarnation === incarnation,
+      )
+    );
+  });
+  const selected = requested && rows.includes(requested) ? requested : undefined;
   const selectedRef = selected?.resourceRef;
+  const selectedKey = selectedRef
+    ? JSON.stringify([names.scope, selectedRef.resourceId, selectedRef.incarnation])
+    : null;
+  const settings = selectedKey !== null && settingsFor === selectedKey;
   const title = selectedRef
     ? (names.name(selectedRef) ?? t("lifecycle.source", { number: sources.indexOf(selected!) + 1 }))
     : t("lifecycle.new");
-  const sourceItem = library.catalogue.data?.groups
-    .find((g) => g.kind === "holdings")
-    ?.items.find(
-      (item) =>
-        item.ref?.resourceId === selectedRef?.resourceId &&
-        item.ref?.incarnation === selectedRef?.incarnation,
-    );
+  const sourceItem = selectedRef
+    ? items?.find(
+        (item) =>
+          item.ref?.resourceId === selectedRef.resourceId &&
+          item.ref.incarnation === selectedRef.incarnation,
+      )
+    : undefined;
   const operationBlocked = Boolean((model.busy && model.busy !== "reading") || names.busy);
   const blocked = operationBlocked || Boolean(model.preview);
   const pending = selectedRef && names.pending(selectedRef);
@@ -131,32 +145,34 @@ export function HoldingsSourceBar({
   return (
     <>
       <div className={styles.sourceBar}>
-        <label className={styles.sourcePicker}>
-          <span className="sr-only">{t("lifecycle.select")}</span>
-          <select
-            value={model.newSource ? "new" : (selectedRef?.resourceId ?? "new")}
-            disabled={blocked}
-            onChange={(e) => {
-              setSettings(false);
-              void model.selectHoldingsSource(e.target.value);
-            }}
-          >
-            {(model.newSource || !sources.length) && (
-              <option value="new">{t("lifecycle.new")}</option>
-            )}
-            {rows.map((source) => (
-              <option key={source.resourceRef.resourceId} value={source.resourceRef.resourceId}>
-                {names.name(source.resourceRef) ??
-                  t("lifecycle.source", { number: sources.indexOf(source) + 1 })}
-              </option>
-            ))}
-            {selected && !rows.includes(selected) && (
-              <option value={selected.resourceRef.resourceId}>
-                {t("lifecycle.states.deleted")}
-              </option>
-            )}
-          </select>
-        </label>
+        {model.newSource || rows.length > 0 ? (
+          <label className={styles.sourcePicker}>
+            <span className="sr-only">{t("lifecycle.select")}</span>
+            <select
+              value={model.newSource ? "new" : (selectedRef?.resourceId ?? "")}
+              disabled={blocked}
+              onChange={(e) => {
+                setSettingsFor(null);
+                void model.selectHoldingsSource(e.target.value);
+              }}
+            >
+              {model.newSource && <option value="new">{t("lifecycle.new")}</option>}
+              {!model.newSource && !selected && (
+                <option value="" disabled>
+                  {t("lifecycle.choose")}
+                </option>
+              )}
+              {rows.map((source) => (
+                <option key={source.resourceRef.resourceId} value={source.resourceRef.resourceId}>
+                  {names.name(source.resourceRef) ??
+                    t("lifecycle.source", { number: sources.indexOf(source) + 1 })}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <p className={styles.note}>{t("lifecycle.empty")}</p>
+        )}
         <LoadingIndicator busy={names.loading} hasContent label={t("manage.loadingNames")} />
         <div className={styles.sourceActions}>
           <button
@@ -176,7 +192,7 @@ export function HoldingsSourceBar({
                 setDiscardName(false);
                 setDraft(names.name(selected.resourceRef) ?? "");
                 names.clearError();
-                setSettings(true);
+                setSettingsFor(selectedKey);
               }}
             >
               {t("lifecycle.settings")}
@@ -216,7 +232,11 @@ export function HoldingsSourceBar({
         </p>
       )}
       {(pending || model.sourceMutation || model.sourceCreationId) && !settings && selected && (
-        <button type="button" className={styles.secondary} onClick={() => setSettings(true)}>
+        <button
+          type="button"
+          className={styles.secondary}
+          onClick={() => setSettingsFor(selectedKey)}
+        >
           {t("manage.finishPending")}
         </button>
       )}
@@ -224,10 +244,10 @@ export function HoldingsSourceBar({
       <ReportDialog
         id="holdings-source-settings"
         open={settings && model.phase === "unlocked" && Boolean(selectedRef)}
-        identity={`${names.scope}:${selectedRef?.resourceId}`}
+        identity={selectedKey ?? names.scope ?? ""}
         title={t("lifecycle.settings")}
         closeLabel={t("manage.close")}
-        onClose={() => setSettings(false)}
+        onClose={() => setSettingsFor(null)}
       >
         <form
           className={styles.nameForm}
@@ -333,7 +353,7 @@ export function HoldingsSourceBar({
             className={styles.secondary}
             disabled={!editable}
             onClick={() => {
-              setSettings(false);
+              setSettingsFor(null);
               onUpdate();
             }}
           >
@@ -351,7 +371,7 @@ export function HoldingsSourceBar({
                 !["active", "ready"].includes(sourceItem.state)
               }
               onClick={() => {
-                setSettings(false);
+                setSettingsFor(null);
                 library.useForTask(sourceItem, onCreateTask);
               }}
             >
@@ -370,7 +390,7 @@ export function HoldingsSourceBar({
                 event.button === 0
               ) {
                 event.preventDefault();
-                setSettings(false);
+                setSettingsFor(null);
                 window.history.pushState(null, "", "/agents");
               }
             }}
