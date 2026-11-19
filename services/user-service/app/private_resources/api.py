@@ -4,7 +4,7 @@ import os
 import re
 import time
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import RootModel
@@ -15,6 +15,7 @@ from folioview_shared.delegation import DelegationError, DelegationVerifier
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import strict_json_loads
+from folioview_shared.identity import owner_key
 from folioview_shared.service_identity import (
     GoogleCallerVerifier,
     IdentityVerificationUnavailable,
@@ -24,8 +25,18 @@ from folioview_shared.service_identity import (
 
 from ..resource_api import ResourceRoute, body, configured_verifier, require_v2
 from ..resources import FirestoreUserResourceStore, get_resource_store
-from .recovery import RecoveryHeads, RecoveryRequest, current_recovery_evidence
+from .authority_cutover import UserAuthorityCutover
+from .recovery import (
+    ClosedModel,
+    Digest,
+    Identifier,
+    OperationId,
+    RecoveryHeads,
+    RecoveryRequest,
+    current_recovery_evidence,
+)
 from .registry_pages import RegistryHistory, RegistryPageRequest
+from .registry_transition import MAX_TRANSITION_PACKET_BYTES
 from .report_sources import ReportSourceAuthority
 from .source_invalidations import SourceInvalidations
 
@@ -215,4 +226,114 @@ async def registry_page(
     result = await run_in_threadpool(RegistryHistory(store).page, user.uid, vault_id, value)
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-FolioView-Contract"] = CONTRACT_VERSION
+    return result
+
+
+HANDOVER_CHECK_PROFILE = "folioview.owner-handover-check.v1"
+HANDOVER_PROFILE = "folioview.owner-handover.v1"
+REGISTRY_START_PROFILE = "folioview.owner-registry-start-evidence.v1"
+
+
+class CutoverScope(ClosedModel):
+    contractVersion: Literal[CONTRACT_VERSION]
+    ownerSubject: Digest
+    vaultId: Identifier
+
+
+class CutoverCheck(CutoverScope):
+    profile: Literal[HANDOVER_CHECK_PROFILE]
+
+
+class RegistryStartRequest(CutoverScope):
+    profile: Literal[REGISTRY_START_PROFILE]
+    nonce: OperationId
+
+
+def _cutover_scope(value, uid, vault):
+    if value["ownerSubject"] != owner_key(uid) or value["vaultId"] != vault:
+        raise ContractError("not_found")
+
+
+def owner_cutover() -> UserAuthorityCutover:
+    if os.getenv("USER_PRIVATE_HANDOVER") != "true":
+        raise ContractError("not_found")
+    return UserAuthorityCutover(get_resource_store())
+
+
+def _uncached_private(response):
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-FolioView-Contract"] = CONTRACT_VERSION
+
+
+@router.post("/{vault_id}/handover/check")
+async def check_handover(
+    vault_id: str,
+    request: Request,
+    response: Response,
+    user: Annotated[CurrentUser, Depends(require_google_user)],
+    cutover: Annotated[UserAuthorityCutover, Depends(owner_cutover)],
+    _: Annotated[None, Depends(require_owner_proxy)],
+):
+    value = await body(request, CutoverCheck)
+    _cutover_scope(value.model_dump(), user.uid, vault_id)
+    result = await run_in_threadpool(cutover.preflight, user.uid, vault_id, now=int(time.time()))
+    _uncached_private(response)
+    return {**result, "profile": HANDOVER_CHECK_PROFILE, "ownerSubject": value.ownerSubject}
+
+
+@router.post("/{vault_id}/handover")
+async def install_handover(
+    vault_id: str,
+    request: Request,
+    response: Response,
+    user: Annotated[CurrentUser, Depends(require_google_user)],
+    cutover: Annotated[UserAuthorityCutover, Depends(owner_cutover)],
+    _: Annotated[None, Depends(require_owner_proxy)],
+):
+    value = (
+        await body(request, RootModel[dict[str, object]], maximum=MAX_TRANSITION_PACKET_BYTES + 256)
+    ).root
+    if (
+        value.keys()
+        != {
+            "contractVersion",
+            "profile",
+            "ownerSubject",
+            "vaultId",
+            "operationId",
+            "signedTransition",
+            "firstBundle",
+        }
+        or value["profile"] != HANDOVER_PROFILE
+        or value["contractVersion"] != CONTRACT_VERSION
+    ):
+        raise ContractError("malformed_request")
+    _cutover_scope(value, user.uid, vault_id)
+    packet = {key: value[key] for key in ("operationId", "signedTransition", "firstBundle")}
+    result = await run_in_threadpool(
+        cutover.install, user.uid, vault_id, packet, now=int(time.time())
+    )
+    _uncached_private(response)
+    return {**result, "contractVersion": CONTRACT_VERSION, "profile": HANDOVER_PROFILE}
+
+
+@router.post("/{vault_id}/registry-start/read")
+async def read_registry_start(
+    vault_id: str,
+    request: Request,
+    response: Response,
+    user: Annotated[CurrentUser, Depends(require_google_user)],
+    store: Annotated[RecoveryHeads, Depends(owner_recovery_store)],
+    _: Annotated[None, Depends(require_owner_proxy)],
+):
+    value = await body(request, RegistryStartRequest)
+    _cutover_scope(value.model_dump(), user.uid, vault_id)
+    result = await run_in_threadpool(
+        UserAuthorityCutover(store.store).read_start,
+        user.uid,
+        vault_id,
+        value.nonce,
+        now=int(time.time()),
+    )
+    _uncached_private(response)
     return result

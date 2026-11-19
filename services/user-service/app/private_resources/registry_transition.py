@@ -1,5 +1,7 @@
 """Verify an Owner-signed start against the original User migration baseline."""
 
+from dataclasses import dataclass
+
 from folioview_shared.encrypted.authority import RegistryCertificateMemo, verify_registry
 from folioview_shared.encrypted.constants import MAX_REGISTRY_BYTES
 from folioview_shared.encrypted.crypto import signing_input_fingerprint, verify_jws
@@ -17,7 +19,29 @@ from .legacy_baselines import LegacyVaultBaselines
 from .recovery import RecoveryHeads
 from .registry_pages import MAX_PAGE_ENTRIES, RegistryHistory
 
-_MAX_PACKET_BYTES = MAX_REGISTRY_BYTES + 16_384
+MAX_TRANSITION_PACKET_BYTES = MAX_REGISTRY_BYTES + 16_384
+
+
+def transition_packet(packet):
+    if type(packet) is not dict or packet.keys() != {
+        "operationId",
+        "signedTransition",
+        "firstBundle",
+    }:
+        raise ContractError("malformed_request")
+    raw = canonical_json(packet)
+    if len(raw) > MAX_TRANSITION_PACKET_BYTES:
+        raise ContractError("payload_too_large")
+    packet = strict_json_loads(raw, max_bytes=MAX_TRANSITION_PACKET_BYTES)
+    validate_schema("OperationIdentifier", packet["operationId"])
+    return packet
+
+
+@dataclass(frozen=True)
+class VerifiedTransition:
+    receipt: dict
+    original: dict
+    start: PrivateRegistryCursor
 
 
 class UserRegistryTransition:
@@ -73,18 +97,10 @@ class UserRegistryTransition:
         return cursor
 
     def verify_candidate(self, uid, vault, baseline_digest, packet, *, now):
+        return self.prepare(uid, vault, baseline_digest, transition_packet(packet), now=now).receipt
+
+    def prepare(self, uid, vault, baseline_digest, packet, *, now):
         owner = owner_key(uid)
-        if type(packet) is not dict or packet.keys() != {
-            "operationId",
-            "signedTransition",
-            "firstBundle",
-        }:
-            raise ContractError("malformed_request")
-        raw = canonical_json(packet)
-        if len(raw) > _MAX_PACKET_BYTES:
-            raise ContractError("payload_too_large")
-        packet = strict_json_loads(raw, max_bytes=_MAX_PACKET_BYTES)
-        validate_schema("OperationIdentifier", packet["operationId"])
         base = self.baselines.read(owner, vault, baseline_digest)
         if base is None:
             raise ContractError("not_found")
@@ -117,7 +133,7 @@ class UserRegistryTransition:
             previous=previous,
             now=now,
         )
-        return {
+        receipt = {
             "ownerSubject": owner,
             "vaultId": vault,
             "baselineDigest": baseline_digest,
@@ -126,3 +142,4 @@ class UserRegistryTransition:
             "nextVaultVersion": change["nextVaultVersion"],
             "registryStart": start.head(),
         }
+        return VerifiedTransition(receipt, baseline, start)

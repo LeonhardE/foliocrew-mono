@@ -179,15 +179,15 @@ def error_response(status, headers=None, message_override=None):
     )
 
 
-async def body(request, model):
+async def body(request, model, *, maximum=MAX_BODY_BYTES):
     raw = bytearray()
     try:
         async with asyncio.timeout(5):
             async for chunk in request.stream():
-                if len(raw) + len(chunk) > MAX_BODY_BYTES:
+                if len(raw) + len(chunk) > maximum:
                     raise HTTPException(413)
                 raw.extend(chunk)
-        decoded = strict_json_loads(bytes(raw), max_bytes=MAX_BODY_BYTES)
+        decoded = strict_json_loads(bytes(raw), max_bytes=maximum)
         if request.url.path.startswith("/internal/v2/"):
             require_contract(request.headers.get("x-folioview-contract"), decoded)
         return model.model_validate(decoded)
