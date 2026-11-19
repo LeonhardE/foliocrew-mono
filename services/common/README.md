@@ -81,6 +81,13 @@ their v2 vault/envelope/manifest/execution bindings separately. This foundation
 does not enable a v1 plaintext fallback or imply acceptance of a v2 content
 profile from a base identity signature alone.
 
+The User report source-decision consumer uses a dedicated configured audience and
+`folioview-report-decision+jwt` type. It matches the verified Google workload to
+the signed Hub caller and binds the signed Owner, attempt ID and canonical
+request digest before evaluating current private resource authority. The matched
+credentials identify the exact request. User still reads current state before
+it issues a source decision.
+
 ### Configure and opt in
 
 ```python

@@ -1,8 +1,10 @@
 """Synthetic signed two-credential delegation and opt-in HTTP boundaries."""
 
+import hashlib
 import json
 import unittest
 from dataclasses import FrozenInstanceError, replace
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends
@@ -13,6 +15,7 @@ from test_service_identity import AUDIENCE, EMAIL, NOW, SUBJECT, GoogleIdentityF
 from folioview_shared.delegated_keys import KeyCache
 from folioview_shared.delegation import (
     DELEGATION_TYPE,
+    REPORT_DELEGATION_TYPE,
     CatalogueRequirement,
     DelegatedPrincipal,
     DelegationError,
@@ -23,7 +26,9 @@ from folioview_shared.delegation import (
     make_delegation_dependency,
     make_service_identity_dependency,
 )
+from folioview_shared.encrypted.jsonutil import canonical_json
 from folioview_shared.http import create_app
+from folioview_shared.identity import owner_key
 from folioview_shared.service_identity import GoogleCallerVerifier, ServiceCaller
 
 ISSUER = "https://hub.example.com"
@@ -127,7 +132,7 @@ class DelegationFixture:
     def service_token(self, *, subject=SUBJECT, email=EMAIL):
         return self.google.sign(self.google.claims(sub=subject, azp=subject, email=email))
 
-    def sign(self, claims, *, kid=HUB_KID, key=None):
+    def sign(self, claims, *, kid=HUB_KID, key=None, typ=DELEGATION_TYPE):
         value = jws.JWS(json.dumps(claims).encode())
         value.add_signature(
             key or self.hub_key,
@@ -135,7 +140,7 @@ class DelegationFixture:
                 {
                     "alg": "RS256",
                     "kid": kid,
-                    "typ": DELEGATION_TYPE,
+                    "typ": typ,
                 }
             ),
         )
@@ -165,6 +170,66 @@ class DelegationTestCase(unittest.TestCase):
             self.f.verify(claims, requirement=requirement)
         self.assertEqual(result.exception.code, code)
         return result.exception
+
+
+class ReportAttemptDelegationTests(DelegationTestCase):
+    def setUp(self):
+        super().setUp()
+        vector = json.loads((Path(__file__).parent / "fixtures/private_resources.json").read_text())
+        self.request = {**vector["request"], "ownerSubject": owner_key("owner_A")}
+        self.claims = self.f.base(
+            purpose="report_source_decision",
+            jti=self.request["attemptId"],
+            requestDigest=hashlib.sha256(canonical_json(self.request)).hexdigest(),
+        )
+
+    def verify_attempt(self, *, request=None, claims=None, typ=REPORT_DELEGATION_TYPE):
+        return self.f.verifier.verify_report_attempt(
+            self.f.service_token(),
+            self.f.sign(self.claims if claims is None else claims, typ=typ),
+            request=self.request if request is None else request,
+        )
+
+    def test_authenticated_exact_attempt_returns_the_signed_owner(self):
+        self.assertEqual(self.verify_attempt(), "owner_A")
+
+    def test_signed_attempt_cannot_be_reused_for_different_inputs(self):
+        replacements = {
+            "ownerSubject": owner_key("owner_B"),
+            "attemptId": "another_report_attempt_0001",
+            "reportFingerprint": "b" * 64,
+            "runId": "run_B",
+            "resources": [self.request["resources"][0]],
+        }
+        for field, value in replacements.items():
+            with self.subTest(field=field), self.assertRaises(DelegationError) as result:
+                self.verify_attempt(request={**self.request, field: value})
+            self.assertEqual(result.exception.code, "permission_denied")
+
+    def test_purpose_audience_expiry_and_profile_are_enforced(self):
+        for changes in (
+            {"purpose": "agent_run"},
+            {"aud": AUDIENCE},
+            {"exp": NOW},
+            {"iat": True},
+            {"scope": "anything"},
+        ):
+            with self.subTest(changes=changes), self.assertRaises(DelegationError) as result:
+                self.verify_attempt(claims={**self.claims, **changes})
+            self.assertEqual(result.exception.code, "invalid_credentials")
+        with self.assertRaises(DelegationError) as mismatched_type:
+            self.verify_attempt(typ=DELEGATION_TYPE)
+        self.assertEqual(mismatched_type.exception.code, "invalid_credentials")
+        with self.assertRaises(DelegationError) as mismatched_workload:
+            self.verify_attempt(claims={**self.claims, "caller": OTHER_EMAIL})
+        self.assertEqual(mismatched_workload.exception.code, "permission_denied")
+        with self.assertRaises(DelegationError) as other_route:
+            self.f.verifier.verify(
+                self.f.service_token(),
+                self.f.sign(self.claims, typ=REPORT_DELEGATION_TYPE),
+                requirement=self.f.requirement(),
+            )
+        self.assertEqual(other_route.exception.code, "invalid_credentials")
 
 
 class DelegationVerificationTests(DelegationTestCase):
