@@ -394,9 +394,9 @@ type Registry = {
   active: Set<string>;
   localEpochs: Map<string, number>;
 };
-function privateRegistryHead(registry: Registry): PrivateRegistryHead {
+function privateRegistryHead(registry: Registry, registryEpoch = 1): PrivateRegistryHead {
   return {
-    registryEpoch: 1,
+    registryEpoch,
     registrySequence: registry.checkpoint.registrySequence,
     checkpointDigest: registry.digest,
     keyEpoch: registry.checkpoint.keyEpoch,
@@ -409,6 +409,12 @@ type OwnerRecoveryRead = {
   lifecycle: VaultLifecyclePin;
   expiresAt: number;
   sourcesDigest: string;
+  transition?: {
+    target: PrivateRegistryHead;
+    start: PrivateRegistryHead;
+    vaultVersion: number;
+    archive: Json;
+  };
   continuation?: {
     target: PrivateRegistryHead;
     current: Registry;
@@ -4352,7 +4358,7 @@ export class VaultCore {
         profile: OWNER_REGISTRY_PAGE_PROFILE,
         ownerSubject: read.request.ownerSubject,
         vaultId: read.vault.vaultId,
-        base: privateRegistryHead(current),
+        base: privateRegistryHead(current, target.registryEpoch),
         target,
       },
     };
@@ -4360,9 +4366,10 @@ export class VaultCore {
   async checkUserRecoveryEvidence(
     nonce: string,
     evidence: unknown,
+    supportsTransition = false,
   ): Promise<OwnerRecoveryProgress> {
     const read = this.takeUserRecovery(nonce);
-    if (read.continuation) throw new VaultError("untrusted_vault");
+    if (read.continuation || read.transition) throw new VaultError("untrusted_vault");
     let verified: Json;
     try {
       verified = (await verifyOwnerRecoveryEvidence(evidence, {
@@ -4387,11 +4394,39 @@ export class VaultCore {
     )
       throw new VaultError("rollback_detected");
     if (
-      target.registryEpoch !== base.registryEpoch ||
       verified.archive.version !== archiveVersion ||
       verified.sourcesDigest !== read.sourcesDigest
     )
       return { status: "refresh-required" };
+    if (target.registryEpoch < base.registryEpoch) throw new VaultError("rollback_detected");
+    if (target.registryEpoch !== base.registryEpoch) {
+      if (
+        !supportsTransition ||
+        target.registryEpoch !== base.registryEpoch + 1 ||
+        !verified.registryStart
+      )
+        return { status: "refresh-required" };
+      this.userRecoveryRead = {
+        ...read,
+        expiresAt: Math.min(read.expiresAt, verified.expiresAt),
+        transition: {
+          target,
+          start: verified.registryStart,
+          vaultVersion: verified.vaultVersion,
+          archive: verified.archive,
+        },
+      };
+      return {
+        status: "registry-start",
+        request: {
+          contractVersion: CONTRACT,
+          profile: "folioview.owner-registry-start-evidence.v1",
+          ownerSubject: read.request.ownerSubject,
+          vaultId: read.vault.vaultId,
+          nonce,
+        },
+      };
+    }
     if (equal(target, base)) {
       return {
         status: verified.vaultVersion === read.vault.version ? "unchanged" : "refresh-required",
@@ -4411,6 +4446,130 @@ export class VaultCore {
       read.base,
     );
   }
+  async checkUserRegistryStart(nonce: string, value: Json): Promise<OwnerRecoveryProgress> {
+    const read = this.takeUserRecovery(nonce);
+    if (!read.transition || read.continuation) throw new VaultError("untrusted_vault");
+    const { target, start, vaultVersion, archive } = read.transition;
+    exact(value, [
+      "contractVersion",
+      "profile",
+      "nonce",
+      "ownerSubject",
+      "vaultId",
+      "rootKeyId",
+      "vaultVersion",
+      "archive",
+      "registry",
+      "registryStart",
+      "sourcesDigest",
+      "rootJwk",
+      "signedTransition",
+      "firstBundle",
+    ]);
+    bounded(value, 262144);
+    if (
+      value.contractVersion !== CONTRACT ||
+      value.profile !== "folioview.owner-registry-start-evidence.v1" ||
+      value.nonce !== nonce ||
+      value.ownerSubject !== read.request.ownerSubject ||
+      value.vaultId !== read.vault.vaultId ||
+      value.rootKeyId !== read.vault.rootKeyId ||
+      value.vaultVersion !== vaultVersion ||
+      !equal(value.archive, archive) ||
+      !equal(value.registry, target) ||
+      !equal(value.registryStart, start) ||
+      !equal(value.rootJwk, read.vault.rootJwk) ||
+      value.sourcesDigest !== read.sourcesDigest
+    )
+      throw new VaultError("untrusted_vault");
+
+    const change = await verified(value.signedTransition, read.vault.rootJwk);
+    exact(change, [
+      "contractVersion",
+      "profile",
+      "ownerSubject",
+      "vaultId",
+      "rootKeyId",
+      "operationId",
+      "previousVaultVersion",
+      "nextVaultVersion",
+      "previousHead",
+      "nextHead",
+      "ownerKeyIds",
+      "archive",
+      "issuedAt",
+    ]);
+    validate("OperationIdentifier", change.operationId);
+    const old = privateRegistryHead(read.base);
+    if (
+      change.contractVersion !== CONTRACT ||
+      change.profile !== "folioview.owner-registry-transition.v1" ||
+      change.ownerSubject !== read.request.ownerSubject ||
+      change.vaultId !== read.vault.vaultId ||
+      change.rootKeyId !== read.vault.rootKeyId ||
+      change.previousVaultVersion !== read.vault.version ||
+      change.nextVaultVersion !== read.vault.version + 1 ||
+      change.nextVaultVersion > vaultVersion ||
+      !equal(change.previousHead, old) ||
+      !equal(change.nextHead, start) ||
+      !equal(change.archive, archive) ||
+      !Number.isSafeInteger(change.issuedAt) ||
+      change.issuedAt < read.base.checkpoint.issuedAt ||
+      change.issuedAt > this.now() ||
+      start.registryEpoch !== old.registryEpoch + 1 ||
+      start.registrySequence !== old.registrySequence + 1 ||
+      start.keyEpoch < old.keyEpoch
+    )
+      throw new VaultError("registry_conflict");
+    const verify = await registryBundleVerifier(read.vault.rootJwk);
+    const candidate = await verify(
+      value.firstBundle,
+      read.request.ownerSubject,
+      read.vault.vaultId,
+      undefined,
+      change.issuedAt,
+    );
+    const active = [...candidate.active].sort();
+    if (
+      candidate.checkpoint.previousDigest !== old.checkpointDigest ||
+      candidate.checkpoint.issuedAt !== change.issuedAt ||
+      !equal(privateRegistryHead(candidate, start.registryEpoch), start) ||
+      !Array.isArray(change.ownerKeyIds) ||
+      !equal(active, [...change.ownerKeyIds].sort()) ||
+      active.length !== candidate.certificates.size
+    )
+      throw new VaultError("registry_conflict");
+    const roles = new Set<string>();
+    for (const keyId of active) {
+      const current = cert(candidate, keyId, undefined, change.issuedAt);
+      const previous = cert(read.base, keyId, undefined, change.issuedAt);
+      if (
+        !["device_sig", "device_enc", "recovery_enc"].includes(current.role) ||
+        current.connectionId !== null ||
+        !equal(current, previous)
+      )
+        throw new VaultError("key_revoked");
+      roles.add(current.role);
+    }
+    if (this.now() >= read.expiresAt) throw new VaultError("untrusted_vault");
+    if (roles.size !== 3) throw new VaultError("key_revoked");
+    if (equal(start, target)) {
+      this.confirmRecoveredDevice(read, candidate);
+      return { status: "registry-verified" };
+    }
+    this.userRecoveryRead = {
+      ...read,
+      transition: undefined,
+      continuation: { current: candidate, target, verify },
+    };
+    return this.nextUserRegistryPage(this.userRecoveryRead, candidate);
+  }
+
+  private confirmRecoveredDevice(read: OwnerRecoveryRead, registry: Registry) {
+    cert(registry, read.request.deviceSigningKeyId, "device_sig", this.now());
+    cert(registry, read.request.deviceEncryptionKeyId, "device_enc", this.now());
+  }
+
   async checkUserRegistryPage(nonce: string, value: Json): Promise<OwnerRecoveryProgress> {
     const read = this.takeUserRecovery(nonce);
     if (!read.continuation) throw new VaultError("untrusted_vault");
@@ -4432,7 +4591,7 @@ export class VaultCore {
       value.ownerSubject !== read.request.ownerSubject ||
       value.vaultId !== read.vault.vaultId ||
       value.rootKeyId !== read.vault.rootKeyId ||
-      !equal(value.base, privateRegistryHead(current)) ||
+      !equal(value.base, privateRegistryHead(current, target.registryEpoch)) ||
       !equal(value.target, target) ||
       !Array.isArray(value.bundles) ||
       value.bundles.length < 1 ||
@@ -4459,9 +4618,9 @@ export class VaultCore {
     if (this.now() >= read.expiresAt) throw new VaultError("untrusted_vault");
     if (current.checkpoint.registrySequence !== target.registrySequence)
       return this.nextUserRegistryPage(read, current);
-    if (!equal(privateRegistryHead(current), target)) throw new VaultError("registry_conflict");
-    cert(current, read.request.deviceSigningKeyId, "device_sig", this.now());
-    cert(current, read.request.deviceEncryptionKeyId, "device_enc", this.now());
+    if (!equal(privateRegistryHead(current, target.registryEpoch), target))
+      throw new VaultError("registry_conflict");
+    this.confirmRecoveredDevice(read, current);
     // Keep the proven head separate from authorization until a full current refresh adopts it.
     return { status: "registry-verified" };
   }
