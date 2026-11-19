@@ -87,6 +87,19 @@ class VaultTests(unittest.TestCase):
             self.service.bootstrap(OTHER_UID, other.bootstrap(), BOOT)["vault"]["version"], 1
         )
 
+    def test_transferred_owner_cannot_read_original_archive_or_enrollment_replay(self):
+        original = self.create()
+        marker = document_path("hub_private_resource_writer_fences", owner_key(UID))
+        transferred = {"state": "transferred", "ownerSubject": owner_key(UID), "writerEpoch": 2}
+        self.service.store.transact(lambda unit: unit.put(marker, transferred))
+        self.code("not_found", lambda: self.service.current(UID))
+        self.code("not_found", self.create)
+        self.assertIsNone(self.service.current(OTHER_UID)["vault"])
+        raw = self.service.store.transact(
+            lambda unit: unit.get(document_path("hub_vaults", owner_key(UID)))
+        )
+        self.assertEqual(raw["archive"], original["vault"]["archive"])
+
     def test_parallel_first_enrollment_keeps_one_root_and_does_not_overwrite(self):
         other = VaultFixture(UID)
 

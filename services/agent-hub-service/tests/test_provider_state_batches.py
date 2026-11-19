@@ -116,13 +116,21 @@ class ProviderStateBatchTests(unittest.TestCase):
             self.assertEqual(current["providers"]["muse"]["slot"], self.expected["slot"])
             self.assertIsNone(current["providers"]["chatgpt"]["slot"])
 
+    def test_legacy_provider_summary_cannot_expose_a_transferred_account(self):
+        path = private_resource_writer_fence_path(self.owner)
+        self.store.transact(lambda unit: unit.put(path, {"state": "transferred", "writerEpoch": 2}))
+        with self.assertRaisesRegex(ContractError, "not_found"):
+            self.fixture.service.summary(UID, self.vault)
+        with self.assertRaisesRegex(ContractError, "not_found"):
+            self.fixture.service.state(UID, self.vault, "muse")
+
     def test_one_two_thirty_two_connections_use_only_three_read_phases_and_same_result(self):
         for count in (1, 2, 32):
             with self.subTest(count=count):
                 self.populate(count)
                 self.rpc.calls.clear()
                 self.assertEqual(self.fixture.state(), self.expected)
-                self.assertEqual([len(batch) for batch in self.reads()], [3, count, count])
+                self.assertEqual([len(batch) for batch in self.reads()], [4, count, count])
                 flattened = [name for batch in self.reads() for name in batch]
                 self.assertEqual(len(flattened), len(set(flattened)))
 
@@ -130,14 +138,14 @@ class ProviderStateBatchTests(unittest.TestCase):
         ids = self.populate(32, "chatgpt")
         self.rpc.calls.clear()
         self.assertEqual(self.fixture.state(), self.expected)
-        self.assertEqual([len(batch) for batch in self.reads()], [3, 32, 1])
+        self.assertEqual([len(batch) for batch in self.reads()], [4, 32, 1])
         for connection in ids[1:]:
             self.row(document_path("hub_oauth_connections", self.owner, connection)).update(
                 provider="muse", status="revoked"
             )
         self.rpc.calls.clear()
         self.assertEqual(self.fixture.state(), self.expected)
-        self.assertEqual([len(batch) for batch in self.reads()], [3, 32, 1])
+        self.assertEqual([len(batch) for batch in self.reads()], [4, 32, 1])
 
     def test_foreign_vault_remains_a_blocker_without_loading_its_identity(self):
         ids = self.populate(2)
@@ -148,7 +156,7 @@ class ProviderStateBatchTests(unittest.TestCase):
         result = self.fixture.state()
         self.assertEqual(result["legacyBlockers"], [ids[1]])
         self.assertEqual(result["slot"], self.expected["slot"])
-        self.assertEqual([len(batch) for batch in self.reads()], [3, 2, 1])
+        self.assertEqual([len(batch) for batch in self.reads()], [4, 2, 1])
         forbidden = self.client.document(
             identity_path(self.owner, self.vault, ids[1])
         )._document_path
@@ -160,7 +168,7 @@ class ProviderStateBatchTests(unittest.TestCase):
         self.rpc.before_abort = lambda: self.row(path).update(ownerSubject="foreign_owner")
         with self.assertRaises(StoreUnavailable):
             self.fixture.state()
-        self.assertEqual([len(batch) for batch in self.reads()], [3, 1, 1, 3, 1])
+        self.assertEqual([len(batch) for batch in self.reads()], [4, 1, 1, 4, 1])
 
     def test_incomplete_or_duplicate_batch_refuses_state_without_partial_success(self):
         original = self.rpc.batch_get_documents
@@ -183,7 +191,7 @@ class ProviderStateBatchTests(unittest.TestCase):
             self.rpc.calls.clear()
             with self.assertRaises(StoreUnavailable):
                 self.fixture.state()
-            self.assertEqual([len(batch) for batch in self.reads()], [3])
+            self.assertEqual([len(batch) for batch in self.reads()], [4])
         self.index["connectionIds"] = [self.first]
         with self.assertRaises(ContractError) as missing:
             self.fixture.service.state(OTHER_UID, self.vault, "muse")

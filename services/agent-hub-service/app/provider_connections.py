@@ -30,7 +30,12 @@ from .fences import fence_path
 from .native_transport import USER_AUTHORITY_TRANSITION, NativeConnectionOwnerService
 from .oauth import MAX_CONNECTIONS
 from .persistent_agents import identity_path, linked_connection, snapshot, stored_identity
-from .store import StoreUnavailable, document_path, private_resource_writer_fence_path
+from .store import (
+    StoreUnavailable,
+    document_path,
+    private_resource_writer_fence_path,
+    require_legacy_archive_reader,
+)
 from .vaults import _current, _response, identifier
 
 SUMMARY_PROFILE = "folioview.provider-connection-summary.v1"
@@ -211,18 +216,27 @@ class ProviderConnectionService(AgentCredentialService):
         owner = owner_key(uid)
         provider_slot_id(owner, provider)
         identifier(vault)
+        user_scope = self.user_vaults.read(uid, vault)
+        transition = (
+            None if user_scope is None else user_scope.writer_fence["transitionFingerprint"]
+        )
 
         def read(unit):
             unit = _ReadSnapshot(
                 unit,
                 [
-                    document_path("hub_vaults", owner),
+                    private_resource_writer_fence_path(owner),
                     slot_path(owner, provider),
                     document_path("hub_oauth_owners", owner),
-                ],
+                ]
+                + ([document_path("hub_vaults", owner)] if user_scope is None else []),
             )
-            _current(unit, owner, self.now(), vault)
-            return self._provider_state(unit, owner, vault, provider)
+            if user_scope is None:
+                require_legacy_archive_reader(unit, owner)
+                _current(unit, owner, self.now(), vault)
+            else:
+                user_scope.require_current(unit, self.now())
+            return self._provider_state(unit, owner, vault, provider, transition=transition)
 
         return self.store.transact(read)
 
@@ -263,7 +277,11 @@ class ProviderConnectionService(AgentCredentialService):
                     slot_path(owner, "muse"),
                     slot_path(owner, "chatgpt"),
                 ]
-                + ([document_path("hub_vaults", owner)] if user_scope is None else []),
+                + (
+                    [document_path("hub_vaults", owner), private_resource_writer_fence_path(owner)]
+                    if user_scope is None
+                    else []
+                ),
             )
             if user_scope is None:
                 if (
@@ -271,6 +289,7 @@ class ProviderConnectionService(AgentCredentialService):
                     and unit.get(private_resource_writer_fence_path(owner)) is not None
                 ):
                     raise ContractError("source_unavailable")
+                require_legacy_archive_reader(unit, owner)
                 vault_row, _ = _current(unit, owner, self.now(), vault)
             else:
                 user_scope.require_current(unit, self.now())
