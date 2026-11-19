@@ -103,6 +103,7 @@ USER_HUB_TRUST_FIELDS = {
 }
 HUB_SUBJECT = re.compile(r"[1-9][0-9]{0,127}\Z")
 WEB_OWNER_FLAGS = {"portfolio", "agentHub"}
+WEB_OWNER_USER_RECOVERY_FIELDS = {"FOLIOVIEW_USER_OWNER_ENABLED", "FOLIOVIEW_USER_ORIGIN"}
 WEB_OWNER_ENVIRONMENT_FIELDS = {
     "FOLIOVIEW_OWNER_FIREBASE_PROJECT_ID",
     "FOLIOVIEW_PORTFOLIO_OWNER_ENABLED",
@@ -363,8 +364,14 @@ def validate_profile(value):
             require(value["targets"]["web"]["origin"] is not None)
         if version >= 2:
             flags = value["webOwnerApis"]
-            fields(flags, WEB_OWNER_FLAGS)
+            optional = {"userRecovery"} if version == 6 and "userRecovery" in flags else set()
+            fields(flags, WEB_OWNER_FLAGS | optional)
             require(all(type(flag) is bool for flag in flags.values()))
+            if flags.get("userRecovery"):
+                user = value["targets"]["user"]
+                require(firebase["enabled"] and value["targets"]["web"]["lifecycle"] == "adopt")
+                require(user["lifecycle"] == "adopt")
+                require(user["origin"] == f"https://user-api-{number}.{region}.run.app")
             for flag, target_name in (("portfolio", "portfolio"), ("agentHub", "agent-hub")):
                 if flags[flag]:
                     require(firebase["enabled"])
@@ -836,12 +843,19 @@ def validate_web_owner_server(value, instance):
         require(value["target"] == "web" and value["instanceId"] == instance["instanceId"])
         require(value["webDeploymentSha256"] == digest(instance))
         environment = value["environment"]
-        fields(environment, WEB_OWNER_ENVIRONMENT_FIELDS)
+        require(type(environment) is dict)
+        has_user = bool(environment.keys() & WEB_OWNER_USER_RECOVERY_FIELDS)
+        fields(
+            environment,
+            WEB_OWNER_ENVIRONMENT_FIELDS | (WEB_OWNER_USER_RECOVERY_FIELDS if has_user else set()),
+        )
         require(all(type(item) is str for item in environment.values()))
         portfolio_enabled = environment["FOLIOVIEW_PORTFOLIO_OWNER_ENABLED"]
         hub_enabled = environment["FOLIOVIEW_HUB_OWNER_ENABLED"]
         require(portfolio_enabled in {"true", "false"} and hub_enabled in {"true", "false"})
-        enabled = "true" in {portfolio_enabled, hub_enabled}
+        user_enabled = environment.get("FOLIOVIEW_USER_OWNER_ENABLED", "false")
+        require(user_enabled in {"true", "false"})
+        enabled = "true" in {portfolio_enabled, hub_enabled, user_enabled}
         project = instance["project"]["id"]
         require(environment["FOLIOVIEW_OWNER_FIREBASE_PROJECT_ID"] == (project if enabled else ""))
         if enabled:
@@ -869,6 +883,13 @@ def validate_web_owner_server(value, instance):
             )
         else:
             require(hub == "")
+        user_origin = environment.get("FOLIOVIEW_USER_ORIGIN", "")
+        if user_enabled == "true":
+            number, region = instance["project"]["number"], instance["region"]
+            require(user_origin == f"https://user-api-{number}.{region}.run.app")
+            require(instance["build"]["_USER_API_BASE_URL"] == user_origin)
+        else:
+            require(user_origin == "")
         require(len(canonical(value)) <= MAX_TARGET_BYTES)
     except (KeyError, TypeError, ValueError, AttributeError, RecursionError):
         raise ProfileError from None
@@ -945,13 +966,19 @@ def compile_web_owner_artifacts(profile):
             "FOLIOVIEW_HUB_ORIGIN": hub,
         },
     }
+    if "userRecovery" in flags:
+        user_enabled = flags["userRecovery"]
+        server["environment"].update(
+            FOLIOVIEW_USER_OWNER_ENABLED=str(user_enabled).lower(),
+            FOLIOVIEW_USER_ORIGIN=profile["targets"]["user"]["origin"] if user_enabled else "",
+        )
     parse_web_owner_server(canonical(server), instance=instance, expected_sha256=digest(server))
     public = {
         "schemaVersion": 1,
         "instanceId": instance["instanceId"],
         "target": "web",
         "serverConfigurationSha256": digest(server),
-        "flags": dict(flags),
+        "flags": {key: flags[key] for key in WEB_OWNER_FLAGS},
     }
     parse_web_owner_public(
         canonical(public), server=server, instance=instance, expected_server_sha256=digest(server)

@@ -127,6 +127,46 @@ class WebOwnerConfigurationTests(unittest.TestCase):
                     },
                 )
 
+    def test_user_recovery_is_an_optional_server_only_v6_setting(self):
+        from test_browser_origin_configuration import with_aliases
+
+        value = with_aliases()
+        value["webOwnerApis"] = {"portfolio": False, "agentHub": False, "userRecovery": True}
+        instance, server, public, _ = self.artifacts(value)
+        user_origin = value["targets"]["user"]["origin"]
+        self.assertEqual(server["environment"]["FOLIOVIEW_USER_ORIGIN"], user_origin)
+        self.assertEqual(server["environment"]["FOLIOVIEW_USER_OWNER_ENABLED"], "true")
+        self.assertEqual(
+            server["environment"]["FOLIOVIEW_OWNER_FIREBASE_PROJECT_ID"], value["project"]["id"]
+        )
+        self.assertEqual(public["flags"], {"portfolio": False, "agentHub": False})
+        self.assertNotIn(user_origin, json.dumps(public))
+        forbidden = (
+            "https://user-api-111111111111.us-central1.run.app",
+            "https://other.example.invalid",
+        )
+        for address in forbidden:
+            mutated = copy.deepcopy(server)
+            mutated["environment"]["FOLIOVIEW_USER_ORIGIN"] = address
+            with self.subTest(address=address), self.assertRaises(profile.ProfileError):
+                profile.parse_web_owner_server(
+                    profile.canonical(mutated),
+                    instance=instance,
+                    expected_sha256=profile.digest(mutated),
+                )
+        del server["environment"]["FOLIOVIEW_USER_ORIGIN"]
+        with self.assertRaises(profile.ProfileError):
+            profile.validate_web_owner_server(server, instance)
+
+        earlier = owner_profile()
+        earlier["webOwnerApis"]["userRecovery"] = True
+        with self.assertRaises(profile.ProfileError):
+            self.artifacts(earlier)
+        value["webOwnerApis"]["userRecovery"] = False
+        _, disabled, _, _ = self.artifacts(value)
+        self.assertEqual(disabled["environment"]["FOLIOVIEW_USER_ORIGIN"], "")
+        self.assertEqual(disabled["environment"]["FOLIOVIEW_USER_OWNER_ENABLED"], "false")
+
     def test_portfolio_can_enable_without_a_hub_service_or_origin(self):
         value = owner_profile(portfolio=True)
         value["targets"]["agent-hub"].update(origin=None, image=None)
@@ -493,7 +533,7 @@ class WebOwnerConfigurationTests(unittest.TestCase):
         server = json.loads((directory / "web-owner-server.schema.json").read_text())
         self.assertEqual(
             set(server["properties"]["environment"]["properties"]),
-            profile.WEB_OWNER_ENVIRONMENT_FIELDS,
+            profile.WEB_OWNER_ENVIRONMENT_FIELDS | profile.WEB_OWNER_USER_RECOVERY_FIELDS,
         )
         self.assertEqual(
             set(server["properties"]["environment"]["required"]),

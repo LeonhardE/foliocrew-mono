@@ -249,7 +249,7 @@ with the existing `0700` directory, `0600` files and no-overwrite rules:
 | `web-owner-public.candidate.json` | Version 1, selected instance, `target=web`, server configuration SHA-256 and only the two boolean public flags. No upstream, audience, Firebase server setting, token or environment dictionary. |
 | `manifest.json`                   | Input/Web/server/file-byte hashes, `approval=not_requested` and `productionActivation=false`. Stdout prints only this manifest.                                                                  |
 
-The server file's `environment` has exactly these string-valued names:
+The server file's `environment` always contains six string-valued names:
 
 - `FOLIOVIEW_OWNER_FIREBASE_PROJECT_ID`: the selected project when at least one route is enabled,
   otherwise empty. It is derived rather than an independently editable Firebase project.
@@ -258,6 +258,12 @@ The server file's `environment` has exactly these string-valued names:
   origin when enabled, otherwise both empty.
 - `FOLIOVIEW_HUB_OWNER_ENABLED`: `"true"` or `"false"`.
 - `FOLIOVIEW_HUB_ORIGIN`: the validated Hub origin when enabled, otherwise empty.
+
+A v6 profile can also set `webOwnerApis.userRecovery`. The server projection then carries
+`FOLIOVIEW_USER_OWNER_ENABLED` and `FOLIOVIEW_USER_ORIGIN` together. The enabled origin must
+be the numbered User URL for the same project and region and match the approved Web build's
+User destination. Setting the option to `false` leaves the origin empty. Omitting the option
+preserves earlier server projections. The public projection still carries only the existing flags.
 
 The public file is a transport envelope for future build configuration, not a browser response to
 publish wholesale. Its `flags` object is exactly `{"portfolio": bool, "agentHub": bool}`; a later
