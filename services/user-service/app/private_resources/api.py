@@ -1,7 +1,9 @@
 """Opt-in Owner recovery evidence from the User private resource module."""
 
 import os
+import re
 import time
+from functools import lru_cache
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -12,6 +14,13 @@ from folioview_shared.auth import CurrentUser, require_google_user
 from folioview_shared.delegation import DelegationError, DelegationVerifier
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
 from folioview_shared.encrypted.errors import ContractError
+from folioview_shared.encrypted.jsonutil import strict_json_loads
+from folioview_shared.service_identity import (
+    GoogleCallerVerifier,
+    IdentityVerificationUnavailable,
+    InvalidIdentityToken,
+    UntrustedServiceCaller,
+)
 
 from ..resource_api import ResourceRoute, body, configured_verifier, require_v2
 from ..resources import FirestoreUserResourceStore, get_resource_store
@@ -24,6 +33,45 @@ router = APIRouter(
 )
 internal = APIRouter(tags=["private-resources"], route_class=ResourceRoute)
 REPORT_DECISION_PATH = "/internal/v2/private-resources/report-source-decisions"
+OWNER_PROXY_HEADER = "x-folioview-proxy-authorization"
+_USER_ORIGIN = re.compile(r"https://user-api-[0-9]{1,20}\.[a-z]+(?:-[a-z0-9]+)+[0-9]\.run\.app\Z")
+
+
+@lru_cache(maxsize=4)
+def configured_owner_proxy(audience, encoded_callers):
+    try:
+        if _USER_ORIGIN.fullmatch(audience) is None:
+            raise ValueError
+        callers = strict_json_loads(encoded_callers, max_bytes=2048)
+        if type(callers) is not dict or len(callers) != 1:
+            raise ValueError
+        return GoogleCallerVerifier(audience, callers)
+    except (ContractError, ValueError, TypeError):
+        raise ContractError("authorization_unavailable") from None
+
+
+def require_owner_proxy(request: Request) -> None:
+    if request.url.query:
+        raise ContractError("unsupported_query")
+    require_v2(request)
+    credentials = request.headers.getlist(OWNER_PROXY_HEADER)
+    if len(credentials) != 1:
+        raise ContractError("invalid_token")
+    scheme, _, token = credentials[0].partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise ContractError("invalid_token")
+    verifier = configured_owner_proxy(
+        os.getenv("USER_PRIVATE_OWNER_AUDIENCE", ""),
+        os.getenv("USER_PRIVATE_OWNER_WEB_CALLER", ""),
+    )
+    try:
+        verifier.verify(token)
+    except InvalidIdentityToken:
+        raise ContractError("invalid_token") from None
+    except UntrustedServiceCaller:
+        raise ContractError("insufficient_scope") from None
+    except IdentityVerificationUnavailable:
+        raise ContractError("authorization_unavailable") from None
 
 
 def report_authority() -> ReportSourceAuthority:
@@ -100,21 +148,31 @@ def owner_recovery_store() -> RecoveryHeads:
 async def recovery_evidence(
     vault_id: str,
     request: Request,
+    response: Response,
     user: Annotated[CurrentUser, Depends(require_google_user)],
     store: Annotated[RecoveryHeads, Depends(owner_recovery_store)],
+    _: Annotated[None, Depends(require_owner_proxy)],
 ):
     value = await body(request, RecoveryRequest)
-    return await run_in_threadpool(
+    result = await run_in_threadpool(
         current_recovery_evidence, store, user.uid, vault_id, value.model_dump(), int(time.time())
     )
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-FolioView-Contract"] = CONTRACT_VERSION
+    return result
 
 
 @router.post("/{vault_id}/registry-pages/read")
 async def registry_page(
     vault_id: str,
     request: Request,
+    response: Response,
     user: Annotated[CurrentUser, Depends(require_google_user)],
     store: Annotated[RecoveryHeads, Depends(owner_recovery_store)],
+    _: Annotated[None, Depends(require_owner_proxy)],
 ):
     value = await body(request, RegistryPageRequest)
-    return await run_in_threadpool(RegistryHistory(store).page, user.uid, vault_id, value)
+    result = await run_in_threadpool(RegistryHistory(store).page, user.uid, vault_id, value)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-FolioView-Contract"] = CONTRACT_VERSION
+    return result
