@@ -562,7 +562,20 @@ class PersistentExecutionService(PersistentPublicationService):
 
         return self.store.transact(read)
 
-    def current_run(self, unit, owner, vault, connection, proof, path, request, run, sources):
+    def current_run(
+        self,
+        unit,
+        owner,
+        vault,
+        connection,
+        proof,
+        path,
+        request,
+        run,
+        sources,
+        *,
+        report_source_check=None,
+    ):
         uid, v, registry, conn, identity = self.authenticate(
             unit, owner, vault, connection, proof, path, request
         )
@@ -596,6 +609,8 @@ class PersistentExecutionService(PersistentPublicationService):
         from .task_center import check_center_run
 
         check_center_run(unit, owner, vault, connection, row, m)
+        if report_source_check is not None:
+            sources = report_source_check(row, m)
         for item in m["inputs"]:
             self.permit(
                 unit,
@@ -618,6 +633,7 @@ class PersistentExecutionService(PersistentPublicationService):
                     },
                 },
                 sources=sources,
+                local_source_fence=report_source_check is None,
             )
         return row, m, v, registry, identity
 

@@ -15,6 +15,7 @@ from .api import Owner, _invoke, body
 from .inbox import _number, _protocol
 from .persistent_execution_routes import get_execution
 from .persistent_results import PersistentOwnerResultService, PersistentResultService
+from .report_source_authority import get_report_source_authority
 from .store import get_store
 
 agent_router = APIRouter(
@@ -36,6 +37,7 @@ def get_result_writer():
             managed_only=True,
             client_ids=current.client_ids,
             clock=current.clock,
+            report_source_authority=get_report_source_authority(),
         )
 
     return _invoke(configured)

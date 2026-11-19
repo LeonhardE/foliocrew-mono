@@ -157,7 +157,20 @@ class PersistentPublicationService(ResourceConsentService):
             raise ContractError("key_authorization_required")
         return meta
 
-    def permit(self, unit, *, owner, vault, connection, conn, identity, registry, context, sources):
+    def permit(
+        self,
+        unit,
+        *,
+        owner,
+        vault,
+        connection,
+        conn,
+        identity,
+        registry,
+        context,
+        sources,
+        local_source_fence=True,
+    ):
         policy = stored_consent(unit, owner, vault, connection)
         if policy is None:
             raise ContractError("insufficient_scope")
@@ -190,7 +203,10 @@ class PersistentPublicationService(ResourceConsentService):
             purpose="analysis",
             now=self.now(),
         )
-        require_current_bindings(unit, owner, [{"ref": ref, "sourceEpoch": context["sourceEpoch"]}])
+        if local_source_fence:
+            require_current_bindings(
+                unit, owner, [{"ref": ref, "sourceEpoch": context["sourceEpoch"]}]
+            )
         return decision
 
     def receipt(self, uid, vault, connection, operation):

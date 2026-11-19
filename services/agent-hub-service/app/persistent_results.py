@@ -2,6 +2,7 @@
 
 import copy
 import re
+from uuid import uuid4
 
 from folioview_shared.encrypted.authority import verify_control_command
 from folioview_shared.encrypted.budgets import check_read_response
@@ -16,6 +17,11 @@ from folioview_shared.encrypted.persistent_content import (
     inspect_persistent_carrier,
     validate_content_context,
     verify_persistent_carrier,
+)
+from folioview_shared.encrypted.private_resources import (
+    REPORT_PROFILE,
+    report_source_request,
+    require_report_source_permit,
 )
 from folioview_shared.encrypted.schema import validate_schema
 from folioview_shared.identity import owner_key
@@ -111,6 +117,13 @@ def stored_result(unit, owner, vault, result):
     return row
 
 
+def report_source_bindings(manifest):
+    return [
+        {key: item[key] for key in ("ref", "sourceEpoch", "sourceRevision")}
+        for item in manifest["inputs"]
+    ]
+
+
 class _OwnerResultSnapshot:
     """Only selected rows from this read attempt, detached for the original validators."""
 
@@ -124,6 +137,10 @@ class _OwnerResultSnapshot:
 
 
 class PersistentResultService(PersistentExecutionService):
+    def __init__(self, store, catalogue, *, report_source_authority=None, **kwargs):
+        super().__init__(store, catalogue, **kwargs)
+        self.report_source_authority = report_source_authority
+
     def _check_result_retry(self, unit, owner, vault, result, carrier):
         """Optional exact-artifact retry check; legacy receipt reads stay unchanged."""
 
@@ -220,7 +237,7 @@ class PersistentResultService(PersistentExecutionService):
 
         def existing(unit):
             uid, *_ = self.authenticate(unit, owner, vault, connection, proof, path, request)
-            return self._original(
+            prior = self._original(
                 unit,
                 owner,
                 vault,
@@ -229,12 +246,68 @@ class PersistentResultService(PersistentExecutionService):
                 fingerprint,
                 request["runId"],
                 carrier,
-            ), uid
+            )
+            if prior is not None or self.report_source_authority is None:
+                return prior, uid, None
+            row, manifest = stored_run(unit, owner, vault, request["runId"])
+            if (
+                manifest["connectionId"] != connection
+                or c["ownerSubject"] != owner
+                or c["vaultId"] != vault
+                or c["connectionId"] != connection
+                or c["runId"] != manifest["runId"]
+                or c["manifestFingerprint"] != row["manifestFingerprint"]
+            ):
+                raise ContractError("recipient_binding_mismatch")
+            if manifest["resultPolicy"] != "owner_inbox":
+                raise ContractError("insufficient_scope")
+            if row["state"] != "ready":
+                raise ContractError("initial_result_exists")
+            return None, uid, (row["manifestFingerprint"], report_source_bindings(manifest))
 
-        previous, uid = self.store.transact(existing)
+        previous, uid, observed = self.store.transact(existing)
         if previous is not None:
             return previous
-        sources = source_versions(self.catalogue, uid)
+        sources, requested, decision, check = None, None, None, None
+        if observed is None:
+            sources = source_versions(self.catalogue, uid)
+        else:
+            manifest_fingerprint, bindings = observed
+            requested = report_source_request(
+                {
+                    "contractVersion": CONTRACT_VERSION,
+                    "profile": REPORT_PROFILE,
+                    "purpose": "report_submit",
+                    "ownerSubject": owner,
+                    "vaultId": vault,
+                    "connectionId": connection,
+                    "runId": request["runId"],
+                    "operationId": request["operationId"],
+                    "attemptId": uuid4().hex,
+                    "manifestFingerprint": manifest_fingerprint,
+                    "reportFingerprint": fingerprint,
+                    "resources": bindings,
+                }
+            )
+            decision = self.report_source_authority.decide(uid, requested)
+            require_report_source_permit(decision, request=requested, now=self.now())
+
+            def check(row, manifest):
+                if (
+                    row["manifestFingerprint"] != requested["manifestFingerprint"]
+                    or report_source_bindings(manifest) != requested["resources"]
+                ):
+                    raise ContractError("recipient_binding_mismatch")
+                require_report_source_permit(decision, request=requested, now=self.now())
+                # User approved each exact revision. The consent verifier only
+                # needs that lower bound and keeps checking the local policy.
+                return {
+                    canonical_json(binding["ref"]): {
+                        "sourceEpoch": binding["sourceEpoch"],
+                        "revision": binding["sourceRevision"],
+                    }
+                    for binding in requested["resources"]
+                }
 
         def write(unit):
             self.authenticate(unit, owner, vault, connection, proof, path, request)
@@ -251,7 +324,16 @@ class PersistentResultService(PersistentExecutionService):
             if prior is not None:
                 return prior
             row, m, v, registry, identity = self.current_run(
-                unit, owner, vault, connection, proof, path, request, request["runId"], sources
+                unit,
+                owner,
+                vault,
+                connection,
+                proof,
+                path,
+                request,
+                request["runId"],
+                sources,
+                report_source_check=check,
             )
             if m["resultPolicy"] != "owner_inbox":
                 raise ContractError("insufficient_scope")
@@ -351,6 +433,8 @@ class PersistentResultService(PersistentExecutionService):
             observe_execution(unit, m, result_id=ident, received_at=now)
             row.update(state="submitted", resultId=ident)
             unit.put(run_path(owner, vault, m["runId"]), row)
+            if requested is not None:
+                require_report_source_permit(decision, request=requested, now=self.now())
             return receipt
 
         return self.store.transact(write)

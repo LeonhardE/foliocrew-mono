@@ -2,23 +2,28 @@
 
 import copy
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import test_persistent_execution as executions
 from fixtures import OTHER_UID, UID
 from test_persistent_content import PersistentContentFixture
 
+from app.fences import FenceService
 from app.persistent_results import (
     PersistentOwnerResultService,
     PersistentResultService,
     result_id,
     result_path,
 )
-from folioview_shared.encrypted.crypto import _signed_parts, sign_jws
+from folioview_shared.encrypted.crypto import _signed_parts, sign_jws, signing_input_fingerprint
 from folioview_shared.encrypted.jsonutil import canonical_json
 from folioview_shared.encrypted.persistent_content import (
     open_persistent_content,
     seal_persistent_content,
+)
+from folioview_shared.encrypted.private_resources import (
+    REPORT_PERMIT_SECONDS,
+    decide_report_sources,
 )
 
 
@@ -130,6 +135,123 @@ class PersistentResultTests(unittest.TestCase):
             receipt,
         )
         self.rejects("idempotency_conflict", lambda: self.submit(carrier=self.seal(self.context)))
+
+    def use_report_authority(self, *, eligible=True, after_decision=None):
+        def decide(uid, request):
+            self.assertEqual(uid, UID)
+            decision = decide_report_sources(
+                request,
+                snapshot={
+                    "ownerSubject": self.f.owner,
+                    "vaultId": self.f.vault,
+                    "resources": [
+                        {
+                            "binding": {
+                                "ref": item["ref"],
+                                "sourceEpoch": item["sourceEpoch"] + int(not eligible),
+                            },
+                            "state": "eligible" if eligible else "disconnected",
+                            "currentRevision": item["sourceRevision"],
+                        }
+                        for item in request["resources"]
+                    ],
+                },
+                now=self.fx.now,
+            )
+            if after_decision is not None:
+                after_decision(request)
+            return decision
+
+        self.service.report_source_authority = Mock()
+        self.service.report_source_authority.decide.side_effect = decide
+        self.fx.catalogue.unavailable = True
+        return self.service.report_source_authority.decide
+
+    def test_source_revocation_after_the_allowed_attempt_keeps_one_exact_receipt(self):
+        def invalidate(request):
+            first = request["resources"][0]
+            FenceService(self.fx.store, clock=lambda: self.fx.now).invalidate(
+                {
+                    "contractVersion": request["contractVersion"],
+                    "ownerSubject": self.f.owner,
+                    "mutationId": "synthetic_source_fence_change_01",
+                    "ref": first["ref"],
+                    "expectedSourceEpoch": first["sourceEpoch"],
+                    "newSourceEpoch": first["sourceEpoch"] + 1,
+                    "reason": "disconnected",
+                },
+                source_service=first["ref"]["sourceService"],
+            )
+
+        choose = self.use_report_authority(after_decision=invalidate)
+        receipt = self.submit()
+        self.assertEqual(receipt, self.submit())
+        self.assertEqual(len(self.history.owner_list(UID, self.f.vault)["items"]), 1)
+        choose.assert_called_once()
+        _, request = choose.call_args.args
+        self.assertEqual(request["manifestFingerprint"], self.run["manifestFingerprint"])
+        self.assertEqual(
+            request["reportFingerprint"], signing_input_fingerprint(self.carrier["proof"])
+        )
+        self.assertEqual(request["operationId"], self.operation)
+        self.assertNotEqual(request["operationId"], request["attemptId"])
+
+    def test_denied_source_attempt_does_not_write_and_each_retry_has_a_fresh_binding(self):
+        choose = self.use_report_authority(eligible=False)
+        for _ in range(2):
+            self.rejects("insufficient_scope", lambda: self.submit())
+        self.assertEqual(self.history.owner_list(UID, self.f.vault)["items"], [])
+        calls = [c.args[1] for c in choose.call_args_list]
+        self.assertNotEqual(calls[0]["attemptId"], calls[1]["attemptId"])
+        self.assertEqual(calls[0] | {"attemptId": None}, calls[1] | {"attemptId": None})
+        self.rejects(
+            "not_found",
+            lambda: self.service.result_receipt(
+                *self.x.args("runs/result-receipt", {"runId": self.manifest["runId"]})
+            ),
+        )
+
+    def test_source_allow_still_checks_consent_before_commit(self):
+        choose = self.use_report_authority(
+            after_decision=lambda _: self.fx.apply(
+                self.fx.command(targets=[self.fx.revoke_target()]), revoke=True
+            )
+        )
+        self.rejects("insufficient_scope", lambda: self.submit())
+        choose.assert_called_once()
+        self.assertEqual(self.history.owner_list(UID, self.f.vault)["items"], [])
+
+    def test_expired_or_mismatched_source_approval_never_writes(self):
+        choose = self.use_report_authority()
+        append = self.service._append
+
+        def expire(*args):
+            append(*args)
+            self.fx.now += REPORT_PERMIT_SECONDS
+
+        with patch.object(self.service, "_append", side_effect=expire):
+            self.rejects("source_unavailable", lambda: self.submit())
+        self.assertEqual(self.history.owner_list(UID, self.f.vault)["items"], [])
+        prior = choose.call_args.args[1]
+        choose.side_effect = None
+        choose.return_value = decide_report_sources(
+            prior,
+            snapshot={
+                "ownerSubject": self.f.owner,
+                "vaultId": self.f.vault,
+                "resources": [
+                    {
+                        "binding": {"ref": item["ref"], "sourceEpoch": item["sourceEpoch"]},
+                        "state": "eligible",
+                        "currentRevision": item["sourceRevision"],
+                    }
+                    for item in prior["resources"]
+                ],
+            },
+            now=self.fx.now,
+        )
+        self.rejects("recipient_binding_mismatch", lambda: self.submit())
+        self.assertEqual(self.history.owner_list(UID, self.f.vault)["items"], [])
 
     def test_distinct_second_publication_cannot_create_another_initial_result(self):
         self.submit()

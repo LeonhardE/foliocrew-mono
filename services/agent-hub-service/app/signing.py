@@ -9,7 +9,7 @@ from functools import lru_cache
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-from folioview_shared.delegation import DELEGATION_TYPE
+from folioview_shared.delegation import DELEGATION_TYPE, REPORT_DELEGATION_TYPE
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import b64url_encode, canonical_json
@@ -137,16 +137,16 @@ class KMSSigner:
         except Exception:
             raise ContractError("authorization_unavailable") from None
 
-    def sign(self, claims, *, deadline=None, budget_clock=time.monotonic):
+    def sign(self, claims, *, typ=DELEGATION_TYPE, deadline=None, budget_clock=time.monotonic):
         import google_crc32c
         from cryptography.hazmat.primitives import hashes
         from cryptography.hazmat.primitives.asymmetric import padding
 
+        if typ not in (DELEGATION_TYPE, REPORT_DELEGATION_TYPE):
+            raise ContractError("authorization_unavailable")
         try:
             key, _ = self._public(deadline=deadline, budget_clock=budget_clock)
-            header = b64url_encode(
-                canonical_json({"alg": "RS256", "kid": self.kid, "typ": DELEGATION_TYPE})
-            )
+            header = b64url_encode(canonical_json({"alg": "RS256", "kid": self.kid, "typ": typ}))
             payload = b64url_encode(canonical_json(claims))
             data = (header + "." + payload).encode("ascii")
             digest = hashlib.sha256(data).digest()
