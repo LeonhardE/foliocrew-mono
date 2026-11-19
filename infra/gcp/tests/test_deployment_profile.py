@@ -145,6 +145,7 @@ class ProfileTests(unittest.TestCase):
             "agent_hub_image_deployment_enabled",
             "shared_image_build_legacy_binding",
             "market_cache_database_enabled",
+            "user_data_database_enabled",
         }
         self.assertEqual(set(bootstrap), variables - target_admin_overrides)
         self.assertTrue(target_admin_overrides.isdisjoint(bootstrap))

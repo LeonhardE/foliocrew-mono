@@ -80,6 +80,15 @@ trigger supplies them from the reviewed instance. Manual build-only runs must su
 `_DEPLOY_SERVICE` still defaults to `false` in YAML; the existing reviewed trigger keeps its own
 deployment switch. Subsequent image releases use that existing User trigger and unchanged filters.
 
+## Named User database preparation
+
+INF-023 provisions the Toronto `user-data` database in the administrator root
+with `user_data_database_enabled=true`. Apply that reviewed database-only plan
+after Market completes its production cutover and rollback check. Verify the
+named client-deny rules and scoped migration access before copying existing
+lists, resource versions or initialization receipts. The User runtime selects
+its current database until its separate write and rollback handoff.
+
 ## Offline verification
 
 Initialize the pinned provider with the backend disabled, then run the synthetic plans:
