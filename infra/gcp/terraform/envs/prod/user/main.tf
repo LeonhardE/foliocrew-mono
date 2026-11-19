@@ -21,7 +21,8 @@ locals {
     FIRESTORE_DATABASE  = "user-data"
     USER_STORE_BACKEND  = "firestore"
     MARKET_API_BASE_URL = var.deployment.market_origin
-  }, local.hub_trust_environment, local.report_trust_environment, local.web_recovery_environment)
+    }, local.hub_trust_environment, local.report_trust_environment, local.web_recovery_environment,
+  local.private_prepare_environment, local.private_current_environment)
 }
 
 provider "google" {

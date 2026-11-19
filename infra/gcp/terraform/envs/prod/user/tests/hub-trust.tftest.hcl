@@ -249,3 +249,146 @@ run "private_recovery_rejects_a_different_numbered_user_audience" {
   }
   expect_failures = [var.hub_trust]
 }
+
+override_data {
+  target = data.google_service_account.private_rollout_portfolio
+  values = {
+    email     = "alpha-portfolio-runtime@demo-user-alpha.iam.gserviceaccount.com"
+    unique_id = "222333444555666777888"
+  }
+}
+
+override_data {
+  target = data.google_cloud_run_v2_service.private_rollout_portfolio
+  values = {
+    template = [{ service_account = "alpha-portfolio-runtime@demo-user-alpha.iam.gserviceaccount.com" }]
+  }
+}
+
+run "selected_owner_preparation" {
+  command = plan
+  variables {
+    hub_trust = {
+      USER_SERVICE_AUDIENCE         = "https://user-api-111222333444.us-central1.run.app"
+      USER_DELEGATION_AUDIENCE      = "https://user-api-111222333444.us-central1.run.app/internal/v2"
+      USER_DELEGATION_ISSUER        = "https://agent-hub-api-111222333444.us-central1.run.app"
+      USER_TRUSTED_HUB_CALLERS      = jsonencode({ "111000111000111000111" = "alpha-hub-runtime@demo-user-alpha.iam.gserviceaccount.com" })
+      USER_PRIVATE_OWNER_AUDIENCE   = "https://user-api-111222333444.us-central1.run.app"
+      USER_PRIVATE_OWNER_WEB_CALLER = jsonencode({ "999888777666555444333" = "alpha-web-runtime@demo-user-alpha.iam.gserviceaccount.com" })
+    }
+    private_rollout = {
+      phase                = "prepare"
+      owner_subject        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      portfolio_subject    = "222333444555666777888"
+      portfolio_account_id = "alpha-portfolio-runtime"
+    }
+  }
+
+  assert {
+    condition = (
+      local.environment.USER_PRIVATE_SELECTED_OWNER == var.private_rollout.owner_subject &&
+      local.environment.USER_PRIVATE_HANDOVER == "true" &&
+      local.environment.USER_PRIVATE_RECOVERY_READ == "true" &&
+      length(local.private_current_environment) == 0
+    )
+    error_message = "Preparation must expose only selected Owner handover and recovery."
+  }
+}
+
+run "selected_owner_active" {
+  command = plan
+  variables {
+    hub_trust = {
+      USER_SERVICE_AUDIENCE         = "https://user-api-111222333444.us-central1.run.app"
+      USER_DELEGATION_AUDIENCE      = "https://user-api-111222333444.us-central1.run.app/internal/v2"
+      USER_DELEGATION_ISSUER        = "https://agent-hub-api-111222333444.us-central1.run.app"
+      USER_TRUSTED_HUB_CALLERS      = jsonencode({ "111000111000111000111" = "alpha-hub-runtime@demo-user-alpha.iam.gserviceaccount.com" })
+      USER_PRIVATE_OWNER_AUDIENCE   = "https://user-api-111222333444.us-central1.run.app"
+      USER_PRIVATE_OWNER_WEB_CALLER = jsonencode({ "999888777666555444333" = "alpha-web-runtime@demo-user-alpha.iam.gserviceaccount.com" })
+    }
+    private_rollout = {
+      phase                = "active"
+      owner_subject        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      portfolio_subject    = "222333444555666777888"
+      portfolio_account_id = "alpha-portfolio-runtime"
+    }
+  }
+
+  assert {
+    condition = (
+      local.environment.USER_PRIVATE_SELECTED_OWNER == var.private_rollout.owner_subject &&
+      local.environment.USER_PRIVATE_OWNER_CURRENT == "true" &&
+      local.environment.USER_PRIVATE_RESOURCE_DIRECTORY == "true" &&
+      local.environment.USER_PRIVATE_SOURCE_INVALIDATIONS == "true" &&
+      local.environment.USER_REPORT_SOURCE_DECISIONS == "true" &&
+      jsondecode(local.environment.USER_PRIVATE_PORTFOLIO_CALLER)[var.private_rollout.portfolio_subject] == "alpha-portfolio-runtime@demo-user-alpha.iam.gserviceaccount.com"
+    )
+    error_message = "Current authority must carry the exact Portfolio identity and selected Owner."
+  }
+}
+
+run "reject_unbounded_owner" {
+  command = plan
+  variables {
+    hub_trust = {
+      USER_SERVICE_AUDIENCE         = "https://user-api-111222333444.us-central1.run.app"
+      USER_DELEGATION_AUDIENCE      = "https://user-api-111222333444.us-central1.run.app/internal/v2"
+      USER_DELEGATION_ISSUER        = "https://agent-hub-api-111222333444.us-central1.run.app"
+      USER_TRUSTED_HUB_CALLERS      = jsonencode({ "111000111000111000111" = "alpha-hub-runtime@demo-user-alpha.iam.gserviceaccount.com" })
+      USER_PRIVATE_OWNER_AUDIENCE   = "https://user-api-111222333444.us-central1.run.app"
+      USER_PRIVATE_OWNER_WEB_CALLER = jsonencode({ "999888777666555444333" = "alpha-web-runtime@demo-user-alpha.iam.gserviceaccount.com" })
+    }
+    private_rollout = {
+      phase                = "active"
+      owner_subject        = "*"
+      portfolio_subject    = "222333444555666777888"
+      portfolio_account_id = "alpha-portfolio-runtime"
+    }
+  }
+
+  expect_failures = [var.private_rollout]
+}
+
+run "reject_reused_workload_subject" {
+  command = plan
+  variables {
+    hub_trust = {
+      USER_SERVICE_AUDIENCE         = "https://user-api-111222333444.us-central1.run.app"
+      USER_DELEGATION_AUDIENCE      = "https://user-api-111222333444.us-central1.run.app/internal/v2"
+      USER_DELEGATION_ISSUER        = "https://agent-hub-api-111222333444.us-central1.run.app"
+      USER_TRUSTED_HUB_CALLERS      = jsonencode({ "111000111000111000111" = "alpha-hub-runtime@demo-user-alpha.iam.gserviceaccount.com" })
+      USER_PRIVATE_OWNER_AUDIENCE   = "https://user-api-111222333444.us-central1.run.app"
+      USER_PRIVATE_OWNER_WEB_CALLER = jsonencode({ "999888777666555444333" = "alpha-web-runtime@demo-user-alpha.iam.gserviceaccount.com" })
+    }
+    private_rollout = {
+      phase                = "active"
+      owner_subject        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      portfolio_subject    = "111000111000111000111"
+      portfolio_account_id = "alpha-portfolio-runtime"
+    }
+  }
+
+  expect_failures = [var.private_rollout]
+}
+
+run "reject_different_live_workload_subject" {
+  command = plan
+  variables {
+    hub_trust = {
+      USER_SERVICE_AUDIENCE         = "https://user-api-111222333444.us-central1.run.app"
+      USER_DELEGATION_AUDIENCE      = "https://user-api-111222333444.us-central1.run.app/internal/v2"
+      USER_DELEGATION_ISSUER        = "https://agent-hub-api-111222333444.us-central1.run.app"
+      USER_TRUSTED_HUB_CALLERS      = jsonencode({ "111000111000111000111" = "alpha-hub-runtime@demo-user-alpha.iam.gserviceaccount.com" })
+      USER_PRIVATE_OWNER_AUDIENCE   = "https://user-api-111222333444.us-central1.run.app"
+      USER_PRIVATE_OWNER_WEB_CALLER = jsonencode({ "999888777666555444333" = "alpha-web-runtime@demo-user-alpha.iam.gserviceaccount.com" })
+    }
+    private_rollout = {
+      phase                = "active"
+      owner_subject        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      portfolio_subject    = "555888777444333222111"
+      portfolio_account_id = "alpha-portfolio-runtime"
+    }
+  }
+
+  expect_failures = [data.google_service_account.private_rollout_portfolio]
+}
