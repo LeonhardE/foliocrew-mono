@@ -29,7 +29,7 @@ from folioview_shared.identity import owner_key
 from .persistent_agents import PersistentAgentService, stored_identity
 from .persistent_execution import PersistentExecutionService, run_path, stored_run
 from .preparations import source_versions
-from .store import StoreUnavailable, document_path
+from .store import StoreUnavailable, document_path, private_resource_writer_fence_path
 from .vaults import _current, _selection
 
 PAGE_SIZE = 64
@@ -137,9 +137,37 @@ class _OwnerResultSnapshot:
 
 
 class PersistentResultService(PersistentExecutionService):
-    def __init__(self, store, catalogue, *, report_source_authority=None, **kwargs):
+    def __init__(
+        self,
+        store,
+        catalogue,
+        *,
+        report_source_authority=None,
+        selected_report_owner=None,
+        **kwargs,
+    ):
         super().__init__(store, catalogue, **kwargs)
         self.report_source_authority = report_source_authority
+        self.selected_report_owner = selected_report_owner
+
+    def _source_writer(self, unit, owner, vault):
+        selected = self.selected_report_owner
+        fence = unit.get(private_resource_writer_fence_path(owner))
+        if fence is None:
+            if selected == owner:
+                raise ContractError("source_unavailable")
+            return self.report_source_authority if selected is None else None
+        if (
+            selected != owner
+            or self.report_source_authority is None
+            or fence.get("ownerSubject") != owner
+            or fence.get("vaultId") != vault
+            or fence.get("state") != "transferred"
+            or type(fence.get("writerEpoch")) is not int
+            or fence["writerEpoch"] != 2
+        ):
+            raise ContractError("source_unavailable")
+        return self.report_source_authority
 
     def _check_result_retry(self, unit, owner, vault, result, carrier):
         """Optional exact-artifact retry check; legacy receipt reads stay unchanged."""
@@ -247,8 +275,11 @@ class PersistentResultService(PersistentExecutionService):
                 request["runId"],
                 carrier,
             )
-            if prior is not None or self.report_source_authority is None:
-                return prior, uid, None
+            if prior is not None:
+                return prior, uid, None, None
+            authority = self._source_writer(unit, owner, vault)
+            if authority is None:
+                return None, uid, None, None
             row, manifest = stored_run(unit, owner, vault, request["runId"])
             if (
                 manifest["connectionId"] != connection
@@ -263,9 +294,14 @@ class PersistentResultService(PersistentExecutionService):
                 raise ContractError("insufficient_scope")
             if row["state"] != "ready":
                 raise ContractError("initial_result_exists")
-            return None, uid, (row["manifestFingerprint"], report_source_bindings(manifest))
+            return (
+                None,
+                uid,
+                (row["manifestFingerprint"], report_source_bindings(manifest)),
+                authority,
+            )
 
-        previous, uid, observed = self.store.transact(existing)
+        previous, uid, observed, authority = self.store.transact(existing)
         if previous is not None:
             return previous
         sources, requested, decision, check = None, None, None, None
@@ -289,7 +325,7 @@ class PersistentResultService(PersistentExecutionService):
                     "resources": bindings,
                 }
             )
-            decision = self.report_source_authority.decide(uid, requested)
+            decision = authority.decide(uid, requested)
             require_report_source_permit(decision, request=requested, now=self.now())
 
             def check(row, manifest):
@@ -323,6 +359,8 @@ class PersistentResultService(PersistentExecutionService):
             )
             if prior is not None:
                 return prior
+            if self._source_writer(unit, owner, vault) is not authority:
+                raise ContractError("source_unavailable")
             row, m, v, registry, identity = self.current_run(
                 unit,
                 owner,

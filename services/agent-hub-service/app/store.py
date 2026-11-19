@@ -129,6 +129,10 @@ def document_path(collection: str, *parts: str) -> str:
     return f"{collection}/{document_id(*parts)}"
 
 
+def private_resource_writer_fence_path(owner: str) -> str:
+    return document_path("hub_private_resource_writer_fences", owner)
+
+
 def require_legacy_private_writer(unit, owner: str) -> None:
     """Bind a new legacy resource commit to the account's writer fence.
 
@@ -136,7 +140,7 @@ def require_legacy_private_writer(unit, owner: str) -> None:
     Firestore retries a conflicting commit and SQLite serializes it with a freeze.
     Existing receipts are resolved before this check.
     """
-    if unit.get(document_path("hub_private_resource_writer_fences", owner)) is not None:
+    if unit.get(private_resource_writer_fence_path(owner)) is not None:
         raise ContractError("authorization_unavailable")
 
 

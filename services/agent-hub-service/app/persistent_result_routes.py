@@ -15,7 +15,7 @@ from .agent_transport import recovery_transport
 from .api import Owner, _invoke, body, transport
 from .persistent_execution_routes import get_execution
 from .persistent_results import PersistentOwnerResultService, PersistentResultService
-from .report_source_authority import get_report_source_authority
+from .report_source_authority import get_report_source_authority, selected_report_owner
 from .store import get_store
 
 agent_router = APIRouter(
@@ -67,6 +67,7 @@ def get_result_writer():
             client_ids=current.client_ids,
             clock=current.clock,
             report_source_authority=get_report_source_authority(),
+            selected_report_owner=selected_report_owner(),
         )
 
     return _invoke(configured)

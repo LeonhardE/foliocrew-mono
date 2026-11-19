@@ -15,6 +15,7 @@ from app.persistent_results import (
     result_id,
     result_path,
 )
+from app.store import private_resource_writer_fence_path
 from folioview_shared.encrypted.crypto import _signed_parts, sign_jws, signing_input_fingerprint
 from folioview_shared.encrypted.jsonutil import canonical_json
 from folioview_shared.encrypted.persistent_content import (
@@ -166,6 +167,57 @@ class PersistentResultTests(unittest.TestCase):
         self.service.report_source_authority.decide.side_effect = decide
         self.fx.catalogue.unavailable = True
         return self.service.report_source_authority.decide
+
+    def set_migration_fence(self, state):
+        path = private_resource_writer_fence_path(self.f.owner)
+        row = {
+            "ownerSubject": self.f.owner,
+            "vaultId": self.f.vault,
+            "state": state,
+            "writerEpoch": 2,
+        }
+        self.fx.store.transact(lambda unit: unit.put(path, row))
+
+    def test_user_authority_is_only_used_for_a_scoped_transferred_writer(self):
+        decide = self.use_report_authority()
+        self.service.selected_report_owner = self.f.owner
+        self.rejects("source_unavailable", self.submit)
+        self.set_migration_fence("frozen")
+        self.rejects("source_unavailable", self.submit)
+        decide.assert_not_called()
+        self.assertIsNone(
+            self.fx.store.transact(
+                lambda unit: self.service._source_writer(unit, "b" * 64, self.f.vault)
+            )
+        )
+        self.set_migration_fence("transferred")
+        receipt = self.submit()
+        self.assertEqual(self.submit(), receipt)
+        decide.assert_called_once()
+
+    def test_known_receipt_survives_legacy_freeze(self):
+        receipt = self.submit()
+        self.set_migration_fence("frozen")
+        self.fx.catalogue.unavailable = True
+        self.assertEqual(self.submit(), receipt)
+
+    def test_frozen_writer_during_source_read_blocks_late_legacy_submit(self):
+        from app.persistent_results import source_versions
+
+        def source_then_freeze(catalogue, uid):
+            observed = source_versions(catalogue, uid)
+            self.set_migration_fence("frozen")
+            return observed
+
+        with patch("app.persistent_results.source_versions", side_effect=source_then_freeze):
+            self.rejects("source_unavailable", self.submit)
+        self.assertEqual(self.history.owner_list(UID, self.f.vault)["items"], [])
+        self.assertEqual(
+            self.x.service.run_receipt(
+                *self.x.args("runs/receipt", {"runId": self.manifest["runId"]})
+            )["state"],
+            "ready",
+        )
 
     def test_source_revocation_after_the_allowed_attempt_keeps_one_exact_receipt(self):
         def invalidate(request):
