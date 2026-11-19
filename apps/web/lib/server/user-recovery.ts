@@ -4,8 +4,6 @@ import canonicalize from "canonicalize";
 import { createHash } from "node:crypto";
 import { displayNameResponse } from "../display-name-contract";
 import {
-  HANDOVER_CHECK_PROFILE,
-  HANDOVER_PROFILE,
   HOLDINGS_REGISTRATION_PROFILE,
   OWNER_CURRENT_PROFILE,
   PRIVATE_DISPLAY_NAME_PROFILE,
@@ -93,13 +91,6 @@ function validRequest(
   )
     return false;
 
-  if (rule.profile === HANDOVER_CHECK_PROFILE) return true;
-  if (rule.profile === HANDOVER_PROFILE)
-    return (
-      matches(value.operationId, NONCE) &&
-      signedObject(value.signedTransition) &&
-      registryBundle(value.firstBundle)
-    );
   if (rule.profile === REGISTRY_START_PROFILE) return matches(value.nonce, NONCE);
   if (rule.profile === OWNER_CURRENT_PROFILE) return matches(value.nonce, NONCE);
   if (rule.profile === USER_KEY_RENEWAL_PROFILE) {
@@ -248,43 +239,6 @@ function validPage(value: unknown, input: Json) {
 }
 
 const SCOPE_FIELDS = ["contractVersion", "profile", "ownerSubject", "vaultId", "rootKeyId"];
-
-function validHandoverCheck(value: Json) {
-  if (value.status === "ready") {
-    return (
-      fields(value, [...SCOPE_FIELDS, "status", "vaultVersion"]) && integer(value.vaultVersion, 1)
-    );
-  }
-  return (
-    fields(value, [...SCOPE_FIELDS, "status", "operationId"]) &&
-    value.status === "installed" &&
-    matches(value.operationId, NONCE)
-  );
-}
-
-function validHandoverReceipt(value: Json, input: Json) {
-  const signed = input.signedTransition;
-  return (
-    record(signed) &&
-    value.transitionFingerprint === digest(signed.protected + "." + signed.payload) &&
-    fields(value, [
-      ...SCOPE_FIELDS,
-      "operationId",
-      "baselineDigest",
-      "transitionFingerprint",
-      "nextVaultVersion",
-      "registryStart",
-      "writerEpoch",
-    ]) &&
-    value.operationId === input.operationId &&
-    matches(value.baselineDigest, DIGEST) &&
-    matches(value.transitionFingerprint, DIGEST) &&
-    integer(value.nextVaultVersion, 2) &&
-    head(value.registryStart) &&
-    value.registryStart.registryEpoch === 2 &&
-    value.writerEpoch === 2
-  );
-}
 
 function validRegistryStart(value: Json, input: Json) {
   return (
@@ -603,10 +557,6 @@ function validReply(body: unknown, input: Json, expectedDigest: string) {
   switch (input.profile) {
     case RECOVERY_PROFILE:
       return validEvidence(body, expectedDigest);
-    case HANDOVER_CHECK_PROFILE:
-      return validHandoverCheck(body);
-    case HANDOVER_PROFILE:
-      return validHandoverReceipt(body, input);
     case REGISTRY_START_PROFILE:
       return validRegistryStart(body, input);
     default:
@@ -675,11 +625,6 @@ export function createUserRecoveryProxy(options: Options = {}) {
         if (!selected) fail("not_found");
         if (!matches(selected, DIGEST)) fail("authorization_unavailable");
         if (selected !== input.ownerSubject) fail("not_found");
-      }
-      if (rule.profile === HANDOVER_CHECK_PROFILE || rule.profile === HANDOVER_PROFILE) {
-        const selected = env.FOLIOVIEW_USER_HANDOVER_OWNER;
-        if (selected !== undefined && !matches(selected, DIGEST)) fail("authorization_unavailable");
-        if (selected !== undefined && selected !== input.ownerSubject) fail("not_found");
       }
 
       const token = await until(identity(origin), signal);

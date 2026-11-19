@@ -32,8 +32,6 @@ const RENEWAL_RECEIPT = VAULT + "/key-renewals/read";
 const PATHS = [
   EVIDENCE,
   PAGE,
-  CHECK,
-  HANDOVER,
   START,
   ADVANCE,
   REGISTER,
@@ -68,14 +66,6 @@ const BUNDLE = {
 };
 const NEXT_HEAD = { ...HEAD, registryEpoch: 2, registrySequence: 3 };
 const SCOPE = { contractVersion: CONTRACT, ownerSubject: OWNER, vaultId: "vault_A" };
-const CHECK_BODY = { ...SCOPE, profile: routes.HANDOVER_CHECK_PROFILE };
-const HANDOVER_BODY = {
-  ...SCOPE,
-  profile: routes.HANDOVER_PROFILE,
-  operationId: "synthetic_transition_requested",
-  signedTransition: PROOF,
-  firstBundle: BUNDLE,
-};
 const START_BODY = { ...SCOPE, profile: routes.REGISTRY_START_PROFILE, nonce: "n".repeat(32) };
 const ADVANCE_BODY = {
   ...SCOPE,
@@ -180,16 +170,7 @@ function response(input, patch = {}) {
     vaultId: input.vaultId,
     rootKeyId: "r".repeat(43),
   };
-  const handovers = {
-    [routes.HANDOVER_CHECK_PROFILE]: { status: "ready", vaultVersion: 1 },
-    [routes.HANDOVER_PROFILE]: {
-      operationId: input.operationId,
-      baselineDigest: "a".repeat(64),
-      transitionFingerprint: digest(PROOF.protected + "." + PROOF.payload),
-      nextVaultVersion: 2,
-      registryStart: NEXT_HEAD,
-      writerEpoch: 2,
-    },
+  const compatibility = {
     [routes.REGISTRY_START_PROFILE]: {
       nonce: input.nonce,
       vaultVersion: 2,
@@ -231,7 +212,7 @@ function response(input, patch = {}) {
         };
   return Response.json(
     {
-      ...(handovers[input.profile] ? { ...scope, ...handovers[input.profile] } : result),
+      ...(compatibility[input.profile] ? { ...scope, ...compatibility[input.profile] } : result),
       ...patch,
     },
     { headers: { "X-FolioView-Contract": CONTRACT, "Set-Cookie": "fixture=private" } },
@@ -553,44 +534,35 @@ test("selected Owner startup binds the User reply to the fresh nonce and fails c
   assert.equal(other.calls.length, 1);
 });
 
-test("the three handover requests use fixed scope and signed-input receipt identity", async () => {
+test("registry-start evidence retains fixed scope and nonce validation", async () => {
   const { proxy, calls } = fixture();
-  for (const [path, value] of [
-    [CHECK, CHECK_BODY],
-    [HANDOVER, HANDOVER_BODY],
-    [START, START_BODY],
-  ]) {
-    const result = await proxy(request(path, value));
-    assert.equal(result.status, 200);
-    assert.equal(result.headers.get("Cache-Control"), "no-store");
-    assert.equal(result.headers.get("Set-Cookie"), null);
-  }
+  const result = await proxy(request(START, START_BODY));
+  assert.equal(result.status, 200);
+  assert.equal(result.headers.get("Cache-Control"), "no-store");
+  assert.equal(result.headers.get("Set-Cookie"), null);
   assert.deepEqual(
     calls.map(([url]) => url).filter((url) => new URL(url).origin === ORIGIN),
-    [ORIGIN + CHECK, ORIGIN + HANDOVER, ORIGIN + START],
+    [ORIGIN + START],
   );
-  const wrongReceipt = fixture({
-    reply: (input) => response(input, { transitionFingerprint: "0".repeat(64) }),
-  });
-  assert.equal((await wrongReceipt.proxy(request(HANDOVER, HANDOVER_BODY))).status, 503);
   const wrongNonce = fixture({ reply: (input) => response(input, { nonce: "q".repeat(32) }) });
   assert.equal((await wrongNonce.proxy(request(START, START_BODY))).status, 503);
-});
 
-test("handover rejects foreign scope and any plaintext Passkey material before forwarding", async () => {
   const foreign = fixture();
   assert.equal(
-    (await foreign.proxy(request(CHECK, { ...CHECK_BODY, ownerSubject: "0".repeat(64) }))).status,
+    (await foreign.proxy(request(START, { ...START_BODY, ownerSubject: "0".repeat(64) }))).status,
     404,
   );
   assert.deepEqual(
     foreign.calls.map(([url]) => url),
     [JWKS],
   );
-  const plaintext = fixture();
-  assert.equal(
-    (await plaintext.proxy(request(HANDOVER, { ...HANDOVER_BODY, prf: "forbidden" }))).status,
-    400,
-  );
-  assert.equal(plaintext.calls.length, 0);
+});
+
+test("retired handover paths are not forwarded, including with an old deployment flag", async () => {
+  const { proxy, calls } = fixture({ env: { ...ENV, FOLIOVIEW_USER_HANDOVER_OWNER: OWNER } });
+  for (const path of [CHECK, HANDOVER]) {
+    assert.equal(routes.userRecoveryRoute(path), null);
+    assert.equal((await proxy(request(path, SCOPE))).status, 400);
+  }
+  assert.equal(calls.length, 0);
 });

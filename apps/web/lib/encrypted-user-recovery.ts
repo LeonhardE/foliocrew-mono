@@ -25,7 +25,7 @@ export type OwnerRecoveryRequest = RecoveryScope & {
 
 export type OwnerRegistryPageRequest = RecoveryScope & {
   profile: typeof OWNER_REGISTRY_PAGE_PROFILE;
-  base: PrivateRegistryHead;
+  base: PrivateRegistryHead | null;
   target: PrivateRegistryHead;
 };
 
@@ -45,32 +45,8 @@ export type OwnerRecoveryTransport = {
   page(request: OwnerRegistryPageRequest, signal: AbortSignal): Promise<unknown>;
 };
 
-export type RegistryTransitionReview = {
-  operationId: string;
-  vaultId: string;
-  rootKeyId: string;
-  previousHead: PrivateRegistryHead;
-  archiveVersion: number;
-  ownerKeyIds: string[];
-  expiresAt: number;
-};
-
 export type RegistryTransitionPacket = {
   operationId: string;
   signedTransition: Signed;
   firstBundle: RegistryBundle;
-};
-
-export type RegistryHandoverReceipt = {
-  contractVersion: typeof CONTRACT;
-  profile: "folioview.owner-handover.v1";
-  ownerSubject: string;
-  vaultId: string;
-  rootKeyId: string;
-  operationId: string;
-  baselineDigest: string;
-  transitionFingerprint: string;
-  nextVaultVersion: number;
-  registryStart: PrivateRegistryHead;
-  writerEpoch: 2;
 };

@@ -26,7 +26,7 @@ const emptyState: WatchlistState = {
   messageId: 0,
 };
 
-export function useWatchlist() {
+export function useWatchlist(enabled = true) {
   const { status, sessionKey, requestPrivate } = useAuth();
   const owner = status === "authenticated" ? sessionKey : null;
   const ownerRef = useRef(owner);
@@ -35,6 +35,7 @@ export function useWatchlist() {
   const [state, setState] = useState<WatchlistState>(emptyState);
   const requestRef = useRef<{ id: number; controller: AbortController } | null>(null);
   const generationRef = useRef(0);
+  const requestedOwner = useRef<string | null>(null);
 
   const loadOrMutate = useCallback(
     async (method: "GET" | "PUT" | "DELETE", symbol?: string) => {
@@ -113,13 +114,19 @@ export function useWatchlist() {
     requestRef.current = null;
     ++generationRef.current;
     setState({ ...emptyState, sessionKey: owner });
-    if (owner) void loadOrMutate("GET");
+    requestedOwner.current = null;
     return () => {
       ++generationRef.current;
       requestRef.current?.controller.abort();
       requestRef.current = null;
     };
   }, [owner, loadOrMutate]);
+
+  useEffect(() => {
+    if (!enabled || !owner || requestedOwner.current === owner) return;
+    requestedOwner.current = owner;
+    void loadOrMutate("GET");
+  }, [enabled, owner, loadOrMutate]);
 
   const visible = owner && state.sessionKey === owner ? state : emptyState;
   useEffect(() => {
@@ -138,7 +145,7 @@ export function useWatchlist() {
 
   return {
     ...visible,
-    loading: Boolean(owner) && (visible.loading || (!visible.loaded && !visible.error)),
+    loading: Boolean(owner) && enabled && (visible.loading || (!visible.loaded && !visible.error)),
     authenticated: Boolean(owner),
     busy: visible.loading || visible.pendingSymbol !== null,
     reload: () => loadOrMutate("GET"),

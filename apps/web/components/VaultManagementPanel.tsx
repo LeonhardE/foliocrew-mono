@@ -425,47 +425,6 @@ export default function VaultManagementPanel({
       {showRecovery && <VaultRecoveryPanel workspace={workspace} />}
       {showAdvanced && (
         <>
-          {workspace.userHandoverAvailable &&
-            (unlocked || workspace.userHandover?.status === "installed") && (
-              <div className={styles.callout}>
-                <h3>{t("userHandoverTitle")}</h3>
-                {workspace.userHandover?.status === "installed" ? (
-                  <p role="status">{t("userHandoverInstalled")}</p>
-                ) : workspace.userHandover ? (
-                  <>
-                    {workspace.userHandover.review && (
-                      <p>
-                        {t("userHandoverScope", {
-                          vault: workspace.userHandover.vault.vaultId,
-                          keys: workspace.userHandover.review.ownerKeyIds.length,
-                        })}
-                      </p>
-                    )}
-                    <button
-                      type="button"
-                      className={styles.primary}
-                      disabled={busy}
-                      onClick={() => void workspace.confirmUserHandover()}
-                    >
-                      {t(
-                        workspace.userHandover.status === "pending"
-                          ? "userHandoverRetry"
-                          : "userHandoverConfirm",
-                      )}
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    className={styles.secondary}
-                    disabled={busy}
-                    onClick={() => void workspace.reviewUserHandover()}
-                  >
-                    {t("userHandoverReview")}
-                  </button>
-                )}
-              </div>
-            )}
           <VaultArchiveDeletionPanel workspace={workspace} />
           <VaultKeyRenewalPanel workspace={workspace} />
         </>

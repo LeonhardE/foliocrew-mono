@@ -8,8 +8,6 @@ import type {
   OwnerRecoveryProgress,
   OwnerRecoveryRequest,
   PrivateRegistryHead,
-  RegistryTransitionPacket,
-  RegistryTransitionReview,
 } from "./encrypted-user-recovery";
 import {
   GeneralEncrypt,
@@ -405,10 +403,16 @@ function privateRegistryHead(registry: Registry, registryEpoch = 1): PrivateRegi
 }
 type OriginalRegistryBridge = {
   id: string;
-  pin: Pin;
+  scope: Pick<Pin, "ownerSubject" | "vaultId" | "rootKeyId">;
+  pin?: Pin;
   target: PrivateRegistryHead;
-  head: PrivateRegistryHead;
+  head: PrivateRegistryHead | null;
   heads: PrivateRegistryHead[];
+  archiveProof?: {
+    transition: Signed;
+    missingKeys: Set<string>;
+    certificates: Map<string, Json>;
+  };
   verified?: Registry;
   verify: Awaited<ReturnType<typeof registryBundleVerifier>>;
   expiresAt: number;
@@ -883,13 +887,7 @@ export class VaultCore {
   private pin?: Pin;
   private userRecoveryRead?: OwnerRecoveryRead;
   private originalRegistryBridge?: OriginalRegistryBridge;
-  private userRegistryReview?: {
-    review: RegistryTransitionReview;
-    vault: Vault;
-    registry: Registry;
-    lifecycle: VaultLifecyclePin;
-    entries: RegistryBundle["entries"];
-  };
+  private originalArchiveCertificates?: { transition: Signed; certificates: Map<string, Json> };
   private device?: {
     deviceId: string;
     sig: CryptoKey;
@@ -933,6 +931,13 @@ export class VaultCore {
     if (!Array.isArray(historical) || historical.length > 63) throw new VaultError("invalid_data");
     bounded(master, 24560);
     const seen = new Set<string>([vault.rootKeyId, await thumb(master.recoveryPrivateJwk)]);
+    const archived = this.originalArchiveCertificates;
+    const originalCertificates =
+      archived &&
+      vault.userAuthority &&
+      equal(archived.transition, vault.userAuthority.signedTransition)
+        ? archived.certificates
+        : undefined;
     for (const item of historical) {
       exact(item, ["role", "principalId", "privateJwk"]);
       if (!["device_sig", "device_enc", "recovery_enc"].includes(item.role))
@@ -943,22 +948,24 @@ export class VaultCore {
       const kid = await thumb(item.privateJwk);
       if (seen.has(kid)) throw new VaultError("invalid_data");
       seen.add(kid);
-      let found = false;
+      const matches = (certificate: Json) =>
+        certificate.ownerSubject === master.ownerSubject &&
+        certificate.vaultId === vault.vaultId &&
+        certificate.issuerKeyId === vault.rootKeyId &&
+        certificate.role === item.role &&
+        certificate.principalId === item.principalId &&
+        certificate.connectionId === null &&
+        equal(certificate.publicJwk, pub(item.privateJwk));
+      const original = originalCertificates?.get(kid);
+      let found = Boolean(original && matches(original));
       for (const bundle of vault.registryHistory) {
+        if (found) break;
         for (const entry of bundle.entries) {
-          const c = parsed(unb64(entry.certificate.payload));
-          if (c.keyId !== kid) continue;
-          const signed = await verified(entry.certificate, vault.rootJwk);
-          if (
-            signed.ownerSubject === master.ownerSubject &&
-            signed.vaultId === vault.vaultId &&
-            signed.issuerKeyId === vault.rootKeyId &&
-            signed.role === item.role &&
-            signed.principalId === item.principalId &&
-            signed.connectionId === null &&
-            equal(signed.publicJwk, pub(item.privateJwk))
-          )
+          if (parsed(unb64(entry.certificate.payload)).keyId !== kid) continue;
+          if (matches(await verified(entry.certificate, vault.rootJwk))) {
             found = true;
+            break;
+          }
         }
       }
       if (!found) throw new VaultError("untrusted_vault");
@@ -1030,9 +1037,9 @@ export class VaultCore {
       if (
         bridge &&
         bridge.expiresAt > this.now() &&
-        bridge.pin.ownerSubject === (await this.owner) &&
-        bridge.pin.vaultId === vault.vaultId &&
-        bridge.pin.rootKeyId === vault.rootKeyId &&
+        bridge.scope.ownerSubject === (await this.owner) &&
+        bridge.scope.vaultId === vault.vaultId &&
+        bridge.scope.rootKeyId === vault.rootKeyId &&
         equal(bridge.head, change.previousHead)
       )
         history.push(...bridge.heads);
@@ -3628,57 +3635,79 @@ export class VaultCore {
       request: {
         contractVersion: CONTRACT,
         profile: OWNER_REGISTRY_PAGE_PROFILE,
-        ownerSubject: bridge.pin.ownerSubject,
-        vaultId: bridge.pin.vaultId,
+        ownerSubject: bridge.scope.ownerSubject,
+        vaultId: bridge.scope.vaultId,
         base: bridge.head,
         target: bridge.target,
       },
     };
   }
 
-  async beginOriginalRegistryBridge(vault: Vault, pin: Pin) {
+  async beginOriginalRegistryBridge(vault: Vault, pin?: Pin, restoreArchivedKeys = false) {
     const owner = await this.owner;
+    const scope = { ownerSubject: owner, vaultId: vault.vaultId, rootKeyId: vault.rootKeyId };
     if (
       !vault.userAuthority ||
-      (pin.registryEpoch ?? 1) !== 1 ||
-      pin.ownerSubject !== owner ||
-      pin.vaultId !== vault.vaultId ||
-      pin.rootKeyId !== vault.rootKeyId ||
-      (await thumb(vault.rootJwk)) !== pin.rootKeyId
+      (pin &&
+        ((pin.registryEpoch ?? 1) !== 1 ||
+          pin.ownerSubject !== scope.ownerSubject ||
+          pin.vaultId !== scope.vaultId ||
+          pin.rootKeyId !== scope.rootKeyId)) ||
+      (await thumb(vault.rootJwk)) !== scope.rootKeyId
     )
       throw new VaultError("untrusted_vault");
     const verify = await registryBundleVerifier(vault.rootJwk);
-    const { prior: target } = await this.verifyUserVaultStart(vault, owner, verify);
-    const head: PrivateRegistryHead = {
-      registryEpoch: 1,
-      registrySequence: pin.registrySequence,
-      checkpointDigest: pin.checkpointDigest,
-      keyEpoch: pin.keyEpoch,
-    };
+    const { first, prior: target } = await this.verifyUserVaultStart(vault, owner, verify);
+    const transition = vault.userAuthority.signedTransition;
+    const archived = this.originalArchiveCertificates;
+    // The signed start carries forward revoked IDs. A renewed archive may still
+    // contain their private keys for historical reads even after its active
+    // registry drops the certificates. Restore only signed original proofs.
+    const missingKeys =
+      restoreArchivedKeys && (!archived || !equal(archived.transition, transition))
+        ? first.checkpoint.revokedKeyIds.filter((id: string) => !first.certificates.has(id))
+        : [];
+    const initial: PrivateRegistryHead | null = pin
+      ? {
+          registryEpoch: 1,
+          registrySequence: pin.registrySequence,
+          checkpointDigest: pin.checkpointDigest,
+          keyEpoch: pin.keyEpoch,
+        }
+      : null;
     const completed = this.originalRegistryBridge;
     if (
-      equal(head, target) ||
-      (completed &&
-        completed.expiresAt > this.now() &&
-        equal(completed.pin, pin) &&
-        equal(completed.target, target) &&
-        equal(completed.head, target))
-    )
-      return null;
-    if (
-      !Number.isSafeInteger(head.registrySequence) ||
-      head.registrySequence < 1 ||
       target.registrySequence > 32 ||
-      head.registrySequence >= target.registrySequence ||
-      head.keyEpoch > target.keyEpoch
+      (initial &&
+        (!Number.isSafeInteger(initial.registrySequence) ||
+          initial.registrySequence < 1 ||
+          initial.registrySequence > target.registrySequence ||
+          initial.keyEpoch > target.keyEpoch ||
+          (initial.registrySequence === target.registrySequence && !equal(initial, target))))
     )
       throw new VaultError("registry_conflict");
-    const bridge = {
+    if (
+      !missingKeys.length &&
+      (!initial ||
+        equal(initial, target) ||
+        (completed &&
+          completed.expiresAt > this.now() &&
+          equal(completed.pin, pin) &&
+          equal(completed.target, target) &&
+          equal(completed.head, target)))
+    )
+      return null;
+    const head = missingKeys.length ? null : initial;
+    const bridge: OriginalRegistryBridge = {
       id: randomId(),
+      scope,
       pin,
       target,
       head,
-      heads: [head],
+      heads: head ? [head] : [],
+      archiveProof: missingKeys.length
+        ? { transition, missingKeys: new Set(missingKeys), certificates: new Map() }
+        : undefined,
       verify,
       expiresAt: this.now() + 60,
     };
@@ -3704,9 +3733,9 @@ export class VaultCore {
     if (
       value.contractVersion !== CONTRACT ||
       value.profile !== OWNER_REGISTRY_PAGE_PROFILE ||
-      value.ownerSubject !== bridge.pin.ownerSubject ||
-      value.vaultId !== bridge.pin.vaultId ||
-      value.rootKeyId !== bridge.pin.rootKeyId ||
+      value.ownerSubject !== bridge.scope.ownerSubject ||
+      value.vaultId !== bridge.scope.vaultId ||
+      value.rootKeyId !== bridge.scope.rootKeyId ||
       !equal(value.base, bridge.head) ||
       !equal(value.target, bridge.target) ||
       !Array.isArray(value.bundles) ||
@@ -3718,27 +3747,48 @@ export class VaultCore {
     for (const bundle of value.bundles) {
       const verified = await bridge.verify(
         bundle,
-        bridge.pin.ownerSubject,
-        bridge.pin.vaultId,
+        bridge.scope.ownerSubject,
+        bridge.scope.vaultId,
         bridge.verified,
         this.now(),
       );
       const next = privateRegistryHead(verified);
       if (
-        verified.checkpoint.previousDigest !== bridge.head.checkpointDigest ||
-        next.registrySequence !== bridge.head.registrySequence + 1 ||
+        verified.checkpoint.previousDigest !== (bridge.head?.checkpointDigest ?? null) ||
+        next.registrySequence !== (bridge.head?.registrySequence ?? 0) + 1 ||
         next.registrySequence > bridge.target.registrySequence ||
-        next.keyEpoch < bridge.head.keyEpoch ||
+        next.keyEpoch < (bridge.head?.keyEpoch ?? 1) ||
         next.keyEpoch > bridge.target.keyEpoch
       )
         throw new VaultError("registry_conflict");
       bridge.head = next;
       bridge.heads.push(next);
       bridge.verified = verified;
+      if (bridge.archiveProof) {
+        const { missingKeys, certificates } = bridge.archiveProof;
+        for (const id of missingKeys) {
+          const certificate = verified.certificates.get(id);
+          if (certificate?.connectionId === null) certificates.set(id, certificate);
+        }
+      }
     }
     if (bridge.expiresAt <= this.now()) throw new VaultError("untrusted_vault");
-    if (bridge.head.registrySequence === bridge.target.registrySequence) {
+    if (bridge.head?.registrySequence === bridge.target.registrySequence) {
       if (!equal(bridge.head, bridge.target)) throw new VaultError("registry_conflict");
+      if (bridge.pin) {
+        const verifiedPin = bridge.heads.find(
+          (head) => head.registrySequence === bridge.pin!.registrySequence,
+        );
+        if (
+          verifiedPin?.checkpointDigest !== bridge.pin.checkpointDigest ||
+          verifiedPin?.keyEpoch !== bridge.pin.keyEpoch
+        )
+          throw new VaultError("registry_conflict");
+      }
+      if (bridge.archiveProof) {
+        const { transition, certificates } = bridge.archiveProof;
+        this.originalArchiveCertificates = { transition, certificates };
+      }
       this.originalRegistryBridge = bridge;
       return null;
     }
@@ -4556,141 +4606,6 @@ export class VaultCore {
       throw new VaultError("device_change_pending");
     this.deviceChange = undefined;
     return { operationId };
-  }
-  async reviewUserRegistryTransition(
-    state: VaultLifecycleState,
-  ): Promise<RegistryTransitionReview> {
-    this.requireOrdinarySession();
-    this.userRegistryReview = undefined;
-    const vault = this.vault,
-      registry = this.registry,
-      root = this.root,
-      device = this.device;
-    if (!vault?.archive || !registry || !root || !device) throw new VaultError("locked");
-    const pendingBundle = this.pendingDevice?.operation.registryBundle;
-    if (
-      this.archiveChange ||
-      this.deviceChange ||
-      (pendingBundle && !vault.registryHistory.some((bundle) => equal(bundle, pendingBundle)))
-    )
-      throw new VaultError("pending_registration");
-    if (state?.pendingAuthorization !== null) throw new VaultError("untrusted_lifecycle");
-    const lifecycle = await this.verifyLifecycle(vault, state, this.lifecyclePin);
-    const now = this.now();
-    cert(registry, device.sigId, "device_sig", now);
-    cert(registry, device.encId, "device_enc", now);
-    const ownerRoles = new Set(["device_sig", "device_enc", "recovery_enc"]);
-    const roles = new Set<string>();
-    const entries: RegistryBundle["entries"] = [];
-    const ownerKeyIds: string[] = [];
-    for (const entry of registry.bundle.entries) {
-      const { keyId } = parsed(unb64(entry.certificate.payload));
-      const key = registry.certificates.get(keyId);
-      if (
-        !key ||
-        !ownerRoles.has(key.role) ||
-        !registry.active.has(keyId) ||
-        now < key.notBefore ||
-        now >= key.expiresAt ||
-        key.keyEpoch !==
-          registry.localEpochs.get([key.principalId, key.role, key.connectionId].join("/"))
-      )
-        continue;
-      entries.push(entry);
-      ownerKeyIds.push(keyId);
-      roles.add(key.role);
-    }
-    if (ownerKeyIds.length > 32 || roles.size !== ownerRoles.size)
-      throw new VaultError("key_revoked");
-    const review = {
-      operationId: randomId(),
-      vaultId: vault.vaultId,
-      rootKeyId: vault.rootKeyId,
-      previousHead: privateRegistryHead(registry),
-      archiveVersion: lifecycle.lifecycleVersion + 1,
-      ownerKeyIds: ownerKeyIds.sort(),
-      expiresAt: now + 60,
-    };
-    this.userRegistryReview = { review, vault, registry, lifecycle, entries };
-    return structuredClone(review);
-  }
-  async signUserRegistryTransition(
-    review: RegistryTransitionReview,
-    material: PasskeyMaterial,
-  ): Promise<RegistryTransitionPacket> {
-    try {
-      this.requireOrdinarySession();
-      const pending = this.userRegistryReview;
-      const root = this.root;
-      if (!pending || !root || !equal(review, pending.review))
-        throw new VaultError("untrusted_vault");
-      this.userRegistryReview = undefined;
-      const { vault, registry, lifecycle, entries } = pending;
-      if (
-        this.vault !== vault ||
-        this.registry !== registry ||
-        this.lifecyclePin !== lifecycle ||
-        this.pin?.checkpointDigest !== registry.digest ||
-        this.now() >= review.expiresAt
-      )
-        throw new VaultError("untrusted_vault");
-      const archive = requireArchive(vault.archive);
-      if (material.credentialId !== archive.credentialId || material.prfSalt !== archive.prfSalt)
-        throw new VaultError("unlock_failed");
-      const master = await open(await aesMaterial(material), archive);
-      if (
-        master.ownerSubject !== (await this.owner) ||
-        master.vaultId !== vault.vaultId ||
-        master.rootKeyId !== vault.rootKeyId ||
-        (await thumb(master.rootPrivateJwk)) !== vault.rootKeyId
-      )
-        throw new VaultError("untrusted_vault");
-      const firstBundle = await this.bundle(entries, registry);
-      const candidate = await verifyRegistry(
-        firstBundle,
-        vault.rootJwk,
-        await this.owner,
-        vault.vaultId,
-        undefined,
-        this.now(),
-      );
-      const issuedAt = candidate.checkpoint.issuedAt;
-      if (
-        this.now() >= review.expiresAt ||
-        !equal([...candidate.active].sort(), review.ownerKeyIds)
-      )
-        throw new VaultError("untrusted_vault");
-      for (const keyId of review.ownerKeyIds) cert(candidate, keyId, undefined, issuedAt);
-      const signedTransition = await sign(
-        {
-          contractVersion: CONTRACT,
-          profile: "folioview.owner-registry-transition.v1",
-          ownerSubject: await this.owner,
-          vaultId: vault.vaultId,
-          rootKeyId: vault.rootKeyId,
-          operationId: review.operationId,
-          previousVaultVersion: vault.version,
-          nextVaultVersion: vault.version + 1,
-          previousHead: review.previousHead,
-          nextHead: {
-            ...privateRegistryHead(candidate),
-            registryEpoch: review.previousHead.registryEpoch + 1,
-          },
-          ownerKeyIds: review.ownerKeyIds,
-          archive: {
-            state: "active",
-            version: review.archiveVersion,
-            digest: lifecycle.archiveDigest,
-          },
-          issuedAt,
-        },
-        root,
-        vault.rootKeyId,
-      );
-      return { operationId: review.operationId, signedTransition, firstBundle };
-    } finally {
-      if (material?.secret instanceof ArrayBuffer) new Uint8Array(material.secret).fill(0);
-    }
   }
   async beginUserRecovery(sourcesDigest: string): Promise<OwnerRecoveryRequest> {
     this.requireOrdinarySession();

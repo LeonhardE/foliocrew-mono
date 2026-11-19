@@ -328,12 +328,6 @@ export function createVaultKernel(
             case "discardDeviceChange":
               result = await core.discardDeviceChange(args.vault, args.record, args.operationId);
               break;
-            case "reviewUserRegistryTransition":
-              result = await core.reviewUserRegistryTransition(args.state);
-              break;
-            case "signUserRegistryTransition":
-              result = await core.signUserRegistryTransition(args.review, args.material);
-              break;
             case "beginUserRecovery":
               result = await core.beginUserRecovery(args.sourcesDigest);
               break;
@@ -348,7 +342,11 @@ export function createVaultKernel(
               result = await core.checkUserRegistryStart(args.nonce, args.value);
               break;
             case "beginOriginalRegistryBridge":
-              result = await core.beginOriginalRegistryBridge(args.vault, args.pin);
+              result = await core.beginOriginalRegistryBridge(
+                args.vault,
+                args.pin,
+                args.restoreArchivedKeys,
+              );
               break;
             case "checkOriginalRegistryBridgePage":
               result = await core.checkOriginalRegistryBridgePage(args.id, args.value);
