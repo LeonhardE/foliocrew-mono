@@ -5,6 +5,11 @@
 the package does not register routes, initialize credentials or contact a cloud
 service. Each consumer adopts the helpers in its own service PR.
 
+## Private resource authority
+
+[Private resource contracts](docs/private-resources.md) cover source permissions
+for report submission, Owner recovery, paginated registry history, and retention.
+
 ## HTTP processing evidence
 
 [Numeric request timing](docs/request-timing.md) describes the default diagnostic
