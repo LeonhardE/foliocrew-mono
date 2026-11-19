@@ -2,6 +2,7 @@ resource "google_firestore_field" "user_private_opaque" {
   for_each = var.user_data_database_enabled ? {
     recovery_view  = { collection = "user_private_recovery_heads", field = "view" }
     registry_entry = { collection = "user_private_registry_history", field = "entry" }
+    vault_baseline = { collection = "user_private_vault_baselines", field = "body" }
   } : {}
 
   project    = var.project_id
