@@ -17,7 +17,7 @@ from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.schema import validate_schema
 from folioview_shared.identity import owner_key
 
-from .store import StoreUnavailable, document_path
+from .store import StoreUnavailable, document_path, require_legacy_private_writer
 from .vaults import _archive, _current, _fingerprint, identifier
 
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
@@ -293,6 +293,7 @@ class VaultLifecycleService:
                 "history": [*([] if lifecycle is None else lifecycle["history"]), item],
             }
             response = _mutation_response(receipt)
+            require_legacy_private_writer(unit, owner)
             # Firestore reads are complete before either buffered write is flushed.
             if action in {"archive_replace", "archive_delete"}:
                 archive = body["archive"] if action == "archive_replace" else None

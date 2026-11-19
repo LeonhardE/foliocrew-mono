@@ -102,6 +102,21 @@ class FenceTests(unittest.TestCase):
             self.row(receipt_path(OWNER, "portfolio", value["mutationId"]))["ack"], ack
         )
 
+    def test_frozen_writer_returns_old_ack_without_advancing_source_epoch(self):
+        initial = mutation()
+        ack = self.invalidate(initial)
+        marker = document_path("hub_private_resource_writer_fences", OWNER)
+        self.store.transact(lambda unit: unit.put(marker, {"state": "frozen"}))
+
+        self.assertEqual(self.invalidate(initial), ack)
+        next_mutation = mutation(2)
+        self.fails("authorization_unavailable", lambda: self.invalidate(next_mutation))
+        self.assertEqual(self.row(fence_path(OWNER, REF))["sourceEpoch"], 2)
+        self.assertIsNone(self.row(receipt_path(OWNER, "portfolio", next_mutation["mutationId"])))
+
+        other = mutation(ownerSubject=OTHER_OWNER)
+        self.assertEqual(self.invalidate(other)["acknowledgedSourceEpoch"], 2)
+
     def test_mutation_id_binds_full_owner_namespace_reference_epochs_and_reason(self):
         self.invalidate(mutation())
         changes = [

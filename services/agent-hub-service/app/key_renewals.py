@@ -18,7 +18,7 @@ from folioview_shared.encrypted.jsonutil import canonical_json
 from folioview_shared.encrypted.schema import validate_schema
 from folioview_shared.identity import owner_key
 
-from .store import StoreUnavailable, document_path
+from .store import StoreUnavailable, document_path, require_legacy_private_writer
 from .vault_lifecycle import VaultLifecycleService, _digest, _history_state
 from .vaults import (
     MAX_HISTORY,
@@ -548,6 +548,7 @@ class VaultKeyRenewalService:
                 "archiveCommand": body["archiveCommand"],
                 "receipt": receipt,
             }
+            require_legacy_private_writer(unit, owner)
             unit.put(document_path("hub_vaults", owner), next_row)
             unit.put(document_path("hub_vault_lifecycle", owner, vault), next_lifecycle)
             unit.put(self._path(owner, operation), record)

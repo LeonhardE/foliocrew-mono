@@ -20,7 +20,7 @@ from folioview_shared.identity import owner_key
 
 from .fences import _state
 from .registry_reads import RegistryPrefixCache
-from .store import StoreUnavailable, document_path
+from .store import StoreUnavailable, document_path, require_legacy_private_writer
 
 MAX_SOURCES = 10
 MAX_HISTORY = 32
@@ -321,6 +321,7 @@ class VaultService:
             current = _verify_row(row, owner, now, unit=unit)
             _selection(current, now)
             result = _response(row, unit)
+            require_legacy_private_writer(unit, owner)
             unit.put(path, row)
             _record(unit, op_path, owner, "bootstrap", fingerprint)
             return result
@@ -370,6 +371,7 @@ class VaultService:
                 "registryHistory": [*row["registryHistory"], body["registryBundle"]],
             }
             result = _response(next_row, unit)
+            require_legacy_private_writer(unit, owner)
             unit.put(document_path("hub_vaults", owner), next_row)
             _record(unit, op_path, owner, "registry", fingerprint)
             return result
@@ -444,6 +446,7 @@ class VaultService:
                 "sources": [*row["sources"], selected],
             }
             projected = _source_projection(unit, owner, selected)
+            require_legacy_private_writer(unit, owner)
             unit.put(document_path("hub_vaults", owner), next_row)
             _record(unit, op_path, owner, "source", fingerprint)
             return {"contractVersion": CONTRACT_VERSION, "source": projected}

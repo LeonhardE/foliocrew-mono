@@ -17,7 +17,7 @@ from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import canonical_json, strict_json_loads
 from folioview_shared.encrypted.schema import validate_schema
 
-from .store import StoreUnavailable, document_path
+from .store import StoreUnavailable, document_path, require_legacy_private_writer
 
 MAX_FENCE_MUTATIONS = 128
 _OWNER = re.compile(r"[0-9a-f]{64}\Z")
@@ -249,6 +249,7 @@ class FenceService:
                 .isoformat()
                 .replace("+00:00", "Z"),
             }
+            require_legacy_private_writer(unit, owner)
             # Canonical field ordering keeps first/replayed HTTP bytes identical
             # across SQLite restarts and Firestore map decoding.
             ack = strict_json_loads(canonical_json(ack), max_bytes=8192)

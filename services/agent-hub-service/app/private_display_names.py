@@ -20,7 +20,7 @@ from folioview_shared.encrypted.schema import validate_schema
 from folioview_shared.identity import owner_key
 
 from .fences import _state, fence_path
-from .store import StoreUnavailable, document_path
+from .store import StoreUnavailable, document_path, require_legacy_private_writer
 from .vaults import MAX_SOURCES, _verify_row, identifier
 
 
@@ -240,6 +240,7 @@ class PrivateDisplayNameService:
                 now=now,
             )
             item = {"state": state, "command": signed}
+            require_legacy_private_writer(unit, owner)
             unit.put(path, item)
             unit.put(op_path, item)
             return self._response(item)
