@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import time
 from contextlib import closing, contextmanager
 from copy import deepcopy
 from functools import lru_cache
@@ -19,6 +20,7 @@ from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import strict_json_loads
 from folioview_shared.firestore import BoundedTransaction
 from folioview_shared.identity import owner_key
+from folioview_shared.instruments import iso_time
 
 from .channel_follows import ChannelFollowsUnavailable, checked_pair
 from .firestore_reads import read_documents
@@ -43,6 +45,32 @@ class ResourceUnavailable(Exception):
 
 class InitializationLimit(Exception):
     """The fixed per-owner/source receipt budget is exhausted; replay still works."""
+
+
+class ResourceBindingMissing(Exception):
+    """A requested reference does not match the current owner's list."""
+
+
+def read_list_catalogue(store: "UserResourceStore", owner_uid: str, kinds: tuple[str, ...]) -> dict:
+    """Read User list metadata in-process for an already authenticated account."""
+    return {
+        "items": list(store.read(owner_uid, kinds).values()),
+        "readAt": iso_time(time.time()),
+    }
+
+
+def read_list_bindings(
+    store: "UserResourceStore", owner_uid: str, refs: list[dict]
+) -> tuple[list[dict], str]:
+    """Resolve exact incarnations from one validated snapshot in caller order."""
+    kinds = tuple(item["kind"] for item in refs)
+    if len(set(kinds)) != len(kinds):
+        raise ResourceBindingMissing
+    snapshot = read_list_catalogue(store, owner_uid, kinds)
+    current = {item["kind"]: item for item in snapshot["items"]}
+    if any(current[ref["kind"]]["ref"] != ref for ref in refs):
+        raise ResourceBindingMissing
+    return [current[kind] for kind in kinds], snapshot["readAt"]
 
 
 def read_pair(kind, content, metadata):
