@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import Mock
 from urllib.parse import parse_qsl, urlsplit
 
 from fixtures import BOOT, OTHER_UID, UID, VaultFixture
@@ -19,9 +20,11 @@ from app.native_transport import (
 )
 from app.oauth import OAuthFailure, OAuthService
 from app.oauth_config import Client, digest
-from app.store import SQLiteHubStore, document_path
+from app.store import SQLiteHubStore, document_path, private_resource_writer_fence_path
+from app.user_vault_authority import CurrentUserVault, ScopedUserVaults
 from app.vaults import VaultService
 from folioview_shared.encrypted.errors import ContractError
+from folioview_shared.encrypted.private_resources import PrivateRegistryCursor
 
 BROWSER = "b" * 43
 
@@ -102,6 +105,65 @@ class NativeTransportTests(unittest.TestCase):
         ident = self.service.authorize(copy.deepcopy(self.authorize_params), BROWSER)
         result = self.service.approve(OTHER_UID, ident, BROWSER, unrelated.vault)
         self.assertEqual(self.exchange(dict(parse_qsl(urlsplit(result).query))["code"])[0], 200)
+
+    def test_transferred_link_refreshes_and_original_credentials_stay_retired(self):
+        old = self.connect()
+        original = self.service.authenticate(old["access_token"])
+        approved, previous_callback, old_code = self.authorize()
+        marker = private_resource_writer_fence_path(self.f.owner)
+        transferred = {
+            "ownerSubject": self.f.owner,
+            "vaultId": self.f.vault,
+            "state": "transferred",
+            "writerEpoch": 2,
+            "rootKeyId": self.f.root_id,
+            "transitionFingerprint": "a" * 64,
+        }
+        self.store.transact(lambda unit: unit.put(marker, transferred))
+        client = Mock()
+        client.read.return_value = CurrentUserVault(
+            {"ownerSubject": self.f.owner},
+            PrivateRegistryCursor(self.f.registry, 2),
+            transferred,
+            self.now + 8,
+        )
+        self.service.user_vaults = ScopedUserVaults(self.store, owner=self.f.owner, client=client)
+        self.assertEqual(
+            self.service.approve(UID, approved, BROWSER, self.f.vault), previous_callback
+        )
+        client.read.assert_not_called()
+        self.assertEqual(self.exchange(old_code)[0], 400)
+        with self.assertRaises(OAuthFailure):
+            self.service.authenticate(old["access_token"])
+
+        def refresh(token):
+            return self.service.protocol(
+                {
+                    "grant_type": "refresh_token",
+                    "client_id": CLIENT,
+                    "resource": self.service.config.resource,
+                    "refresh_token": token,
+                },
+                {},
+                "token",
+            )
+
+        self.assertEqual(refresh(old["refresh_token"])[0], 400)
+        issued = self.connect()
+        client.read.assert_called_once_with(UID, self.f.vault, transferred)
+        latest = self.service.authenticate(issued["access_token"])
+        self.assertNotEqual(latest.connection_id, original.connection_id)
+        status, rotated, _ = refresh(issued["refresh_token"])
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            self.service.authenticate(rotated["access_token"]).connection_id, latest.connection_id
+        )
+        self.store.transact(
+            lambda unit: unit.put(marker, {**transferred, "transitionFingerprint": "b" * 64})
+        )
+        self.assertEqual(refresh(rotated["refresh_token"])[0], 400)
+        with self.assertRaises(OAuthFailure):
+            self.service.authenticate(rotated["access_token"])
 
     def test_native_records_follow_the_issuing_resource_on_shared_storage(self):
         origin = "https://second-hub.example"
