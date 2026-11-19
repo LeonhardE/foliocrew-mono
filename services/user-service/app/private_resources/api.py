@@ -27,12 +27,14 @@ from ..resources import FirestoreUserResourceStore, get_resource_store
 from .recovery import RecoveryHeads, RecoveryRequest, current_recovery_evidence
 from .registry_pages import RegistryHistory, RegistryPageRequest
 from .report_sources import ReportSourceAuthority
+from .source_invalidations import SourceInvalidations
 
 router = APIRouter(
     prefix="/api/v3/private-resources/vaults", tags=["private-resources"], route_class=ResourceRoute
 )
 internal = APIRouter(tags=["private-resources"], route_class=ResourceRoute)
 REPORT_DECISION_PATH = "/internal/v2/private-resources/report-source-decisions"
+PORTFOLIO_FENCE_PATH = "/internal/v2/private-resources/source-fences"
 OWNER_PROXY_HEADER = "x-folioview-proxy-authorization"
 _USER_ORIGIN = re.compile(r"https://user-api-[0-9]{1,20}\.[a-z]+(?:-[a-z0-9]+)+[0-9]\.run\.app\Z")
 
@@ -51,19 +53,25 @@ def configured_owner_proxy(audience, encoded_callers):
 
 
 def require_owner_proxy(request: Request) -> None:
+    _require_private_workload(
+        request,
+        header=OWNER_PROXY_HEADER,
+        audience_env="USER_PRIVATE_OWNER_AUDIENCE",
+        caller_env="USER_PRIVATE_OWNER_WEB_CALLER",
+    )
+
+
+def _require_private_workload(request: Request, *, header, audience_env, caller_env) -> None:
     if request.url.query:
         raise ContractError("unsupported_query")
     require_v2(request)
-    credentials = request.headers.getlist(OWNER_PROXY_HEADER)
+    credentials = request.headers.getlist(header)
     if len(credentials) != 1:
         raise ContractError("invalid_token")
     scheme, _, token = credentials[0].partition(" ")
     if scheme.lower() != "bearer" or not token:
         raise ContractError("invalid_token")
-    verifier = configured_owner_proxy(
-        os.getenv("USER_PRIVATE_OWNER_AUDIENCE", ""),
-        os.getenv("USER_PRIVATE_OWNER_WEB_CALLER", ""),
-    )
+    verifier = configured_owner_proxy(os.getenv(audience_env, ""), os.getenv(caller_env, ""))
     try:
         verifier.verify(token)
     except InvalidIdentityToken:
@@ -72,6 +80,38 @@ def require_owner_proxy(request: Request) -> None:
         raise ContractError("insufficient_scope") from None
     except IdentityVerificationUnavailable:
         raise ContractError("authorization_unavailable") from None
+
+
+def portfolio_invalidation() -> SourceInvalidations:
+    if os.getenv("USER_PRIVATE_SOURCE_INVALIDATIONS") != "true":
+        raise ContractError("not_found")
+    store = get_resource_store()
+    if "K_SERVICE" in os.environ and (
+        not isinstance(store, FirestoreUserResourceStore) or store.client._database != "user-data"
+    ):
+        raise ContractError("authorization_unavailable")
+    return SourceInvalidations(store)
+
+
+@internal.post(PORTFOLIO_FENCE_PATH)
+async def invalidate_portfolio_source(
+    request: Request,
+    response: Response,
+    authority: Annotated[SourceInvalidations, Depends(portfolio_invalidation)],
+):
+    if request.headers.getlist("x-folioview-delegation"):
+        raise ContractError("insufficient_scope")
+    _require_private_workload(
+        request,
+        header="authorization",
+        audience_env="USER_SERVICE_AUDIENCE",
+        caller_env="USER_PRIVATE_PORTFOLIO_CALLER",
+    )
+    value = (await body(request, RootModel[dict[str, object]])).root
+    result = await run_in_threadpool(authority.invalidate, value)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-FolioView-Contract"] = CONTRACT_VERSION
+    return result
 
 
 def report_authority() -> ReportSourceAuthority:
