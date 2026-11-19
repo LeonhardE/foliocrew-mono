@@ -28,3 +28,24 @@ copying and while an older release can change authority outside this
 transaction boundary. The cutover must install the projection atomically with
 each recovered authority change or keep the route disabled. The original full
 recovery and legacy authority routes continue through the transition.
+
+## Original registry pages
+
+`POST /api/v3/private-resources/vaults/{vaultId}/registry-pages/read` serves
+original verified bundles for an authenticated Owner under the same activation
+boundary. Pin the exact current target from the Owner recovery evidence. A
+continuation supplies the exact verified base in that epoch. The initial v1
+epoch can start at genesis. An already verified signed start is required to
+continue in a later epoch.
+
+The server reads at most four index slots per page, including the supplied base,
+and caps the canonical response at 256 KiB. Reads verify the stored bundle scope
+with the pinned Root. Clients must still verify continuity from their own
+trusted base to the exact target before treating the result as current authority.
+A changed target returns a conflict and requires new evidence.
+
+The history collection stores the original bytes keyed by verified Owner, vault,
+epoch and sequence. An import stages immutable bundles before publishing the
+recovery head. An exact replay leaves the original bytes intact. The head issuer
+must verify that the complete required prefix has been staged before publishing
+its target. Exempt the opaque `entry` field from indexing on the destination.

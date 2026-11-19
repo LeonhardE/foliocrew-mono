@@ -13,6 +13,7 @@ from folioview_shared.encrypted.errors import ContractError
 from ..resource_api import ResourceRoute, body
 from ..resources import FirestoreUserResourceStore, get_resource_store
 from .recovery import RecoveryHeads, RecoveryRequest, current_recovery_evidence
+from .registry_pages import RegistryHistory, RegistryPageRequest
 
 router = APIRouter(
     prefix="/api/v3/private-resources/vaults", tags=["private-resources"], route_class=ResourceRoute
@@ -41,3 +42,14 @@ async def recovery_evidence(
     return await run_in_threadpool(
         current_recovery_evidence, store, user.uid, vault_id, value.model_dump(), int(time.time())
     )
+
+
+@router.post("/{vault_id}/registry-pages/read")
+async def registry_page(
+    vault_id: str,
+    request: Request,
+    user: Annotated[CurrentUser, Depends(require_google_user)],
+    store: Annotated[RecoveryHeads, Depends(owner_recovery_store)],
+):
+    value = await body(request, RegistryPageRequest)
+    return await run_in_threadpool(RegistryHistory(store).page, user.uid, vault_id, value)

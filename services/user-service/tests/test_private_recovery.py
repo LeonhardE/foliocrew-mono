@@ -39,7 +39,7 @@ PATH = f"/api/v3/private-resources/vaults/{VAULT}/recovery-evidence"
 ARCHIVE = {"state": "active", "version": 4, "digest": "a" * 64}
 
 
-def projection(now=1000):
+def registry_fixture(now=1000):
     root = jwk.JWK.generate(kty="EC", crv="P-256")
     root_jwk = root.export(private_key=False, as_dict=True)
     scope = {"contractVersion": CONTRACT_VERSION, "ownerSubject": OWNER, "vaultId": VAULT}
@@ -101,6 +101,11 @@ def projection(now=1000):
         vault_id=VAULT,
         now=now,
     )
+    return root, root_jwk, scope, registry, bundle, certificates
+
+
+def projection(now=1000):
+    _, _, scope, registry, _, certificates = registry_fixture(now)
     head = build_recovery_head(
         cursor=PrivateRegistryCursor(registry, 1),
         registry_start=None,
