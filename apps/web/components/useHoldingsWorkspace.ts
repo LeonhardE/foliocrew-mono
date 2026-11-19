@@ -1012,7 +1012,11 @@ export function useHoldingsWorkspace() {
   );
 
   const sync = useCallback(
-    async (source: Source, signal: AbortSignal, vault = stateRef.current.vault) => {
+    async (
+      source: Pick<Source, "resourceRef" | "sourceEpoch">,
+      signal: AbortSignal,
+      vault = stateRef.current.vault,
+    ) => {
       const user = vault?.userAuthority;
       const nonce = user ? crypto.randomUUID().replace(/-/g, "") : null;
       const floor = user?.registry.registryEpoch;
@@ -5406,6 +5410,8 @@ export function useHoldingsWorkspace() {
     openResult,
     signResultState,
     refreshVault,
+    advanceRegistry,
+    synchronizeHoldingAuthority: sync,
     verifyAgentRestoration,
     prepareRestoredConsent,
     prepareRestoredTask,
