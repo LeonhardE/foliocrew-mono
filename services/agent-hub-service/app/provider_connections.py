@@ -27,10 +27,10 @@ from folioview_shared.identity import owner_key
 
 from .agent_credentials import AgentCredentialService
 from .fences import fence_path
-from .native_transport import NativeConnectionOwnerService
+from .native_transport import USER_AUTHORITY_TRANSITION, NativeConnectionOwnerService
 from .oauth import MAX_CONNECTIONS
 from .persistent_agents import identity_path, linked_connection, snapshot, stored_identity
-from .store import StoreUnavailable, document_path
+from .store import StoreUnavailable, document_path, private_resource_writer_fence_path
 from .vaults import _current, _response, identifier
 
 SUMMARY_PROFILE = "folioview.provider-connection-summary.v1"
@@ -137,7 +137,7 @@ class _ReadSnapshot:
 
 
 class ProviderConnectionService(AgentCredentialService):
-    def inventory(self, unit, owner, vault, provider, current, *, batch=False):
+    def inventory(self, unit, owner, vault, provider, current, *, batch=False, transition=None):
         index = unit.get(document_path("hub_oauth_owners", owner))
         if index is None or index.get("ownerSubject") != owner:
             raise ContractError("not_found")
@@ -162,7 +162,13 @@ class ProviderConnectionService(AgentCredentialService):
                 or conn.get("connectionId") != connection
             ):
                 raise StoreUnavailable
-            if conn.get("provider") != provider:
+            if conn.get("provider") != provider or (
+                transition is not None
+                and (
+                    conn.get("status") != "active"
+                    or conn.get(USER_AUTHORITY_TRANSITION) != transition
+                )
+            ):
                 continue
             retain_current = last is not None and last["connectionId"] == connection
             if conn.get("status") != "active" and not retain_current:
@@ -220,9 +226,17 @@ class ProviderConnectionService(AgentCredentialService):
 
         return self.store.transact(read)
 
-    def _provider_state(self, unit, owner, vault, provider):
+    def _provider_state(self, unit, owner, vault, provider, *, transition=None):
         row = stored_slot(unit, owner, vault, provider)
-        records, blockers = self.inventory(unit, owner, vault, provider, row, batch=True)
+        records, blockers = self.inventory(
+            unit, owner, vault, provider, row, batch=True, transition=transition
+        )
+        if transition is not None and row is not None:
+            current = row["slot"]["currentCredential"]
+            if current is not None and not any(entry["reference"] == current for entry in records):
+                row = None
+            elif current is None:
+                row = {**row, "retainedSelections": []}
         return _provider_projection(row, records, blockers)
 
     def summary(self, uid, vault):
@@ -236,18 +250,41 @@ class ProviderConnectionService(AgentCredentialService):
         identifier(vault)
         owner = owner_key(uid)
         native = NativeConnectionOwnerService(self.store, clock=self.clock)
+        user_scope = self.user_vaults.read(uid, vault)
+        transition = (
+            None if user_scope is None else user_scope.writer_fence["transitionFingerprint"]
+        )
 
         def read(unit):
             unit = _ReadSnapshot(
                 unit,
                 [
-                    document_path("hub_vaults", owner),
                     document_path("hub_oauth_owners", owner),
                     slot_path(owner, "muse"),
                     slot_path(owner, "chatgpt"),
-                ],
+                ]
+                + ([document_path("hub_vaults", owner)] if user_scope is None else []),
             )
-            vault_row, _ = _current(unit, owner, self.now(), vault)
+            if user_scope is None:
+                if (
+                    owner == self.user_vaults.owner
+                    and unit.get(private_resource_writer_fence_path(owner)) is not None
+                ):
+                    raise ContractError("source_unavailable")
+                vault_row, _ = _current(unit, owner, self.now(), vault)
+            else:
+                user_scope.require_current(unit, self.now())
+                vault_row = None
+                if capabilities is not None:
+                    return {
+                        "contractVersion": CONTRACT_VERSION,
+                        "profile": DISPLAY_PROFILE,
+                        "vaultId": vault,
+                        "mode": "separate",
+                        "vaultResponse": None,
+                        "summary": None,
+                        "capabilities": capabilities,
+                    }
             index = native._owner(unit, uid)
             ids = index["connectionIds"]
             for connection in ids:
@@ -278,6 +315,11 @@ class ProviderConnectionService(AgentCredentialService):
                     or conn.get("status") not in {"active", "revoked"}
                 ):
                     raise StoreUnavailable
+                if transition is not None and (
+                    conn.get("status") != "active"
+                    or conn.get(USER_AUTHORITY_TRANSITION) != transition
+                ):
+                    continue
                 if conn.get("transportKind") == "persistent_runtime":
                     connections.append(native._view(conn))
                 slot = slots[conn["provider"]]
@@ -290,7 +332,7 @@ class ProviderConnectionService(AgentCredentialService):
             unit = _ReadSnapshot(unit, [identity_path(owner, vault, c) for c in candidates])
             providers = {
                 provider: (
-                    self._provider_state(unit, owner, vault, provider)
+                    self._provider_state(unit, owner, vault, provider, transition=transition)
                     if ids
                     else _provider_projection(None, [], [])
                 )

@@ -2,17 +2,24 @@
 
 import copy
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import test_provider_slot_store as providers
-from fixtures import OTHER_UID
+from fixtures import OTHER_UID, UID
 from google.auth.credentials import AnonymousCredentials
 from google.cloud import firestore
 from test_firestore_store import MemoryRpc
 
+from app.native_transport import USER_AUTHORITY_TRANSITION
 from app.persistent_agents import identity_path
 from app.provider_connections import slot_path
-from app.store import FirestoreHubStore, StoreUnavailable, document_path
+from app.store import (
+    FirestoreHubStore,
+    StoreUnavailable,
+    document_path,
+    private_resource_writer_fence_path,
+)
+from app.user_vault_authority import CurrentUserVault, ScopedUserVaults
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import strict_json_loads
 
@@ -65,6 +72,49 @@ class ProviderStateBatchTests(unittest.TestCase):
             path = document_path("hub_oauth_connections", self.owner, connection)
             self.rpc.documents[self.client.document(path)._document_path] = row
         return ids
+
+    def test_transferred_display_keeps_revoked_and_old_connection_details_out(self):
+        ids = self.populate(3, "chatgpt")
+        marker = {
+            "ownerSubject": self.owner,
+            "vaultId": self.vault,
+            "state": "transferred",
+            "writerEpoch": 2,
+            "transitionFingerprint": "d" * 64,
+        }
+        fence = private_resource_writer_fence_path(self.owner)
+        self.rpc.documents[self.client.document(fence)._document_path] = marker
+        reader = Mock()
+        service = self.fixture.service
+        reader.read.return_value = CurrentUserVault(
+            {"ownerSubject": self.owner}, None, marker, service.now() + 8
+        )
+        service.user_vaults = ScopedUserVaults(self.store, owner=self.owner, client=reader)
+        self.row(document_path("hub_oauth_connections", self.owner, self.first)).update(
+            status="revoked", transportKind="persistent_runtime"
+        )
+        for connection in ids[1:]:
+            self.row(document_path("hub_oauth_connections", self.owner, connection)).update(
+                transportKind="persistent_runtime"
+            )
+        with patch("app.provider_connections._current", side_effect=AssertionError("legacy vault")):
+            clean = service.summary(UID, self.vault)
+            self.assertEqual(clean["connections"], [])
+            self.assertEqual(clean["credentials"], [])
+            for provider in ("muse", "chatgpt"):
+                state = clean["providers"][provider]
+                self.assertIsNone(state["slot"])
+                self.assertEqual(state["retirementCandidates"], [])
+                self.assertEqual(state["legacyBlockers"], [])
+            self.assertIsNone(service.display(UID, self.vault, {})["vaultResponse"])
+
+            self.row(document_path("hub_oauth_connections", self.owner, self.first)).update(
+                status="active", **{USER_AUTHORITY_TRANSITION: marker["transitionFingerprint"]}
+            )
+            current = service.summary(UID, self.vault)
+            self.assertEqual([row["connectionId"] for row in current["connections"]], [self.first])
+            self.assertEqual(current["providers"]["muse"]["slot"], self.expected["slot"])
+            self.assertIsNone(current["providers"]["chatgpt"]["slot"])
 
     def test_one_two_thirty_two_connections_use_only_three_read_phases_and_same_result(self):
         for count in (1, 2, 32):
