@@ -416,15 +416,6 @@ test("named owner reads preserve Firebase and strip cookies, identity, delegatio
   for (const [route, body] of [
     ["/api/v2/vaults/current", VAULT],
     [
-      "/api/v2/agent-capabilities",
-      {
-        contractVersion: CONTRACT,
-        profile: "folioview.owner-agent-capabilities.v1",
-        ownerConnections: true,
-        museConnectionEnabled: false,
-      },
-    ],
-    [
       "/api/v2/tasks?limit=1&cursor=abc_DEF",
       { contractVersion: CONTRACT, items: [], nextCursor: null },
     ],
@@ -436,10 +427,6 @@ test("named owner reads preserve Firebase and strip cookies, identity, delegatio
         signedObject: SIGNED,
         keyProofs: { checkpoint: SIGNED, certificates: [SIGNED] },
       },
-    ],
-    [
-      "/api/v2/agent-connections",
-      { contractVersion: CONTRACT, items: [], authorizationAttempts: [] },
     ],
   ]) {
     const h = harness({
@@ -684,20 +671,6 @@ test("signed owner writes and the bare stage acknowledgement preserve original b
         status: "committed",
         objects: [DESCRIPTOR],
       },
-    ],
-    [
-      "/api/v2/agent-connections/connection_A/revoke",
-      "POST",
-      { contractVersion: CONTRACT },
-      {},
-      { contractVersion: CONTRACT, connection: {} },
-    ],
-    [
-      "/api/v2/agent-connections/connection_A/grants/grant_A/revoke",
-      "POST",
-      { contractVersion: CONTRACT },
-      {},
-      { contractVersion: CONTRACT, connection: {} },
     ],
   ]) {
     const raw = JSON.stringify(body, null, 2);
@@ -949,37 +922,6 @@ test("upstream errors cannot forge a safe pre-forward admission retry", async ()
   assert.equal(reply.headers.get("retry-after"), null);
   await error(reply, 503, "source_unavailable");
   assert.equal(h.hub().length, 1);
-});
-
-test("connection attempt count matches the existing bounded 64-attempt producer", async () => {
-  for (const count of [33, 64]) {
-    const h = harness({
-      upstream: () =>
-        response({
-          contractVersion: CONTRACT,
-          items: [],
-          authorizationAttempts: Array.from({ length: count }, (_, index) => ({
-            requestId: `request_${index}`,
-          })),
-        }),
-    });
-    assert.equal((await h.proxy(request("/api/v2/agent-connections"))).status, 200);
-  }
-  const h = harness({
-    upstream: () =>
-      response({
-        contractVersion: CONTRACT,
-        items: [],
-        authorizationAttempts: Array.from({ length: 65 }, (_, index) => ({
-          requestId: `request_${index}`,
-        })),
-      }),
-  });
-  await error(
-    await h.proxy(request("/api/v2/agent-connections")),
-    503,
-    "authorization_unavailable",
-  );
 });
 
 test("vault lifecycle uses only its named owner routes and preserves original operation bytes", async () => {
@@ -1250,38 +1192,18 @@ test("lifecycle responses are closed, bounded, bound to their route and never ac
   }
 });
 
-test("capabilities are read-only, closed and do not forward private fields or false rollout claims", async () => {
-  const base = {
-    contractVersion: CONTRACT,
-    profile: "folioview.owner-agent-capabilities.v1",
-    ownerConnections: true,
-    museConnectionEnabled: false,
-  };
-  for (const patch of [
-    { museConnectionEnabled: "true" },
-    { ownerConnections: false },
-    { profile: "other" },
-    { secret: "PRIVATE_CANARY" },
+test("retired legacy connection reads and revocations never reach the Hub", async () => {
+  const h = harness();
+  const revoke = { method: "POST", json: { contractVersion: CONTRACT } };
+  for (const [path, options] of [
+    ["/api/v2/agent-capabilities", {}],
+    ["/api/v2/agent-connections", {}],
+    ["/api/v2/agent-connections/connection_A/revoke", revoke],
+    ["/api/v2/agent-connections/connection_A/grants/grant_A/revoke", revoke],
   ]) {
-    const h = harness({ upstream: () => response({ ...base, ...patch }) });
-    const r = await h.proxy(request("/api/v2/agent-capabilities"));
-    await error(r, 503, "authorization_unavailable");
+    await error(await h.proxy(request(path, options)), 400, "malformed_request");
   }
-  for (const req of [
-    request("/api/v2/agent-capabilities", { method: "POST", json: { contractVersion: CONTRACT } }),
-    request("/api/v2/agent-capabilities?enabled=true"),
-  ]) {
-    const h = harness();
-    const r = await h.proxy(req);
-    assert.equal(r.status, 400);
-    assert.equal(h.calls.length, 0);
-  }
-  const h = harness({ upstream: () => response(base, 201) });
-  await error(
-    await h.proxy(request("/api/v2/agent-capabilities")),
-    503,
-    "authorization_unavailable",
-  );
+  assert.equal(h.calls.length, 0);
 });
 
 test("Root upload cancellation POST/GET keeps the exact profile and rejects selectors or mismatched receipts", async () => {

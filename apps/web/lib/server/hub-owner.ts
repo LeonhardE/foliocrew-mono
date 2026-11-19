@@ -225,20 +225,8 @@ function route(
     fail("insufficient_scope");
   if (center) rule = center;
   else if (persistent) rule = persistent;
-  else if (
-    get &&
-    [
-      "/api/v2/vaults/current",
-      "/api/v2/resources/catalogue",
-      "/api/v2/agent-connections",
-      "/api/v2/agent-capabilities",
-    ].includes(path)
-  )
-    rule = {
-      kind: "read",
-      max: 0,
-      responseStatus: path === "/api/v2/agent-capabilities" ? 200 : undefined,
-    };
+  else if (get && ["/api/v2/vaults/current", "/api/v2/resources/catalogue"].includes(path))
+    rule = { kind: "read", max: 0 };
   else if (get && path === "/api/v2/tasks")
     rule = { kind: "read", max: 0, query: { limit: "limit", cursor: "cursor" } };
   else if (
@@ -359,11 +347,6 @@ function route(
     rule = { kind: "task-update", max: 589824, operation: true, author: true };
   else if (request.method === "POST" && new RegExp(`^/api/v2/tasks/${ID}/transitions$`).test(path))
     rule = { kind: "task-transition", max: 589824, operation: true, author: true };
-  else if (
-    request.method === "POST" &&
-    new RegExp(`^/api/v2/agent-connections/${ID}/(?:revoke|grants/${ID}/revoke)$`).test(path)
-  )
-    rule = { kind: "small", max: 1024 };
   else if (
     request.method === "PUT" &&
     new RegExp(`^/api/v2/agent-connections/${ID}/tasks/${ID}/preparation/objects/${ID}$`).test(path)
