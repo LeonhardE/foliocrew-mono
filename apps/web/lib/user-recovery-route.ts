@@ -10,6 +10,7 @@ export const REGISTRY_UPDATE_PROFILE = "folioview.owner-registry-update.v1";
 export const HOLDINGS_REGISTRATION_PROFILE = "folioview.owner-holdings-registration.v1";
 export const OWNER_CURRENT_PROFILE = "folioview.owner-current-user-vault.v1";
 export const PRIVATE_DISPLAY_NAME_PROFILE = "folioview.private-display-name.v1";
+export const USER_KEY_RENEWAL_PROFILE = "folioview.owner-user-key-renewal.v1";
 export const USER_ARCHIVE_LIFECYCLE_PROFILE = "folioview.owner-user-archive-lifecycle.v1";
 export const OWNER_CURRENT_PATH = "/api/v3/private-resources/vaults/current/read";
 
@@ -32,6 +33,22 @@ const RULES = {
     keys: [...SCOPE, "operationId", "signedTransition", "firstBundle"],
   },
   "registry-start/read": { profile: REGISTRY_START_PROFILE, keys: [...SCOPE, "nonce"] },
+  "key-renewals/read": {
+    profile: USER_KEY_RENEWAL_PROFILE,
+    keys: [...SCOPE, "nonce", "operationId"],
+  },
+  "key-renewals/apply": {
+    profile: USER_KEY_RENEWAL_PROFILE,
+    keys: [
+      ...SCOPE,
+      "nonce",
+      "operationId",
+      "command",
+      "archiveCommand",
+      "archive",
+      "registryBundle",
+    ],
+  },
   "archive-lifecycle/read": {
     profile: USER_ARCHIVE_LIFECYCLE_PROFILE,
     keys: [...SCOPE, "nonce", "operationId"],
@@ -55,7 +72,7 @@ const RULES = {
 } as const;
 
 const ROUTE =
-  /^\/api\/v3\/private-resources\/vaults\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})\/(recovery-evidence|registry-pages\/read|handover\/check|handover|registry-start\/read|registry\/advance|display-names\/(?:read|write)|archive-lifecycle\/(?:read|advance))$/;
+  /^\/api\/v3\/private-resources\/vaults\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})\/(recovery-evidence|registry-pages\/read|handover\/check|handover|registry-start\/read|registry\/advance|display-names\/(?:read|write)|archive-lifecycle\/(?:read|advance)|key-renewals\/(?:read|apply))$/;
 const HOLDINGS_ROUTE =
   /^\/api\/v3\/private-resources\/vaults\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})\/holdings-sources\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})$/;
 
@@ -94,6 +111,8 @@ export function userRecoveryRoute(path: string) {
             ? 12_288 + 2_048
             : name === "archive-lifecycle/advance"
               ? 65_536
-              : USER_RECOVERY_MAX_REQUEST,
+              : name === "key-renewals/apply"
+                ? 131_072 + 65_536
+                : USER_RECOVERY_MAX_REQUEST,
   };
 }

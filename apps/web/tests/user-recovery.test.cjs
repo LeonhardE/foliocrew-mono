@@ -27,7 +27,21 @@ const ADVANCE = VAULT + "/registry/advance";
 const REGISTER = VAULT + "/holdings-sources/holdings_A";
 const CURRENT = routes.OWNER_CURRENT_PATH;
 const ALIASES = VAULT + "/display-names/read";
-const PATHS = [EVIDENCE, PAGE, CHECK, HANDOVER, START, ADVANCE, REGISTER, CURRENT, ALIASES];
+const RENEWAL = VAULT + "/key-renewals/apply";
+const RENEWAL_RECEIPT = VAULT + "/key-renewals/read";
+const PATHS = [
+  EVIDENCE,
+  PAGE,
+  CHECK,
+  HANDOVER,
+  START,
+  ADVANCE,
+  REGISTER,
+  CURRENT,
+  ALIASES,
+  RENEWAL,
+  RENEWAL_RECEIPT,
+];
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const OWNER = digest("owner_A");
 const HEAD = {
@@ -410,6 +424,74 @@ test("the alias proxy respects the selected Owner and rejects foreign ciphertext
       }),
   });
   assert.equal((await wrong.proxy(request(ALIASES, payload))).status, 503);
+});
+
+test("the selected User renewal matches both signed controls and the receipt operation", async () => {
+  const rootKeyId = "r".repeat(43);
+  const scope = {
+    ...SCOPE,
+    profile: routes.USER_KEY_RENEWAL_PROFILE,
+    operationId: "synthetic_owner_key_renewal",
+    nonce: "x".repeat(32),
+  };
+  const archiveCommand = { ...PROOF, payload: "eQY" };
+  const packet = {
+    ...scope,
+    registryBundle: BUNDLE,
+    command: PROOF,
+    archiveCommand,
+    archive: {
+      profile: "folioview.passkey-vault.v1",
+      ownerSubject: OWNER,
+      vaultId: scope.vaultId,
+      rootKeyId,
+      credentialId: "ZQ",
+      prfSalt: "p".repeat(43),
+      iv: "i".repeat(16),
+      ciphertext: "y".repeat(30),
+    },
+  };
+  const result = {
+    ...scope,
+    result: {
+      contractVersion: CONTRACT,
+      profile: "folioview.vault-key-renewal.v1",
+      receipt: {
+        profile: "folioview.vault-key-renewal.v1",
+        ownerSubject: OWNER,
+        vaultId: scope.vaultId,
+        operationId: scope.operationId,
+        rootKeyId,
+        commandFingerprint: digest(PROOF.protected + "." + PROOF.payload),
+        archiveCommandFingerprint: digest(archiveCommand.protected + "." + archiveCommand.payload),
+      },
+    },
+  };
+  const env = { ...ENV, FOLIOVIEW_USER_CURRENT_OWNER: OWNER };
+  const reply = (value) => Response.json(value, { headers: { "X-FolioView-Contract": CONTRACT } });
+  const normal = fixture({ env, reply: () => reply(result) });
+  const written = await normal.proxy(request(RENEWAL, packet));
+  assert.equal(written.status, 200);
+  assert.equal(written.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await written.json(), result);
+  assert.equal((await normal.proxy(request(RENEWAL_RECEIPT, scope))).status, 200);
+  assert.equal(
+    (await normal.proxy(request(RENEWAL, { ...packet, archiveCommand: PROOF }))).status,
+    503,
+  );
+  assert.equal(
+    (
+      await normal.proxy(
+        request(RENEWAL, {
+          ...packet,
+          archive: { ...packet.archive, ownerSubject: "f".repeat(64) },
+        }),
+      )
+    ).status,
+    400,
+  );
+  const wrong = fixture({ env, reply: () => reply({ ...result, nonce: "y".repeat(32) }) });
+  assert.equal((await wrong.proxy(request(RENEWAL_RECEIPT, scope))).status, 503);
 });
 
 test("selected Owner startup binds the User reply to the fresh nonce and fails closed", async () => {

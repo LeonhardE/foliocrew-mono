@@ -44,6 +44,7 @@ import {
   OWNER_CURRENT_PROFILE,
   REGISTRY_UPDATE_PROFILE,
   USER_ARCHIVE_LIFECYCLE_PROFILE,
+  USER_KEY_RENEWAL_PROFILE,
 } from "@/lib/user-recovery-route";
 import {
   createVaultPasskey,
@@ -947,7 +948,10 @@ export function useHoldingsWorkspace() {
       if (!vault.userAuthority) {
         await api("agent-hub", legacyPath, signal, {
           method: archive === null ? "POST" : "PUT",
-          json: { contractVersion: CONTRACT, command, ...(archive === null ? {} : { archive }) },
+          json:
+            archive === null
+              ? { contractVersion: CONTRACT, command }
+              : { contractVersion: CONTRACT, archive, command },
           headers: { "Idempotency-Key": operationId },
         });
         return;
@@ -4568,6 +4572,68 @@ export function useHoldingsWorkspace() {
     [owner, terminate],
   );
 
+  const writeOrReadKeyRenewal = useCallback(
+    async (
+      vault: Vault,
+      operationId: string,
+      signal: AbortSignal,
+      options: { allowMissing?: boolean; renewal?: KeyRenewalPacket["body"] } = {},
+    ) => {
+      if (!vault.userAuthority) {
+        if (!options.renewal)
+          return api(
+            "agent-hub",
+            `/api/v2/vaults/${vault.vaultId}/key-renewal-operations/${operationId}`,
+            signal,
+            {
+              allowMissing: options.allowMissing,
+            },
+          );
+        return api("agent-hub", `/api/v2/vaults/${vault.vaultId}/key-renewals`, signal, {
+          method: "POST",
+          json: options.renewal,
+          headers: { "Idempotency-Key": operationId },
+        });
+      }
+      if (!vault.archive) throw new WorkspaceError("invalid_response");
+      const ownerSubject = vault.archive.ownerSubject,
+        nonce = crypto.randomUUID().replace(/-/g, "");
+      const path = options.renewal ? "apply" : "read";
+      const value = await api(
+        "user",
+        `/api/v3/private-resources/vaults/${vault.vaultId}/key-renewals/${path}`,
+        signal,
+        {
+          method: "POST",
+          allowMissing: options.allowMissing,
+          json: {
+            ...options.renewal,
+            contractVersion: CONTRACT,
+            profile: USER_KEY_RENEWAL_PROFILE,
+            ownerSubject,
+            vaultId: vault.vaultId,
+            nonce,
+            operationId,
+          },
+        },
+      );
+      if (value === null && options.allowMissing) return null;
+      if (
+        !record(value) ||
+        value.contractVersion !== CONTRACT ||
+        value.profile !== USER_KEY_RENEWAL_PROFILE ||
+        value.ownerSubject !== ownerSubject ||
+        value.vaultId !== vault.vaultId ||
+        value.nonce !== nonce ||
+        value.operationId !== operationId ||
+        !record(value.result)
+      )
+        throw new WorkspaceError("invalid_response");
+      return value.result;
+    },
+    [api],
+  );
+
   const completeKeyRenewal = useCallback(
     async (
       instance: EncryptedVaultSession,
@@ -4578,27 +4644,16 @@ export function useHoldingsWorkspace() {
       signal: AbortSignal,
       assertActive: () => void,
     ) => {
-      let receipt = await api(
-        "agent-hub",
-        `/api/v2/vaults/${vault.vaultId}/key-renewal-operations/${packet.operationId}`,
-        signal,
-        { allowMissing: true },
-      );
+      let receipt = await writeOrReadKeyRenewal(vault, packet.operationId, signal, {
+        allowMissing: true,
+      });
       assertActive();
       if (receipt === null) {
         if (!submit) return false;
         if (pendingState !== "ready") throw new WorkspaceError("key_renewal_conflict");
-        await api("agent-hub", `/api/v2/vaults/${vault.vaultId}/key-renewals`, signal, {
-          method: "POST",
-          json: packet.body,
-          headers: { "Idempotency-Key": packet.operationId },
-        });
+        await writeOrReadKeyRenewal(vault, packet.operationId, signal, { renewal: packet.body });
         assertActive();
-        receipt = await api(
-          "agent-hub",
-          `/api/v2/vaults/${vault.vaultId}/key-renewal-operations/${packet.operationId}`,
-          signal,
-        );
+        receipt = await writeOrReadKeyRenewal(vault, packet.operationId, signal);
         assertActive();
       }
       const saved = await readRenewalContext(signal, assertActive);
@@ -4613,7 +4668,7 @@ export function useHoldingsWorkspace() {
       lockRenewalView(saved, "key_renewal_saved");
       return true;
     },
-    [api, lockRenewalView, readRenewalContext],
+    [lockRenewalView, readRenewalContext, writeOrReadKeyRenewal],
   );
 
   const renewalGeneration = vaultGeneration.current;
@@ -5328,11 +5383,14 @@ export function useHoldingsWorkspace() {
         setState((previous) => ({ ...previous, keyRenewalCancellation: true }));
         let failure: unknown;
         try {
-          await api("agent-hub", `/api/v2/vaults/${fresh.vault.vaultId}/archive`, signal, {
-            method: "PUT",
-            json: cancellation.body,
-            headers: { "Idempotency-Key": cancellation.operationId },
-          });
+          await writeArchiveLifecycle(
+            fresh.vault,
+            `/api/v2/vaults/${fresh.vault.vaultId}/archive`,
+            cancellation.operationId,
+            cancellation.body.command,
+            cancellation.body.archive,
+            signal,
+          );
         } catch (error) {
           failure = error;
         }
@@ -5370,13 +5428,13 @@ export function useHoldingsWorkspace() {
         throw failure ?? new WorkspaceError("key_renewal_cancel_pending");
       }),
     [
-      api,
       assertRenewal,
       clearKeyRenewal,
       completeKeyRenewal,
       perform,
       readRenewalContext,
       reviewedRenewal,
+      writeArchiveLifecycle,
     ],
   );
 
