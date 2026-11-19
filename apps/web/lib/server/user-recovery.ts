@@ -13,6 +13,7 @@ import {
   REGISTRY_START_PROFILE,
   REGISTRY_UPDATE_PROFILE,
   USER_ARCHIVE_LIFECYCLE_PROFILE,
+  USER_KEY_RENEWAL_PROFILE,
   USER_RECOVERY_PROXY,
   userRecoveryRoute,
 } from "../user-recovery-route";
@@ -101,6 +102,18 @@ function validRequest(
     );
   if (rule.profile === REGISTRY_START_PROFILE) return matches(value.nonce, NONCE);
   if (rule.profile === OWNER_CURRENT_PROFILE) return matches(value.nonce, NONCE);
+  if (rule.profile === USER_KEY_RENEWAL_PROFILE) {
+    if (!matches(value.nonce, NONCE)) return false;
+    if (rule.keys.includes("command"))
+      return (
+        matches(value.operationId, NONCE) &&
+        signedObject(value.command) &&
+        signedObject(value.archiveCommand) &&
+        registryBundle(value.registryBundle) &&
+        archiveEnvelope(value.archive, value.ownerSubject, value.vaultId)
+      );
+    return value.operationId === null || matches(value.operationId, NONCE);
+  }
   if (rule.profile === USER_ARCHIVE_LIFECYCLE_PROFILE) {
     if (!matches(value.nonce, NONCE)) return false;
     if (rule.keys.includes("command"))
@@ -338,7 +351,61 @@ function validArchiveLifecycle(state: unknown, original: unknown, scope: Json): 
   );
 }
 
+function renewalReply(body: unknown, input: Json) {
+  if (
+    !fields(body, [
+      "contractVersion",
+      "profile",
+      "ownerSubject",
+      "vaultId",
+      "nonce",
+      "operationId",
+      "result",
+    ]) ||
+    body.contractVersion !== CONTRACT ||
+    body.profile !== input.profile ||
+    body.ownerSubject !== input.ownerSubject ||
+    body.vaultId !== input.vaultId ||
+    body.nonce !== input.nonce ||
+    body.operationId !== input.operationId ||
+    !record(body.result) ||
+    body.result.contractVersion !== CONTRACT ||
+    body.result.profile !== "folioview.vault-key-renewal.v1"
+  )
+    return false;
+  if (input.operationId === null)
+    return (
+      body.result.vaultId === input.vaultId &&
+      matches(body.result.rootKeyId, KEY) &&
+      Array.isArray(body.result.certificates)
+    );
+
+  if (
+    !fields(body.result, ["contractVersion", "profile", "receipt"]) ||
+    !record(body.result.receipt)
+  )
+    return false;
+  const receipt = body.result.receipt;
+  return (
+    receipt.profile === body.result.profile &&
+    receipt.ownerSubject === input.ownerSubject &&
+    receipt.vaultId === input.vaultId &&
+    receipt.operationId === input.operationId &&
+    matches(receipt.rootKeyId, KEY) &&
+    matches(receipt.commandFingerprint, DIGEST) &&
+    matches(receipt.archiveCommandFingerprint, DIGEST) &&
+    (!record(input.command) ||
+      receipt.commandFingerprint ===
+        digest(input.command.protected + "." + input.command.payload)) &&
+    (!record(input.archiveCommand) ||
+      receipt.archiveCommandFingerprint ===
+        digest(input.archiveCommand.protected + "." + input.archiveCommand.payload))
+  );
+}
+
 function validReply(body: unknown, input: Json, expectedDigest: string) {
+  if (input.profile === USER_KEY_RENEWAL_PROFILE) return renewalReply(body, input);
+
   if (input.profile === OWNER_CURRENT_PROFILE) {
     if (
       !fields(body, ["contractVersion", "profile", "ownerSubject", "nonce", "vault", "proof"]) ||
@@ -547,7 +614,8 @@ export function createUserRecoveryProxy(options: Options = {}) {
       if (
         rule.profile === OWNER_CURRENT_PROFILE ||
         rule.profile === PRIVATE_DISPLAY_NAME_PROFILE ||
-        rule.profile === USER_ARCHIVE_LIFECYCLE_PROFILE
+        rule.profile === USER_ARCHIVE_LIFECYCLE_PROFILE ||
+        rule.profile === USER_KEY_RENEWAL_PROFILE
       ) {
         const selected = env.FOLIOVIEW_USER_CURRENT_OWNER;
         if (!selected) fail("not_found");
