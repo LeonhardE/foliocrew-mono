@@ -374,9 +374,9 @@ Unknown/deleted cached IDs do not trigger extra lookups or grant any right.
 The response has exactly `{contractVersion,profile,vaultId,tasks,capabilities,feeds,connections,packets}`,
 with `profile:"folioview.owner-task-overview.v1"`. `tasks` is the original task metadata page
 with limit32, matching the existing Web request and32-task capacity, so its cursor is null.
-`capabilities` is the unchanged task-center policy DTO. `feeds` contains exactly `persistent`,
-`foreground` and `archived`: original pages of20 with their independent original cursors.
-More reads use the existing separate endpoints. `connections` retains the original Owner
+`capabilities` is the task-center policy DTO. `feeds` contains one `persistent`
+page of up to 20 reports with its original cursor. More reads use the dedicated
+persistent results endpoint. `connections` retains the original Owner
 native inventory DTO, including historical revoked connections and other-vault metadata;
 consumers still filter by the selected vault and retain original Actor/provider attribution.
 
@@ -391,18 +391,15 @@ never a budget-null hint. No private name/report plaintext is returned.
 
 The producer verifies one fresh current Root and uses bounded full-row prefetches in the same
 transaction: known indexes/lifecycle/cursors; dependent heads/page/connections; selected
-report rows/task versions. Small ordinary snapshots need three database read phases; indexed
-foreground heads retain the existing1024-item cap and batches of128, with an additional8MiB
-encoded read-admission bound. SQLite consumes the same prefetched snapshot. No producer HTTP
-requests occur. Existing row validators and current lifecycle checks remain in force.
+report rows/task versions. Small ordinary snapshots use three database read
+phases, with batches of up to 128 and an 8 MiB read-admission bound. SQLite
+consumes the same prefetched snapshot. Producer HTTP requests stay at zero.
+Existing row validators and current lifecycle checks remain in force.
 
-Foreground and archived cursors are calculated independently against one accumulated cursor
-map and committed once; new tokens returned in this response are protected while the second
-query is calculated. Original query/snapshot/limit/expiry/capacity rules remain; insufficient
-capacity fails instead of returning an unusable cursor. The read can issue/prune the existing
-bounded cursor metadata, but creates no task, identity, grant or execution. Default-off
-capabilities do not hide saved Owner history. The producer must reach Ready before a separate
-Web consumer adopts it; none of these counts alone establishes production navigation latency.
+`POST /api/v3/task-center/{vault}/tasks/{task}/results/query` follows the current
+assignment index and the enrollment snapshot for older persistent results.
+Existing cursor scopes remain enforced. An older foreground cursor that
+belongs to this task reaches an empty terminal page without any inbox access.
 
 Create has exactly `contractVersion`, `taskId`, `expectedVersion`, `resourceBindings`, `envelope`.
 Update omits the body `taskId`; transition adds `transitionIntent`. `envelope` is the existing shared
