@@ -2,11 +2,13 @@ import "server-only";
 
 import canonicalize from "canonicalize";
 import { createHash } from "node:crypto";
+import { displayNameResponse } from "../display-name-contract";
 import {
   HANDOVER_CHECK_PROFILE,
   HANDOVER_PROFILE,
   HOLDINGS_REGISTRATION_PROFILE,
   OWNER_CURRENT_PROFILE,
+  PRIVATE_DISPLAY_NAME_PROFILE,
   RECOVERY_PROFILE,
   REGISTRY_START_PROFILE,
   REGISTRY_UPDATE_PROFILE,
@@ -104,6 +106,18 @@ function validRequest(
       integer(value.expectedVaultVersion, 1) &&
       registryBundle(value.registryBundle)
     );
+  if (rule.profile === PRIVATE_DISPLAY_NAME_PROFILE) {
+    if (rule.keys.includes("command"))
+      return (
+        matches(value.sourceId, ID) &&
+        matches(value.operationId, NONCE) &&
+        signedObject(value.command)
+      );
+    return value.sourceId === null
+      ? value.operationId === null
+      : matches(value.sourceId, ID) &&
+          (value.operationId === null || matches(value.operationId, NONCE));
+  }
   if (rule.profile === HOLDINGS_REGISTRATION_PROFILE)
     return (
       value.sourceId === rule.source &&
@@ -380,6 +394,19 @@ function validReply(body: unknown, input: Json, expectedDigest: string) {
       Number(body.registry.registryEpoch) >= 2
     );
   }
+  if (input.profile === PRIVATE_DISPLAY_NAME_PROFILE) {
+    const path = `/api/v3/private-display-names/${input.vaultId}/holdings${input.sourceId ? "/" + input.sourceId : ""}`;
+    const operation = typeof input.operationId === "string" ? input.operationId : undefined;
+    if (!displayNameResponse(path, body, operation) || !record(body)) return false;
+    const items = input.sourceId === null ? body.items : body.item ? [body.item] : [];
+    return (
+      Array.isArray(items) &&
+      items.every(
+        (item) =>
+          record(item) && record(item.state) && item.state.ownerSubject === input.ownerSubject,
+      )
+    );
+  }
   if (!fieldsBelongToRequest(body, input)) return false;
   switch (input.profile) {
     case RECOVERY_PROFILE:
@@ -446,7 +473,7 @@ export function createUserRecoveryProxy(options: Options = {}) {
       if (!validRequest(input, rule)) return fail();
       const uid = await verifyOwner(authorization.slice(7), project, signal);
       if (input.ownerSubject !== digest(uid)) fail("not_found");
-      if (rule.profile === OWNER_CURRENT_PROFILE) {
+      if (rule.profile === OWNER_CURRENT_PROFILE || rule.profile === PRIVATE_DISPLAY_NAME_PROFILE) {
         const selected = env.FOLIOVIEW_USER_CURRENT_OWNER;
         if (!selected) fail("not_found");
         if (!matches(selected, DIGEST)) fail("authorization_unavailable");

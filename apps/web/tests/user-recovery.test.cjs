@@ -26,7 +26,8 @@ const START = VAULT + "/registry-start/read";
 const ADVANCE = VAULT + "/registry/advance";
 const REGISTER = VAULT + "/holdings-sources/holdings_A";
 const CURRENT = routes.OWNER_CURRENT_PATH;
-const PATHS = [EVIDENCE, PAGE, CHECK, HANDOVER, START, ADVANCE, REGISTER, CURRENT];
+const ALIASES = VAULT + "/display-names/read";
+const PATHS = [EVIDENCE, PAGE, CHECK, HANDOVER, START, ADVANCE, REGISTER, CURRENT, ALIASES];
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const OWNER = digest("owner_A");
 const HEAD = {
@@ -130,6 +131,13 @@ test.before(async () => {
     {
       "server-only": {},
       "./owner-transport": transport,
+      "../display-name-contract": compile(
+        "../lib/display-name-contract.ts",
+        {
+          "./task-types": compile("../lib/task-types.ts"),
+        },
+        globals,
+      ),
       canonicalize: (await import("canonicalize")).default,
     },
     globals,
@@ -348,6 +356,60 @@ test("User writes bind the original registry receipt and the generated holdings 
       ),
   });
   assert.equal((await other.proxy(request(REGISTER, REGISTER_BODY))).status, 503);
+});
+
+test("the alias proxy respects the selected Owner and rejects foreign ciphertext", async () => {
+  const payload = {
+    ...SCOPE,
+    profile: routes.PRIVATE_DISPLAY_NAME_PROFILE,
+    sourceId: null,
+    operationId: null,
+  };
+  const body = { contractVersion: CONTRACT, profile: payload.profile, items: [] };
+  const reply = (value) => Response.json(value, { headers: { "X-FolioView-Contract": CONTRACT } });
+  const normal = fixture({
+    env: { ...ENV, FOLIOVIEW_USER_CURRENT_OWNER: OWNER },
+    reply: () => reply(body),
+  });
+  assert.equal((await normal.proxy(request(ALIASES, payload))).status, 200);
+  assert.equal(
+    (await normal.proxy(request(ALIASES, { ...payload, operationId: "synthetic_alias_original" })))
+      .status,
+    400,
+  );
+  const denied = fixture({ reply: () => reply(body) });
+  assert.equal((await denied.proxy(request(ALIASES, payload))).status, 404);
+  const wrong = fixture({
+    env: { ...ENV, FOLIOVIEW_USER_CURRENT_OWNER: OWNER },
+    reply: () =>
+      reply({
+        ...body,
+        items: [
+          {
+            state: {
+              contractVersion: CONTRACT,
+              profile: payload.profile,
+              ownerSubject: "b".repeat(64),
+              vaultId: "vault_A",
+              rootKeyId: "r".repeat(43),
+              recipientKeyId: "k".repeat(43),
+              ref: {
+                kind: "holdings",
+                sourceService: "portfolio",
+                resourceId: "holdings_A",
+                incarnation: "instance_A",
+              },
+              revision: 1,
+              stableOperationId: "synthetic_alias_original",
+              operationFingerprint: "d".repeat(64),
+              acceptedAt: 1000,
+            },
+            command: PROOF,
+          },
+        ],
+      }),
+  });
+  assert.equal((await wrong.proxy(request(ALIASES, payload))).status, 503);
 });
 
 test("selected Owner startup binds the User reply to the fresh nonce and fails closed", async () => {
