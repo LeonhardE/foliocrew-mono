@@ -338,7 +338,14 @@ export function createVaultKernel(
               result = await core.beginUserRecovery(args.sourcesDigest);
               break;
             case "checkUserRecoveryEvidence":
-              result = await core.checkUserRecoveryEvidence(args.nonce, args.value);
+              result = await core.checkUserRecoveryEvidence(
+                args.nonce,
+                args.value,
+                args.supportsTransition,
+              );
+              break;
+            case "checkUserRegistryStart":
+              result = await core.checkUserRegistryStart(args.nonce, args.value);
               break;
             case "checkUserRegistryPage":
               result = await core.checkUserRegistryPage(args.nonce, args.value);

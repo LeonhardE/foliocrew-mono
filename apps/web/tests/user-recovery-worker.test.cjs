@@ -312,3 +312,65 @@ print(json.dumps(next_start.head()))
     assert.deepEqual(JSON.parse(checked.stdout), transition.nextHead);
   });
 });
+
+test("Worker verifies the fresh User epoch against the original pinned Root, archive and nonce", async () => {
+  await browser.withDatabase(async (db) => {
+    const { session, state, vault, storage, evidence, material } = await initialize(db);
+    await session.verifyLifecycle(vault, state);
+    const key = vault.archive.ownerSubject + ":pin";
+    const pinned = await storage.get(key);
+    const review = await session.reviewUserRegistryTransition(state);
+    const packet = await session.signUserRegistryTransition(review, material());
+    const { nextHead, archive } = decoded(packet.signedTransition);
+    let lastStarts = 0;
+    const transport = {
+      evidence: (request) =>
+        evidence(request, { registry: nextHead, registryStart: nextHead, vaultVersion: 2 }),
+      start: (request) => {
+        lastStarts++;
+        return {
+          ...request,
+          rootKeyId: vault.rootKeyId,
+          vaultVersion: 2,
+          archive,
+          registry: nextHead,
+          registryStart: nextHead,
+          sourcesDigest: sources,
+          rootJwk: vault.rootJwk,
+          signedTransition: packet.signedTransition,
+          firstBundle: packet.firstBundle,
+        };
+      },
+      page: noPage,
+    };
+    assert.equal(await session.verifyUserRecovery(transport, sources), "registry-verified");
+    assert.equal(lastStarts, 1);
+    assert.equal(
+      await session.verifyUserRecovery({ evidence: transport.evidence, page: noPage }, sources),
+      "refresh-required",
+    );
+    for (const alter of [
+      (start) => (start.nonce = "a".repeat(32)),
+      (start) => (start.rootKeyId = "k".repeat(43)),
+      (start) => (start.registryStart = { ...nextHead, registryEpoch: 1 }),
+      (start) => (start.signedTransition.signature = "A".repeat(86)),
+      (start) => (start.firstBundle.entries[0].active = false),
+    ]) {
+      await assert.rejects(
+        session.verifyUserRecovery(
+          {
+            ...transport,
+            start: (request) => {
+              const value = structuredClone(transport.start(request));
+              alter(value);
+              return value;
+            },
+          },
+          sources,
+        ),
+        /untrusted_vault|registry_conflict|invalid_signature|invalid_registry/,
+      );
+    }
+    assert.deepEqual(await storage.get(key), pinned);
+  });
+});

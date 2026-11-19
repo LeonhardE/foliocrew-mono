@@ -29,12 +29,19 @@ export type OwnerRegistryPageRequest = RecoveryScope & {
   target: PrivateRegistryHead;
 };
 
+export type OwnerRegistryStartRequest = RecoveryScope & {
+  profile: "folioview.owner-registry-start-evidence.v1";
+  nonce: string;
+};
+
 export type OwnerRecoveryProgress =
   | { status: "page"; request: OwnerRegistryPageRequest }
+  | { status: "registry-start"; request: OwnerRegistryStartRequest }
   | { status: "unchanged" | "registry-verified" | "refresh-required" };
 
 export type OwnerRecoveryTransport = {
   evidence(request: OwnerRecoveryRequest, signal: AbortSignal): Promise<unknown>;
+  start?(request: OwnerRegistryStartRequest, signal: AbortSignal): Promise<unknown>;
   page(request: OwnerRegistryPageRequest, signal: AbortSignal): Promise<unknown>;
 };
 

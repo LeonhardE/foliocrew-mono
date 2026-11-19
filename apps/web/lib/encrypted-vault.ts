@@ -766,8 +766,16 @@ export class EncryptedVaultSession {
     this.assert(g);
     let result: OwnerRecoveryProgress = await this.rpc("checkUserRecoveryEvidence", {
       nonce: request.nonce,
+      supportsTransition: Boolean(transport.start),
       value,
     });
+    if (result.status === "registry-start") {
+      if (!transport.start) throw new VaultError("untrusted_vault");
+      const start = await transport.start(result.request, active);
+      active.throwIfAborted();
+      this.assert(g);
+      result = await this.rpc("checkUserRegistryStart", { nonce: request.nonce, value: start });
+    }
     for (let pages = 0; result.status === "page"; pages++) {
       if (pages >= 32) throw new VaultError("too_large");
       const value = await transport.page(result.request, active);
