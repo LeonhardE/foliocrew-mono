@@ -3,9 +3,15 @@ locals {
   region               = var.deployment.region
   existing_user_uid    = var.deployment.existing_service_uid
   browser_cors_origins = join(",", concat([var.deployment.web_origin], var.browser_origin_aliases))
-  hub_trust_environment = var.hub_trust == null ? {} : (
-    alltrue([for value in values(var.hub_trust) : value == ""]) ? {} : var.hub_trust
-  )
+  projected_hub_trust = {
+    for key, value in coalesce(var.hub_trust, tomap({})) : key => value
+    if !startswith(key, "USER_PRIVATE_OWNER_")
+  }
+  hub_trust_environment = alltrue([for value in values(local.projected_hub_trust) : value == ""]) ? {} : local.projected_hub_trust
+  web_recovery_environment = {
+    for key, value in coalesce(var.hub_trust, tomap({})) : key => value
+    if startswith(key, "USER_PRIVATE_OWNER_")
+  }
   report_trust_environment = length(local.hub_trust_environment) == 0 ? {} : {
     USER_REPORT_DELEGATION_AUDIENCE = "${local.hub_trust_environment.USER_SERVICE_AUDIENCE}/internal/v2/private-resources/report-source-decisions"
   }
@@ -15,7 +21,7 @@ locals {
     FIRESTORE_DATABASE  = "user-data"
     USER_STORE_BACKEND  = "firestore"
     MARKET_API_BASE_URL = var.deployment.market_origin
-  }, local.hub_trust_environment, local.report_trust_environment)
+  }, local.hub_trust_environment, local.report_trust_environment, local.web_recovery_environment)
 }
 
 provider "google" {
