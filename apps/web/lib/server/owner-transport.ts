@@ -1,10 +1,12 @@
 import "server-only";
 
 import { createPublicKey, randomUUID, verify } from "node:crypto";
-import { createRemoteJWKSet, customFetch, jwtVerify } from "jose";
+import { createRemoteJWKSet, customFetch, decodeJwt, jwtVerify } from "jose";
 
 export const CONTRACT = "folioview.agent-workspace.v2.0";
 export const JWT = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+const METADATA =
+  "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity";
 const JWKS =
   "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com";
 export type Json = Record<string, unknown>;
@@ -349,6 +351,59 @@ export function createFirebaseVerifier(send: typeof fetch, now: () => number) {
       fail("authorization_unavailable");
     }
     return uid!;
+  };
+}
+
+export function createCloudRunIdentity(send: typeof fetch, now: () => number) {
+  let serviceToken: { audience: string; token: string; until: number } | undefined;
+  let tokenFlight: { audience: string; promise: Promise<string> } | undefined;
+
+  return async function identity(audience: string) {
+    if (serviceToken?.audience === audience && serviceToken.until > now())
+      return serviceToken.token;
+    if (tokenFlight?.audience === audience) return tokenFlight.promise;
+    const promise = (async () => {
+      const signal = AbortSignal.timeout(4000);
+      const url = `${METADATA}?audience=${encodeURIComponent(audience)}&format=full`;
+      const response = await until(
+        send(url, {
+          headers: { "Metadata-Flavor": "Google" },
+          redirect: "manual",
+          cache: "no-store",
+          credentials: "omit",
+          signal,
+        }),
+        signal,
+      );
+      if (response.status !== 200 || response.headers.get("metadata-flavor") !== "Google")
+        fail("authorization_unavailable");
+      const token = new TextDecoder("utf-8", { fatal: true }).decode(
+        await bytes(response.body, 16384, signal),
+      );
+      if (!JWT.test(token)) fail("authorization_unavailable");
+      const claims = decodeJwt(token);
+      if (
+        claims.aud !== audience ||
+        !["https://accounts.google.com", "accounts.google.com"].includes(claims.iss ?? "") ||
+        !Number.isSafeInteger(claims.exp) ||
+        claims.exp! * 1000 <= now() + 30000
+      )
+        fail("authorization_unavailable");
+      serviceToken = {
+        audience,
+        token,
+        until: Math.min(claims.exp! * 1000 - 30000, now() + 300000),
+      };
+      return token;
+    })().catch(() => {
+      throw new Failure("authorization_unavailable");
+    });
+    tokenFlight = { audience, promise };
+    try {
+      return await promise;
+    } finally {
+      if (tokenFlight?.promise === promise) tokenFlight = undefined;
+    }
   };
 }
 
