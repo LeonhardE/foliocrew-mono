@@ -510,7 +510,9 @@ run "user_private_payloads_are_exempt_from_indexes_without_retention_changes" {
 
   assert {
     condition = (
-      toset(keys(google_firestore_field.user_private_opaque)) == toset(["recovery_view", "registry_entry", "vault_baseline"]) &&
+      toset(keys(google_firestore_field.user_private_opaque)) == toset(["archive_record", "recovery_view", "registry_entry", "vault_baseline"]) &&
+      google_firestore_field.user_private_opaque["archive_record"].collection == "user_private_archive_records" &&
+      google_firestore_field.user_private_opaque["archive_record"].field == "record" &&
       google_firestore_field.user_private_opaque["recovery_view"].collection == "user_private_recovery_heads" &&
       google_firestore_field.user_private_opaque["recovery_view"].field == "view" &&
       google_firestore_field.user_private_opaque["registry_entry"].collection == "user_private_registry_history" &&
