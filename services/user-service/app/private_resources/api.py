@@ -15,6 +15,10 @@ from folioview_shared.delegation import DelegationError, DelegationVerifier
 from folioview_shared.encrypted.constants import CONTRACT_VERSION, MAX_REGISTRY_BYTES
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import strict_json_loads
+from folioview_shared.encrypted.private_display_names import (
+    DISPLAY_NAME_PROFILE,
+    MAX_DISPLAY_COMMAND_BYTES,
+)
 from folioview_shared.identity import owner_key
 from folioview_shared.service_identity import (
     GoogleCallerVerifier,
@@ -28,6 +32,7 @@ from ..resources import FirestoreUserResourceStore, get_resource_store
 from .authority_cutover import UserAuthorityCutover
 from .authority_views import OWNER_CURRENT_PROFILE, PrivateAuthorityViews
 from .directory import DIRECTORY_PROFILE, PrivateResourceDirectory
+from .display_names import PrivateDisplayNames
 from .recovery import (
     ClosedModel,
     Digest,
@@ -328,6 +333,63 @@ async def read_owner_directory(
     value = await body(request, PrivateResourceDirectoryRequest, maximum=4096)
     _cutover_scope(value.model_dump(), user.uid, vault_id)
     result = await run_in_threadpool(directory.read, user.uid, vault_id, value.nonce)
+    _uncached_private(response)
+    return result
+
+
+class DisplayNameRead(CutoverScope):
+    profile: Literal[DISPLAY_NAME_PROFILE]
+    sourceId: Identifier | None
+    operationId: OperationId | None
+
+
+class DisplayNameWrite(CutoverScope):
+    profile: Literal[DISPLAY_NAME_PROFILE]
+    sourceId: Identifier
+    operationId: OperationId
+    command: dict
+
+
+def owner_display_names() -> PrivateDisplayNames:
+    if os.getenv("USER_PRIVATE_RESOURCE_DIRECTORY") != "true":
+        raise ContractError("not_found")
+    return PrivateDisplayNames(get_resource_store())
+
+
+@router.post("/{vault_id}/display-names/read")
+async def read_display_names(
+    vault_id: str,
+    request: Request,
+    response: Response,
+    user: Annotated[CurrentUser, Depends(require_google_user)],
+    names: Annotated[PrivateDisplayNames, Depends(owner_display_names)],
+    _: Annotated[None, Depends(require_owner_proxy)],
+):
+    value = await body(request, DisplayNameRead, maximum=4096)
+    _cutover_scope(value.model_dump(), user.uid, vault_id)
+    if value.operationId is not None and value.sourceId is None:
+        raise ContractError("malformed_request")
+    result = await run_in_threadpool(
+        names.read, user.uid, vault_id, value.sourceId, value.operationId
+    )
+    _uncached_private(response)
+    return result
+
+
+@router.post("/{vault_id}/display-names/write")
+async def write_display_name(
+    vault_id: str,
+    request: Request,
+    response: Response,
+    user: Annotated[CurrentUser, Depends(require_google_user)],
+    names: Annotated[PrivateDisplayNames, Depends(owner_display_names)],
+    _: Annotated[None, Depends(require_owner_proxy)],
+):
+    value = await body(request, DisplayNameWrite, maximum=MAX_DISPLAY_COMMAND_BYTES + 2048)
+    _cutover_scope(value.model_dump(), user.uid, vault_id)
+    result = await run_in_threadpool(
+        names.write, user.uid, vault_id, value.sourceId, value.operationId, value.command
+    )
     _uncached_private(response)
     return result
 
