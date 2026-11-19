@@ -58,8 +58,8 @@ override_data {
 run "legacy_profile_stays_closed" {
   command = plan
   assert {
-    condition     = toset(keys(local.environment)) == toset(["FIREBASE_PROJECT_ID", "CORS_ORIGINS", "FIRESTORE_DATABASE", "USER_STORE_BACKEND", "MARKET_API_BASE_URL"]) && length(local.hub_trust_environment) == 0
-    error_message = "Legacy User environment must be unchanged and Hub trust absent."
+    condition     = toset(keys(local.environment)) == toset(["FIREBASE_PROJECT_ID", "CORS_ORIGINS", "FIRESTORE_DATABASE", "USER_STORE_BACKEND", "USER_LIST_WRITES_PAUSED", "MARKET_API_BASE_URL"]) && local.environment.USER_LIST_WRITES_PAUSED == "true" && length(local.hub_trust_environment) == 0
+    error_message = "Allow the reviewed temporary write pause and keep Hub trust absent."
   }
 }
 
@@ -67,7 +67,7 @@ run "explicit_disabled_stays_closed" {
   command = plan
   variables { hub_trust = { "USER_SERVICE_AUDIENCE" : "", "USER_DELEGATION_AUDIENCE" : "", "USER_DELEGATION_ISSUER" : "", "USER_TRUSTED_HUB_CALLERS" : "" } }
   assert {
-    condition     = toset(keys(local.environment)) == toset(["FIREBASE_PROJECT_ID", "CORS_ORIGINS", "FIRESTORE_DATABASE", "USER_STORE_BACKEND", "MARKET_API_BASE_URL"]) && length(local.hub_trust_environment) == 0
+    condition     = toset(keys(local.environment)) == toset(["FIREBASE_PROJECT_ID", "CORS_ORIGINS", "FIRESTORE_DATABASE", "USER_STORE_BACKEND", "USER_LIST_WRITES_PAUSED", "MARKET_API_BASE_URL"]) && local.environment.USER_LIST_WRITES_PAUSED == "true" && length(local.hub_trust_environment) == 0
     error_message = "User trust settings and adoption boundaries must match the explicit reviewed contract."
   }
 }
