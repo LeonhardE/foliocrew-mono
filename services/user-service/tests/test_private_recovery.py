@@ -44,7 +44,7 @@ PROXY_HEADERS = {
 }
 
 
-def registry_fixture(now=1000):
+def registry_fixture(now=1000, *, signing_keys=None):
     root = jwk.JWK.generate(kty="EC", crv="P-256")
     root_jwk = root.export(private_key=False, as_dict=True)
     scope = {"contractVersion": CONTRACT_VERSION, "ownerSubject": OWNER, "vaultId": VAULT}
@@ -68,6 +68,10 @@ def registry_fixture(now=1000):
             "expiresAt": 1020,
             "capabilities": [],
         }
+        if signing_keys is not None:
+            signing_keys[role] = key
+            if role == "device_sig":
+                certificate["capabilities"] = ["control_write"]
         certificates[role] = certificate
         descriptions.append(
             {

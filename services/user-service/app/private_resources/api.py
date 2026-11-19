@@ -39,6 +39,7 @@ from .registry_pages import RegistryHistory, RegistryPageRequest
 from .registry_transition import MAX_TRANSITION_PACKET_BYTES
 from .report_sources import ReportSourceAuthority
 from .source_invalidations import SourceInvalidations
+from .source_registrations import HoldingsRegistrations
 
 router = APIRouter(
     prefix="/api/v3/private-resources/vaults", tags=["private-resources"], route_class=ResourceRoute
@@ -334,6 +335,43 @@ async def read_registry_start(
         vault_id,
         value.nonce,
         now=int(time.time()),
+    )
+    _uncached_private(response)
+    return result
+
+
+HOLDINGS_REGISTRATION_PROFILE = "folioview.owner-holdings-registration.v1"
+
+
+class HoldingsRegistrationRequest(CutoverScope):
+    profile: Literal[HOLDINGS_REGISTRATION_PROFILE]
+    sourceId: Identifier
+    operationId: OperationId
+    command: dict
+
+
+def owner_holdings_registration() -> HoldingsRegistrations:
+    if os.getenv("USER_PRIVATE_SOURCE_REGISTRATIONS") != "true":
+        raise ContractError("not_found")
+    return HoldingsRegistrations(get_resource_store())
+
+
+@router.post("/{vault_id}/holdings-sources/{source_id}")
+async def register_owner_holdings(
+    vault_id: str,
+    source_id: str,
+    request: Request,
+    response: Response,
+    user: Annotated[CurrentUser, Depends(require_google_user)],
+    registration: Annotated[HoldingsRegistrations, Depends(owner_holdings_registration)],
+    _: Annotated[None, Depends(require_owner_proxy)],
+):
+    value = await body(request, HoldingsRegistrationRequest, maximum=65_536)
+    _cutover_scope(value.model_dump(), user.uid, vault_id)
+    if value.sourceId != source_id:
+        raise ContractError("not_found")
+    result = await run_in_threadpool(
+        registration.register, user.uid, vault_id, source_id, value.command, value.operationId
     )
     _uncached_private(response)
     return result
