@@ -402,6 +402,17 @@ function privateRegistryHead(registry: Registry, registryEpoch = 1): PrivateRegi
     keyEpoch: registry.checkpoint.keyEpoch,
   };
 }
+type OriginalRegistryBridge = {
+  id: string;
+  pin: Pin;
+  target: PrivateRegistryHead;
+  head: PrivateRegistryHead;
+  heads: PrivateRegistryHead[];
+  verified?: Registry;
+  verify: Awaited<ReturnType<typeof registryBundleVerifier>>;
+  expiresAt: number;
+};
+
 type OwnerRecoveryRead = {
   request: OwnerRecoveryRequest;
   vault: Vault;
@@ -870,6 +881,7 @@ export class VaultCore {
   private registry?: Registry;
   private pin?: Pin;
   private userRecoveryRead?: OwnerRecoveryRead;
+  private originalRegistryBridge?: OriginalRegistryBridge;
   private userRegistryReview?: {
     review: RegistryTransitionReview;
     vault: Vault;
@@ -1013,7 +1025,17 @@ export class VaultCore {
     const history = [];
     if (vault.userAuthority) {
       const change = await verified(vault.userAuthority.signedTransition, vault.rootJwk);
-      history.push(change.previousHead);
+      const bridge = this.originalRegistryBridge;
+      if (
+        bridge &&
+        bridge.expiresAt > this.now() &&
+        bridge.pin.ownerSubject === (await this.owner) &&
+        bridge.pin.vaultId === vault.vaultId &&
+        bridge.pin.rootKeyId === vault.rootKeyId &&
+        equal(bridge.head, change.previousHead)
+      )
+        history.push(...bridge.heads);
+      else history.push(change.previousHead);
     }
     for (const bundle of vault.registryHistory) {
       const cp = parsed(unb64(bundle.checkpoint.payload));
@@ -3509,6 +3531,133 @@ export class VaultCore {
     return { first, prior };
   }
 
+  private originalBridgePage(bridge: OriginalRegistryBridge): {
+    id: string;
+    request: import("./encrypted-user-recovery").OwnerRegistryPageRequest;
+  } {
+    return {
+      id: bridge.id,
+      request: {
+        contractVersion: CONTRACT,
+        profile: OWNER_REGISTRY_PAGE_PROFILE,
+        ownerSubject: bridge.pin.ownerSubject,
+        vaultId: bridge.pin.vaultId,
+        base: bridge.head,
+        target: bridge.target,
+      },
+    };
+  }
+
+  async beginOriginalRegistryBridge(vault: Vault, pin: Pin) {
+    const owner = await this.owner;
+    if (
+      !vault.userAuthority ||
+      (pin.registryEpoch ?? 1) !== 1 ||
+      pin.ownerSubject !== owner ||
+      pin.vaultId !== vault.vaultId ||
+      pin.rootKeyId !== vault.rootKeyId ||
+      (await thumb(vault.rootJwk)) !== pin.rootKeyId
+    )
+      throw new VaultError("untrusted_vault");
+    const verify = await registryBundleVerifier(vault.rootJwk);
+    const { prior: target } = await this.verifyUserVaultStart(vault, owner, verify);
+    const head: PrivateRegistryHead = {
+      registryEpoch: 1,
+      registrySequence: pin.registrySequence,
+      checkpointDigest: pin.checkpointDigest,
+      keyEpoch: pin.keyEpoch,
+    };
+    const completed = this.originalRegistryBridge;
+    if (
+      equal(head, target) ||
+      (completed &&
+        completed.expiresAt > this.now() &&
+        equal(completed.pin, pin) &&
+        equal(completed.target, target) &&
+        equal(completed.head, target))
+    )
+      return null;
+    if (
+      !Number.isSafeInteger(head.registrySequence) ||
+      head.registrySequence < 1 ||
+      target.registrySequence > 32 ||
+      head.registrySequence >= target.registrySequence ||
+      head.keyEpoch > target.keyEpoch
+    )
+      throw new VaultError("registry_conflict");
+    const bridge = {
+      id: randomId(),
+      pin,
+      target,
+      head,
+      heads: [head],
+      verify,
+      expiresAt: this.now() + 60,
+    };
+    this.originalRegistryBridge = bridge;
+    return this.originalBridgePage(bridge);
+  }
+
+  async checkOriginalRegistryBridgePage(id: string, value: Json) {
+    const bridge = this.originalRegistryBridge;
+    if (!bridge || bridge.id !== id || bridge.expiresAt <= this.now())
+      throw new VaultError("untrusted_vault");
+    this.originalRegistryBridge = undefined;
+    exact(value, [
+      "contractVersion",
+      "profile",
+      "ownerSubject",
+      "vaultId",
+      "rootKeyId",
+      "base",
+      "target",
+      "bundles",
+    ]);
+    if (
+      value.contractVersion !== CONTRACT ||
+      value.profile !== OWNER_REGISTRY_PAGE_PROFILE ||
+      value.ownerSubject !== bridge.pin.ownerSubject ||
+      value.vaultId !== bridge.pin.vaultId ||
+      value.rootKeyId !== bridge.pin.rootKeyId ||
+      !equal(value.base, bridge.head) ||
+      !equal(value.target, bridge.target) ||
+      !Array.isArray(value.bundles) ||
+      value.bundles.length < 1 ||
+      value.bundles.length > 4
+    )
+      throw new VaultError("registry_conflict");
+    bounded(value, 262144);
+    for (const bundle of value.bundles) {
+      const verified = await bridge.verify(
+        bundle,
+        bridge.pin.ownerSubject,
+        bridge.pin.vaultId,
+        bridge.verified,
+        this.now(),
+      );
+      const next = privateRegistryHead(verified);
+      if (
+        verified.checkpoint.previousDigest !== bridge.head.checkpointDigest ||
+        next.registrySequence !== bridge.head.registrySequence + 1 ||
+        next.registrySequence > bridge.target.registrySequence ||
+        next.keyEpoch < bridge.head.keyEpoch ||
+        next.keyEpoch > bridge.target.keyEpoch
+      )
+        throw new VaultError("registry_conflict");
+      bridge.head = next;
+      bridge.heads.push(next);
+      bridge.verified = verified;
+    }
+    if (bridge.expiresAt <= this.now()) throw new VaultError("untrusted_vault");
+    if (bridge.head.registrySequence === bridge.target.registrySequence) {
+      if (!equal(bridge.head, bridge.target)) throw new VaultError("registry_conflict");
+      this.originalRegistryBridge = bridge;
+      return null;
+    }
+    this.originalRegistryBridge = bridge;
+    return this.originalBridgePage(bridge);
+  }
+
   private async checkVault(vault: Vault, pin?: Pin, allowDeleted = false) {
     vault = structuredClone(vault);
     const fields = ["vaultId", "rootJwk", "rootKeyId", "registryHistory", "archive", "version"];
@@ -3564,7 +3713,17 @@ export class VaultCore {
       throw new VaultError("rollback_detected");
     if (pin && (pin.registryEpoch ?? 1) < epoch) {
       const { ownerSubject: _owner, vaultId: _vault, rootKeyId: _root, ...previous } = pin;
-      if (!user || !equal({ ...previous, registryEpoch: pin.registryEpoch ?? 1 }, user.prior))
+      const localHead = { ...previous, registryEpoch: pin.registryEpoch ?? 1 };
+      const bridge = this.originalRegistryBridge;
+      if (
+        !user ||
+        (!equal(localHead, user.prior) &&
+          (!bridge ||
+            bridge.expiresAt <= this.now() ||
+            !equal(bridge.pin, pin) ||
+            !equal(bridge.target, user.prior) ||
+            !equal(bridge.head, user.prior)))
+      )
         throw new VaultError("registry_conflict");
     } else if (pin) {
       const matched = vault.registryHistory.find(

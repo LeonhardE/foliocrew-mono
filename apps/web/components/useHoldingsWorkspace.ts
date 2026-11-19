@@ -525,14 +525,6 @@ export function useHoldingsWorkspace() {
   const vaultGeneration = useRef(0);
   const recoverySession = useRef<EncryptedVaultSession | null>(null);
   const sharedHandlers = useRef({ lock: () => {}, reload: async () => {} });
-  const ownerSession = useCallback(
-    (subject: string) =>
-      new EncryptedVaultSession(subject, {
-        sharedUnlock: true,
-        onInvalidated: () => sharedHandlers.current.lock(),
-      }),
-    [],
-  );
   const renewalHoldingsReview = useRef<{
     pending: PendingSnapshot;
     receipt: unknown;
@@ -806,6 +798,25 @@ export function useHoldingsWorkspace() {
       return value;
     },
     [auth.requestPrivate, owner],
+  );
+
+  const ownerSession = useCallback(
+    (subject: string) =>
+      new EncryptedVaultSession(subject, {
+        sharedUnlock: true,
+        onInvalidated: () => sharedHandlers.current.lock(),
+        readOriginalRegistryPage: (json, signal) =>
+          api(
+            "user",
+            `/api/v3/private-resources/vaults/${json.vaultId}/registry-pages/read`,
+            signal,
+            {
+              method: "POST",
+              json,
+            },
+          ),
+      }),
+    [api],
   );
 
   const readCurrent = useCallback(
