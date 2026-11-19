@@ -106,6 +106,7 @@ class AgentHubBoundaryTests(unittest.TestCase):
                     "/api/v2/vaults/{vault_id}/key-renewal-operations/{operation_id}",
                     "/api/v2/vaults/{vault_id}/holdings-sources/{source_id}",
                     "/api/v2/vaults/current/authority-token",
+                    "/api/v2/vaults/{vault_id}/portfolio-authority-tokens",
                     "/api/v2/resources/catalogue",
                     "/api/v3/resources/display",
                     "/api/v2/tasks",

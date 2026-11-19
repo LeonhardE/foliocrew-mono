@@ -9,7 +9,11 @@ from functools import lru_cache
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-from folioview_shared.delegation import DELEGATION_TYPE, REPORT_DELEGATION_TYPE
+from folioview_shared.delegation import (
+    DELEGATION_TYPE,
+    PRIVATE_AUTHORITY_DELEGATION_TYPE,
+    REPORT_DELEGATION_TYPE,
+)
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import b64url_encode, canonical_json
@@ -142,7 +146,7 @@ class KMSSigner:
         from cryptography.hazmat.primitives import hashes
         from cryptography.hazmat.primitives.asymmetric import padding
 
-        if typ not in (DELEGATION_TYPE, REPORT_DELEGATION_TYPE):
+        if typ not in (DELEGATION_TYPE, REPORT_DELEGATION_TYPE, PRIVATE_AUTHORITY_DELEGATION_TYPE):
             raise ContractError("authorization_unavailable")
         try:
             key, _ = self._public(deadline=deadline, budget_clock=budget_clock)
