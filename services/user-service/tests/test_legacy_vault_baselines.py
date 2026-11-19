@@ -14,10 +14,12 @@ from app.private_resources.legacy_baselines import (
     LegacyVaultBaselines,
     verified_baseline,
 )
+from app.private_resources.original_operations import original_operation_baseline
 from app.private_resources.recovery import RecoveryHeads
 from app.resources import FirestoreUserResourceStore, SQLiteUserResourceStore
+from folioview_shared.encrypted.constants import CONTRACT_VERSION
 from folioview_shared.encrypted.errors import ContractError
-from folioview_shared.encrypted.jsonutil import b64url_encode, strict_json_loads
+from folioview_shared.encrypted.jsonutil import b64url_encode, canonical_json, strict_json_loads
 
 
 class LegacyVaultBaselineTests(unittest.TestCase):
@@ -110,3 +112,79 @@ class LegacyVaultBaselineTests(unittest.TestCase):
             with self.assertRaisesRegex(ContractError, "version_conflict"):
                 self.stage(store=baselines)
             transaction.create.assert_called_once()
+
+
+class OriginalOperationBaselineTests(unittest.TestCase):
+    def test_scoped_original_keys_and_types_survive_retry_without_becoming_live(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        store = SQLiteUserResourceStore(str(Path(temporary.name) / "receipts.sqlite3"))
+        baselines = LegacyVaultBaselines(store)
+        _, root, _, registry, _, _ = registry_fixture()
+        ref = {
+            "kind": "holdings",
+            "sourceService": "portfolio",
+            "resourceId": "source_A",
+            "incarnation": "inc_A",
+        }
+        scope = {
+            "ownerSubject": OWNER,
+            "vaultId": VAULT,
+            "rootJwk": root,
+            "rootKeyId": registry.root_key_id,
+            "sources": [{"resourceRef": ref, "sourceEpoch": 1}],
+        }
+        mutation = "synthetic_archive_source_mutation"
+        path = hashlib.sha256(canonical_json([OWNER, "portfolio", mutation])).hexdigest()
+        request = {
+            "contractVersion": CONTRACT_VERSION,
+            "ownerSubject": OWNER,
+            "mutationId": mutation,
+            "ref": ref,
+            "expectedSourceEpoch": 1,
+            "newSourceEpoch": 2,
+            "reason": "deleted",
+        }
+        ack = {
+            "contractVersion": CONTRACT_VERSION,
+            "mutationId": mutation,
+            "ref": ref,
+            "acknowledgedSourceEpoch": 2,
+            "acknowledgedAt": "2026-11-19T05:00:00Z",
+        }
+        source = {
+            "request": request,
+            "ack": ack,
+            "fingerprint": hashlib.sha256(canonical_json(request)).hexdigest(),
+        }
+
+        def typed(value):
+            if type(value) is dict:
+                return {"mapValue": {"fields": {key: typed(item) for key, item in value.items()}}}
+            if type(value) is int:
+                return {"integerValue": str(value)}
+            return {"stringValue": value}
+
+        records = {
+            f"hub_fence_mutations/{path}": typed(source)["mapValue"]["fields"],
+            f"hub_operations/{'a' * 64}": typed(
+                {"ownerSubject": OWNER, "kind": "registry", "fingerprint": "f" * 64}
+            )["mapValue"]["fields"],
+        }
+        body = original_operation_baseline(OWNER, scope, records)
+        expected = hashlib.sha256(body).hexdigest()
+        self.assertTrue(
+            baselines.stage_original_operations(OWNER, scope, records, expected_digest=expected)
+        )
+        self.assertFalse(
+            baselines.stage_original_operations(OWNER, scope, records, expected_digest=expected)
+        )
+        read = strict_json_loads(baselines.read(OWNER, VAULT, expected))
+        self.assertEqual(read["originalOperations"], records)
+        self.assertIsNone(RecoveryHeads(store).read(OWNER))
+        altered = deepcopy(records)
+        altered[f"hub_fence_mutations/{path}"]["ack"]["mapValue"]["fields"][
+            "acknowledgedSourceEpoch"
+        ]["integerValue"] = "3"
+        with self.assertRaisesRegex(ContractError, "authorization_unavailable"):
+            baselines.stage_original_operations(OWNER, scope, altered, expected_digest=expected)

@@ -161,9 +161,18 @@ class LegacyVaultBaselines:
 
     def stage(self, owner, vault, lifecycle, *, expected_digest, now):
         prepared = verified_baseline(owner, vault, lifecycle, now=now)
+        return self._stage_bytes(owner, vault["vaultId"], prepared, expected_digest)
+
+    def stage_original_operations(self, owner, vault, records, *, expected_digest):
+        from .original_operations import original_operation_baseline
+
+        prepared = original_operation_baseline(owner, vault, records)
+        return self._stage_bytes(owner, vault["vaultId"], prepared, expected_digest)
+
+    def _stage_bytes(self, owner, vault, prepared, expected_digest):
         if _sha(prepared) != expected_digest:
             raise ContractError("version_conflict")
-        key = self._key(owner, vault["vaultId"], expected_digest)
+        key = self._key(owner, vault, expected_digest)
 
         def check(previous):
             if previous not in (None, prepared):
