@@ -435,6 +435,8 @@
     "lifecycle": {
       "title": "持倉資料管理",
       "select": "當前資料",
+      "choose": "請選擇持倉資料",
+      "empty": "暫無持倉資料",
       "source": "持倉資料 {number}",
       "new": "新的持倉資料",
       "newHelp": "下一次儲存將建立獨立資料，不會恢復或修改舊資料的授權。",
@@ -1454,7 +1456,7 @@
     "connected": "已連線",
     "expiring": "即將到期",
     "reauthorize": "需要重新授權",
-    "disconnected": "已斷開",
+    "notConnected": "未連線",
     "reauthorizeButton": "重新授權",
     "disconnect": "解除帳號連結",
     "expires": "有效至 {date}",

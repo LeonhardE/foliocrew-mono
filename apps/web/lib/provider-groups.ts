@@ -10,16 +10,20 @@ export function providerGroups(
     const rows = views.filter((v) => v.connection.provider === provider),
       state = states[provider],
       slot = state?.slot;
-    const live = rows.filter(
+    const active = rows.filter((v) => v.connection.status === "active");
+    const revoked = new Set(
+      rows.filter((v) => v.connection.status === "revoked").map((v) => v.connection.connectionId),
+    );
+    const live = active.filter(
       (v) =>
-        v.connection.status === "active" &&
         ["active", "expiring"].includes(v.credential?.status ?? "") &&
         v.credential!.expiresAt > now,
     );
-    const ref = slot?.currentCredential;
+    const reference = slot?.currentCredential;
+    const ref = reference && !revoked.has(reference.connectionId) ? reference : null;
     const current = slot
       ? ref
-        ? (rows.find((v) => {
+        ? (active.find((v) => {
             const r = v.credential?.reference;
             return (
               r &&
@@ -31,17 +35,17 @@ export function providerGroups(
         : null
       : live.length === 1
         ? live[0]
-        : rows.length === 1
-          ? rows[0]
+        : active.length === 1
+          ? active[0]
           : null;
     const reviewRequired = Boolean(
-      state?.legacyBlockers?.length ||
+      state?.legacyBlockers?.some((id: string) => !revoked.has(id)) ||
       current?.error ||
-      (!current && rows.some((v) => v.error)) ||
+      (!current && active.some((v) => v.error)) ||
       (!slot && live.length > 1) ||
       (ref && !current),
     );
-    const history = rows.filter((v) => v !== current && v.connection.status === "active");
+    const history = active.filter((v) => v !== current);
     return { provider, current, history, reviewRequired };
   });
 }

@@ -245,7 +245,6 @@ export function PersistentAgentsPanel({
     return t(expired ? "expiredAt" : "expires", { date: date(credential.expiresAt) });
   }
   const status = (view: (typeof model.views)[number]) => {
-    if (view.connection.status === "revoked") return "disconnected";
     const value = view.credential;
     if (!value) return "statusUnavailable";
     if (!["active", "expiring"].includes(value.status) || value.expiresAt <= now)
@@ -486,7 +485,7 @@ export function PersistentAgentsPanel({
                   ? "reviewRequired"
                   : view
                     ? status(view)
-                    : "disconnected";
+                    : "notConnected";
           return (
             <article
               key={group.provider}
@@ -557,13 +556,7 @@ export function PersistentAgentsPanel({
                   <summary>{t("history", { count: group.history.length })}</summary>
                   {group.history.map((old) => (
                     <div className={styles.historyRow} key={old.connection.connectionId}>
-                      <span>
-                        {t(
-                          old.credential || old.connection.status === "revoked"
-                            ? status(old)
-                            : "previousConnection",
-                        )}
-                      </span>
+                      <span>{t(old.credential ? status(old) : "previousConnection")}</span>
                       {credentialExpiry(old)}
                       {old.pending && old.connection.status === "active" && (
                         <button

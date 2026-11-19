@@ -202,7 +202,7 @@ test("slow or failed connection reads never render an invented disconnection or 
       const out = render(locale, true, null, null, null, state);
       assert.doesNotMatch(
         out,
-        /Disconnected|已断开|Authorization needed|需要重新授权|PRIVATE_TASK_CANARY/,
+        /Not connected|未连接|Authorization needed|需要重新授权|PRIVATE_TASK_CANARY/,
       );
       assert.match(
         out,
@@ -216,12 +216,33 @@ test("slow or failed connection reads never render an invented disconnection or 
       assert.ok(buttons.every(([tag]) => tag.includes('disabled=""')));
     }
     const empty = render(locale, true, null, null, null, { model: { views: [] } });
-    assert.equal((empty.match(/Disconnected|已断开/g) ?? []).length, 2);
+    assert.equal((empty.match(/Not connected|未连接/g) ?? []).length, 2);
     assert.ok(
       empty
         .match(/<article[^>]*>[\s\S]*?<\/article>/g)
         .slice(0, 2)
         .every((card) => !card.match(/<button[^>]*>/)[0].includes("disabled")),
+    );
+  }
+});
+
+test("revoked connections render the same empty setup cards for Muse and ChatGPT", () => {
+  const views = ["muse", "chatgpt"].map((provider) => ({
+    connection: { provider, status: "revoked", connectionId: provider + "_old" },
+    credential: { status: "expired", expiresAt: 1 },
+    tasks: [{ title: "PRIVATE_TASK_CANARY" }],
+  }));
+  const providerStates = {
+    chatgpt: {
+      slot: { currentCredential: { connectionId: "chatgpt_old" } },
+      legacyBlockers: ["chatgpt_old"],
+    },
+  };
+  for (const locale of ["en", "zh", "zh-Hant"]) {
+    const state = { model: { views, providerStates } };
+    assert.equal(
+      render(locale, true, null, null, null, state),
+      render(locale, true, null, null, null, { model: { views: [] } }),
     );
   }
 });
@@ -241,7 +262,7 @@ test("refreshing keeps the last loaded connection visible and adds a busy indica
     );
     const muse = out.match(/<article[^>]*>[\s\S]*?<\/article>/)[0];
     assert.match(muse, /Connected|已连接/);
-    assert.doesNotMatch(muse, /Disconnected|已断开/);
+    assert.doesNotMatch(muse, /Not connected|未连接/);
     assert.match(muse, /aria-busy="true"/);
     assert.match(muse, /data-checking="true"/);
     assert.match(muse, /<button disabled="">Authorize again|<button disabled="">重新授权/);

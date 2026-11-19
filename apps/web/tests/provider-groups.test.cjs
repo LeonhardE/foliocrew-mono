@@ -68,3 +68,24 @@ test("management history counts only previous accounts that can still be unlinke
     assert.equal(views.length, 3);
   }
 });
+
+test("revoked accounts leave both providers unconnected even with a retired slot and blockers", () => {
+  const muse = row("m"),
+    chatgpt = row("c");
+  muse.connection.status = "revoked";
+  chatgpt.connection.provider = "chatgpt";
+  chatgpt.connection.status = "revoked";
+  const reference = chatgpt.credential.reference;
+  chatgpt.credential = null;
+  const states = {
+    chatgpt: { slot: { currentCredential: reference }, legacyBlockers: ["c"] },
+  };
+  const groups = () => providerGroups([muse, chatgpt], states, 1000);
+  for (const group of groups()) {
+    assert.equal(group.current, null);
+    assert.equal(group.history.length, 0);
+    assert.equal(group.reviewRequired, false);
+  }
+  states.chatgpt.legacyBlockers.push("unknown");
+  assert.equal(groups()[1].reviewRequired, true);
+});

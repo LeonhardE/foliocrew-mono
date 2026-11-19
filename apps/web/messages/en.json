@@ -435,6 +435,8 @@
     "lifecycle": {
       "title": "Manage holdings data",
       "select": "Selected data",
+      "choose": "Choose holdings data",
+      "empty": "No holdings data yet.",
       "source": "Holdings data {number}",
       "new": "New holdings data",
       "newHelp": "Your next save creates independent data. It will not restore or change access to existing data.",
@@ -1454,7 +1456,7 @@
     "connected": "Connected",
     "expiring": "Expires soon",
     "reauthorize": "Authorization needed",
-    "disconnected": "Disconnected",
+    "notConnected": "Not connected",
     "reauthorizeButton": "Authorize again",
     "disconnect": "Unlink account",
     "expires": "Valid until {date}",
