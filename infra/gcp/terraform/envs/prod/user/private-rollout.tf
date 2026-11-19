@@ -54,30 +54,3 @@ locals {
     })
   }
 }
-
-data "google_service_account" "private_rollout_portfolio" {
-  count      = var.private_rollout == null ? 0 : 1
-  project    = local.project_id
-  account_id = var.private_rollout.portfolio_account_id
-
-  lifecycle {
-    postcondition {
-      condition     = self.unique_id == var.private_rollout.portfolio_subject && self.email == local.portfolio_workload_email
-      error_message = "The referenced Portfolio workload account was replaced or its subject differs from the reviewed input."
-    }
-  }
-}
-
-data "google_cloud_run_v2_service" "private_rollout_portfolio" {
-  count    = var.private_rollout == null ? 0 : 1
-  project  = local.project_id
-  location = local.region
-  name     = "portfolio-api"
-
-  lifecycle {
-    postcondition {
-      condition     = self.template[0].service_account == data.google_service_account.private_rollout_portfolio[0].email
-      error_message = "The live Portfolio service must use the exact reviewed workload account."
-    }
-  }
-}

@@ -156,3 +156,16 @@ trust is absent/invalid. Synthetic mock plans prove configuration behavior; actu
 negative caller/delegation smoke requires the Hub issuer/JWKS to be reachable and its sources
 configured through separate Hub work. This source change alone does not complete INF-007 live
 acceptance or enable OAuth/agents.
+
+## Private authority preparation
+
+The reviewed deployment input carries one Owner and the exact Portfolio
+service account email and Google numeric subject. Before creating the User
+plan, compare those claims with the running Portfolio service template and
+the current Google service account. Repeat the comparison before applying
+the selected phase. The User deployment identity reads its own service and
+runtime account. Portfolio identity verification uses the separate read-only
+review, so the User deployment identity needs no Portfolio permissions.
+
+The preparation phase enables the scoped recovery and handover routes. The
+current resource routes are enabled by a separate active phase.

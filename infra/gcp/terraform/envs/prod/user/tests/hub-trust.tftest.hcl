@@ -250,21 +250,6 @@ run "private_recovery_rejects_a_different_numbered_user_audience" {
   expect_failures = [var.hub_trust]
 }
 
-override_data {
-  target = data.google_service_account.private_rollout_portfolio
-  values = {
-    email     = "alpha-portfolio-runtime@demo-user-alpha.iam.gserviceaccount.com"
-    unique_id = "222333444555666777888"
-  }
-}
-
-override_data {
-  target = data.google_cloud_run_v2_service.private_rollout_portfolio
-  values = {
-    template = [{ service_account = "alpha-portfolio-runtime@demo-user-alpha.iam.gserviceaccount.com" }]
-  }
-}
-
 run "selected_owner_preparation" {
   command = plan
   variables {
@@ -369,26 +354,4 @@ run "reject_reused_workload_subject" {
   }
 
   expect_failures = [var.private_rollout]
-}
-
-run "reject_different_live_workload_subject" {
-  command = plan
-  variables {
-    hub_trust = {
-      USER_SERVICE_AUDIENCE         = "https://user-api-111222333444.us-central1.run.app"
-      USER_DELEGATION_AUDIENCE      = "https://user-api-111222333444.us-central1.run.app/internal/v2"
-      USER_DELEGATION_ISSUER        = "https://agent-hub-api-111222333444.us-central1.run.app"
-      USER_TRUSTED_HUB_CALLERS      = jsonencode({ "111000111000111000111" = "alpha-hub-runtime@demo-user-alpha.iam.gserviceaccount.com" })
-      USER_PRIVATE_OWNER_AUDIENCE   = "https://user-api-111222333444.us-central1.run.app"
-      USER_PRIVATE_OWNER_WEB_CALLER = jsonencode({ "999888777666555444333" = "alpha-web-runtime@demo-user-alpha.iam.gserviceaccount.com" })
-    }
-    private_rollout = {
-      phase                = "active"
-      owner_subject        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-      portfolio_subject    = "555888777444333222111"
-      portfolio_account_id = "alpha-portfolio-runtime"
-    }
-  }
-
-  expect_failures = [data.google_service_account.private_rollout_portfolio]
 }
