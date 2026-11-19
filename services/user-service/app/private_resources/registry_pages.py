@@ -24,6 +24,7 @@ from ..resources import FirestoreUserResourceStore, ResourceUnavailable, SQLiteU
 from .recovery import ClosedModel, Identifier, RecoveryHeads, RegistryHead
 
 PROFILE = "folioview.owner-registry-page.v1"
+ORIGINAL_HEAD_PROFILE = "folioview.owner-original-registry-head.v1"
 COLLECTION = "user_private_registry_history"
 MAX_ENTRY_BYTES = MAX_REGISTRY_BYTES + 1024
 MAX_PAGE_ENTRIES = 4
@@ -35,6 +36,14 @@ class RegistryPageRequest(ClosedModel):
     ownerSubject: Identifier
     vaultId: Identifier
     base: RegistryHead | None
+    target: RegistryHead
+
+
+class OriginalRegistryHeadRequest(ClosedModel):
+    contractVersion: Literal[CONTRACT_VERSION]
+    profile: Literal[ORIGINAL_HEAD_PROFILE]
+    ownerSubject: Identifier
+    vaultId: Identifier
     target: RegistryHead
 
 
@@ -250,3 +259,25 @@ class RegistryHistory:
         if not page["bundles"]:
             raise ContractError("payload_too_large")
         return page
+
+    def original_head(self, uid: str, vault: str, request: OriginalRegistryHeadRequest):
+        owner = owner_key(uid)
+        if request.ownerSubject != owner or request.vaultId != vault:
+            raise ContractError("not_found")
+        head = self.heads.read(owner)
+        if head is None or head["ownerSubject"] != owner or head["vaultId"] != vault:
+            raise ContractError("not_found")
+        target = request.target.model_dump()
+        self._require_original_target(uid, vault, head, target)
+        [entry] = self._read(head, 1, [request.target.registrySequence])
+        if entry["head"] != target:
+            raise ContractError("registry_conflict")
+        return {
+            "contractVersion": CONTRACT_VERSION,
+            "profile": ORIGINAL_HEAD_PROFILE,
+            "ownerSubject": owner,
+            "vaultId": vault,
+            "rootKeyId": head["rootKeyId"],
+            "target": target,
+            "bundle": entry["bundle"],
+        }
