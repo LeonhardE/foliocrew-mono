@@ -89,10 +89,9 @@ named client-deny rules and scoped migration access before copying existing
 lists, resource versions or initialization receipts. The User runtime selects
 its current database until its separate write and rollback handoff.
 
-The named database configuration uses `user-data` for existing list reads
-while the temporary write pause remains active. Apply after final
-reconciliation and verify existing authenticated reads before the separate
-plan resumes writes.
+User reads and writes existing lists in `user-data`. Resume writes after
+the authenticated read check, then verify a post-cutover write and a
+compatible rollback revision that uses the same database.
 
 ## Offline verification
 
