@@ -7,7 +7,6 @@ import test_registry_transition as fixture
 from jwcrypto import jwk
 from test_private_recovery import OWNER, UID, VAULT
 
-from app.private_resources.authority_cutover import UserAuthorityCutover
 from app.private_resources.authority_views import PrivateAuthorityViews
 from app.private_resources.key_renewals import PrivateKeyRenewals
 from app.private_resources.legacy_baselines import LegacyVaultBaselines, _sha, verified_baseline
@@ -43,9 +42,8 @@ class UserKeyRenewalTests(unittest.TestCase):
         sample.setUp()
         self.addCleanup(sample.doCleanups)
         self.sample = sample
-        cutover = UserAuthorityCutover(sample.store)
         sample.stage_frozen_scope()
-        cutover.install(UID, VAULT, sample.packet, now=1000)
+        sample.stage_transferred_authority()
         self.now = 1000
         self.service = PrivateKeyRenewals(sample.store, clock=lambda: self.now)
         self.overview = self.service.overview(UID, VAULT)
@@ -280,7 +278,6 @@ class UserKeyRenewalTests(unittest.TestCase):
 
         original_path = "hub_operations/" + digest([OWNER, "key-renewal", OPERATION])
         sample.vault = previous_vault
-        cutover = UserAuthorityCutover(sample.store)
         sample.stage_frozen_scope(
             baselineDigest=baseline,
             extra_operations={original_path: {key: field(value) for key, value in record.items()}},
@@ -313,15 +310,12 @@ class UserKeyRenewalTests(unittest.TestCase):
             "ownerKeyIds": sorted(current.active_key_ids),
             "archive": {"state": "active", "version": 2, "digest": changed["digest"]},
         }
-        cutover.install(
-            UID,
-            VAULT,
+        sample.stage_transferred_authority(
             {
                 **sample.packet,
                 "signedTransition": sample.sign(transition),
                 "firstBundle": first_user,
-            },
-            now=1000,
+            }
         )
         service = PrivateKeyRenewals(sample.store, clock=lambda: 1100)
         expected = owner_renewal_response(receipt)

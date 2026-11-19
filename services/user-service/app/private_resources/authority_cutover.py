@@ -1,4 +1,4 @@
-"""Install the first User authority from a frozen, account-scoped Hub witness."""
+"""Read and verify the committed User vault authority and recorded migration proof."""
 
 import os
 from typing import Literal
@@ -19,8 +19,6 @@ from folioview_shared.identity import owner_key
 
 from ..firestore_reads import read_documents
 from ..resources import FirestoreUserResourceStore, ResourceUnavailable, SQLiteUserResourceStore
-from .legacy_baselines import _sha
-from .original_operations import original_fence_receipts
 from .recovery import COLLECTION as HEADS
 from .recovery import (
     ClosedModel,
@@ -32,12 +30,11 @@ from .recovery import (
     OperationId,
     RegistryHead,
     Version,
-    build_recovery_head,
 )
 from .registry_pages import COLLECTION as HISTORY
-from .registry_pages import MAX_ENTRY_BYTES, _index
-from .registry_transition import UserRegistryTransition, transition_packet
-from .report_sources import HOLDINGS_FENCES, HoldingsFence, holdings_fence_key
+from .registry_pages import _index
+from .registry_transition import UserRegistryTransition
+from .report_sources import HOLDINGS_FENCES
 from .source_invalidations import INVALIDATION_RECEIPTS, SOURCE_INDEX
 
 WITNESSES = "user_private_handover_witnesses"
@@ -87,34 +84,8 @@ def _witness(raw, owner, vault):
     return value
 
 
-def _restore_terminal_state(rows, original, restored, expected_digest):
-    terminal = [HoldingsFence.model_validate(row).model_dump() for row in rows]
-    if _sha(canonical_json(terminal)) != expected_digest:
-        raise ContractError("version_conflict")
-    for anchor, fence in zip(original["sources"], terminal, strict=True):
-        binding = fence["binding"]
-        if (
-            (fence["ownerSubject"], fence["vaultId"])
-            != (original["ownerSubject"], original["vaultId"])
-            or binding["ref"] != anchor["resourceRef"]
-            or fence["state"] != "deleted"
-            or fence["currentRevision"] != 0
-            or not any(
-                row["request"]["ref"] == binding["ref"]
-                and row["request"]["reason"] == "deleted"
-                and row["ack"]["acknowledgedSourceEpoch"] == binding["sourceEpoch"]
-                for row in restored.values()
-            )
-        ):
-            raise ContractError("source_unavailable")
-
-
 class UserAuthorityCutover:
-    """An existing Hub freeze must precede installation for the cleaned account.
-
-    A trusted cutover controller owns the witness. Browser submissions supply
-    only a same-root signed transition and cannot create or replace that proof.
-    """
+    """Access the signed registry start retained by the completed authority transfer."""
 
     def __init__(self, store):
         self.store = store
@@ -141,150 +112,6 @@ class UserAuthorityCutover:
                 raise ContractError("authorization_unavailable")
         elif "K_SERVICE" in os.environ:
             raise ContractError("authorization_unavailable")
-
-    def preflight(self, uid, vault, *, now):
-        self._named_store()
-        owner = owner_key(uid)
-        witness, previous, live = self._read(
-            ((WITNESSES, owner), (HANDOVERS, owner), (HEADS, owner))
-        )
-        if previous is not None:
-            receipt, head = self._installed(previous, live, owner, vault)
-            return {
-                "contractVersion": CONTRACT_VERSION,
-                "status": "installed",
-                "vaultId": vault,
-                "rootKeyId": head.rootKeyId,
-                "operationId": receipt.operationId,
-            }
-        if live is not None:
-            raise ContractError("version_conflict")
-        proof = _witness(witness, owner, vault)
-        original = self.verifier.baselines.read(owner, vault, proof.baselineDigest)
-        operations = self.verifier.baselines.read(owner, vault, proof.operationsDigest)
-        if original is None or operations is None:
-            raise ContractError("source_unavailable")
-        source = strict_json_loads(original)
-        if source["rootKeyId"] != proof.rootKeyId:
-            raise ContractError("version_conflict")
-        self.verifier._previous(source, now)
-        receipts = original_fence_receipts(source, operations)
-        _restore_terminal_state(
-            self._read(self._tombstone_cells(source)), source, receipts, proof.tombstonesDigest
-        )
-        return {
-            "contractVersion": CONTRACT_VERSION,
-            "status": "ready",
-            "vaultId": vault,
-            "rootKeyId": proof.rootKeyId,
-            "vaultVersion": source["version"],
-        }
-
-    @staticmethod
-    def _tombstone_cells(original):
-        return tuple(
-            (
-                HOLDINGS_FENCES,
-                holdings_fence_key(
-                    original["ownerSubject"],
-                    original["vaultId"],
-                    anchor["resourceRef"]["resourceId"],
-                ),
-            )
-            for anchor in original["sources"]
-        )
-
-    def install(self, uid, vault, body, *, now):
-        self._named_store()
-        packet = transition_packet(body)
-        owner, packet_digest = owner_key(uid), _sha(canonical_json(packet))
-        lock, last, current = (WITNESSES, owner), (HANDOVERS, owner), (HEADS, owner)
-        try:
-            witness, previous, head = self._read((lock, last, current))
-            if previous is not None:
-                return self._replay(previous, head, owner, vault, packet_digest)
-            if head is not None:
-                raise ContractError("version_conflict")
-            proof = _witness(witness, owner, vault)
-            candidate = self.verifier.prepare(uid, vault, proof.baselineDigest, packet, now=now)
-            original = candidate.original
-            if proof.rootKeyId != original["rootKeyId"]:
-                raise ContractError("version_conflict")
-            operations = self.verifier.baselines.read(owner, vault, proof.operationsDigest)
-            if operations is None:
-                raise ContractError("source_unavailable")
-            original_receipts = original_fence_receipts(original, operations)
-            next_start = candidate.start.head()
-            recovery = build_recovery_head(
-                cursor=candidate.start,
-                registry_start=next_start,
-                vault_version=candidate.receipt["nextVaultVersion"],
-                archive=original["archiveBoundary"],
-                sources=[],
-                now=now,
-            )
-            if not recovery["devices"]:
-                raise ContractError("key_authorization_required")
-            recovery["handover"] = {
-                "operationId": packet["operationId"],
-                "baselineDigest": proof.baselineDigest,
-                "writerEpoch": proof.writerEpoch,
-            }
-            receipt = CutoverReceipt.model_validate(
-                {
-                    **candidate.receipt,
-                    "rootKeyId": proof.rootKeyId,
-                    "writerEpoch": proof.writerEpoch,
-                }
-            ).model_dump()
-            first = {
-                "head": next_start,
-                "bundle": packet["firstBundle"],
-                "rootJwk": original["rootJwk"],
-            }
-            if len(canonical_json(first)) > MAX_ENTRY_BYTES:
-                raise ContractError("payload_too_large")
-            entry_key = _index(
-                owner, vault, next_start["registryEpoch"], next_start["registrySequence"]
-            )
-            tombstones = self._tombstone_cells(original)
-            created = {
-                current: recovery,
-                last: {
-                    "packetDigest": packet_digest,
-                    "freezeId": proof.freezeId,
-                    "signedTransition": packet["signedTransition"],
-                    "receipt": receipt,
-                },
-                (HISTORY, entry_key): first,
-                (SOURCE_INDEX, owner): {"ownerSubject": owner, "vaultId": vault, "entries": []},
-                **{(INVALIDATION_RECEIPTS, key): row for key, row in original_receipts.items()},
-            }
-
-            def commit(read, create):
-                fresh, prior, live = read((lock, last, current))
-                if prior is not None:
-                    return self._replay(prior, live, owner, vault, packet_digest)
-                if fresh != witness or live is not None:
-                    raise ContractError("version_conflict")
-                _restore_terminal_state(
-                    read(tombstones), original, original_receipts, proof.tombstonesDigest
-                )
-                untouched = tuple(cell for cell in created if cell not in (last, current))
-                if any(row is not None for row in read(untouched)):
-                    raise ContractError("version_conflict")
-                create(created)
-                return receipt
-
-            return self._transaction(commit, writes=True)
-        except ContractError:
-            raise
-        except ResourceUnavailable as error:
-            if isinstance(error.__cause__, ContractError):
-                raise error.__cause__ from None
-            raise ContractError("authorization_unavailable") from None
-        except (ValidationError, ValueError):
-            raise ContractError("authorization_unavailable") from None
 
     def read_start(self, uid, vault, nonce, *, now, allow_deleted=False):
         validate_schema("OperationIdentifier", nonce)
@@ -352,13 +179,6 @@ class UserAuthorityCutover:
             raise ContractError("authorization_unavailable") from None
         except (ValidationError, ValueError):
             raise ContractError("authorization_unavailable") from None
-
-    @classmethod
-    def _replay(cls, saved, head, owner, vault, digest):
-        receipt, _ = cls._installed(saved, head, owner, vault)
-        if saved["packetDigest"] != digest:
-            raise ContractError("idempotency_conflict")
-        return receipt.model_dump()
 
     @staticmethod
     def _installed(saved, head, owner, vault):

@@ -272,11 +272,11 @@ run "selected_owner_preparation" {
   assert {
     condition = (
       local.environment.USER_PRIVATE_SELECTED_OWNER == var.private_rollout.owner_subject &&
-      local.environment.USER_PRIVATE_HANDOVER == "true" &&
+      !contains(keys(local.environment), "USER_PRIVATE_HANDOVER") &&
       local.environment.USER_PRIVATE_RECOVERY_READ == "true" &&
       length(local.private_current_environment) == 0
     )
-    error_message = "Preparation must expose only selected Owner handover and recovery."
+    error_message = "Preparation must expose only recovery for the selected Owner."
   }
 }
 

@@ -38,7 +38,6 @@ locals {
   portfolio_workload_email = var.private_rollout == null ? null : "${var.private_rollout.portfolio_account_id}@${local.project_id}.iam.gserviceaccount.com"
   private_prepare_environment = var.private_rollout == null ? {} : {
     USER_PRIVATE_SELECTED_OWNER = var.private_rollout.owner_subject
-    USER_PRIVATE_HANDOVER       = "true"
     USER_PRIVATE_RECOVERY_READ  = "true"
   }
   private_current_environment = try(var.private_rollout.phase, null) != "active" ? {} : {

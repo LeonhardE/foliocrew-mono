@@ -25,9 +25,9 @@ The route is off by default. `USER_PRIVATE_RECOVERY_READ=true` enables it
 for local validation and for the production `user-data` database once the
 authoritative writers maintain the projection. Keep it off during data
 copying and while an older release can change authority outside this
-transaction boundary. The cutover must install the projection atomically with
-each recovered authority change or keep the route disabled. The original full
-recovery and legacy authority routes continue through the transition.
+transaction boundary. Authoritative changes update the projection in the same
+transaction. The migrated vault uses the signed User registry start and the
+preserved original history for recovery.
 
 The private Owner reads require the original Firebase Owner token and the
 Web proxy's Google-signed workload identity. The server checks
@@ -39,6 +39,11 @@ signature from its own authorization header.
 [Cloud Run service authentication](https://docs.cloud.google.com/run/docs/authenticating/service-to-service)
 
 ## Original registry pages
+
+`POST /api/v3/private-resources/vaults/{vaultId}/registry-start/read` verifies
+the recorded Owner-signed start and returns it with a fresh nonce for the
+authenticated Owner. The migration receipt and original history remain
+available to the recovery and verification paths.
 
 `POST /api/v3/private-resources/vaults/{vaultId}/registry-pages/read` serves
 original verified bundles for an authenticated Owner under the same activation
