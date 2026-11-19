@@ -21,6 +21,7 @@ from app.private_resources.report_sources import (
 from app.private_resources.source_invalidations import (
     INVALIDATION_RECEIPTS,
     SOURCE_INDEX,
+    PortfolioSourceRevision,
     SourceInvalidations,
     invalidation_receipt_key,
 )
@@ -86,7 +87,7 @@ class SourceInvalidationTests(unittest.TestCase):
                 (key, canonical_json(body).decode()),
             )
 
-    def report(self):
+    def report(self, revision=3):
         return ReportSourceAuthority(self.store).decide(
             UID,
             {
@@ -101,7 +102,7 @@ class SourceInvalidationTests(unittest.TestCase):
                 "attemptId": "synthetic_report_attempt_0001",
                 "reportFingerprint": "a" * 64,
                 "manifestFingerprint": "b" * 64,
-                "resources": [{**self.binding, "sourceRevision": 3}],
+                "resources": [{**self.binding, "sourceRevision": revision}],
             },
         )
 
@@ -127,6 +128,31 @@ class SourceInvalidationTests(unittest.TestCase):
                     "reason": "account_scope_changed",
                 }
             )
+
+    def test_current_portfolio_revision_advances_once_and_never_revives_a_retired_source(self):
+        revision = PortfolioSourceRevision(
+            contractVersion=CONTRACT_VERSION,
+            ownerSubject=OWNER,
+            vaultId=VAULT,
+            ref=self.ref,
+            sourceEpoch=2,
+            sourceRevision=4,
+        )
+        self.assertEqual(self.report(4)["outcome"], "denied")
+        first = self.writer.acknowledge_revision(revision)
+        self.assertEqual(first, revision.model_dump())
+        self.assertEqual(self.writer.acknowledge_revision(revision), first)
+        self.assertEqual(
+            self.writer.acknowledge_revision(revision.model_copy(update={"sourceRevision": 3})),
+            first,
+        )
+        self.assertEqual(self.report(4)["outcome"], "allowed")
+        self.assertEqual(self.writer.heads.read(OWNER), self.head)
+        self.writer.invalidate(self.request)
+        with self.assertRaisesRegex(ContractError, "version_conflict"):
+            self.writer.acknowledge_revision(revision)
+        self.assertEqual(self.report(4)["outcome"], "denied")
+        self.assertEqual(self.read(HOLDINGS_FENCES, self.fence_key)["currentRevision"], 0)
 
     def test_shadow_or_foreign_incarnation_cannot_write_or_create_a_receipt(self):
         different = {**self.ref, "incarnation": "other_incarnation"}
