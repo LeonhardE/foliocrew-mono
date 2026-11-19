@@ -3632,23 +3632,15 @@ export class VaultCore {
     successors: RegistryBundle[],
     at: number,
   ): Promise<Registry[]> {
-    if (successors.length >= (vault.userAuthority ? 129 : 32))
-      throw new VaultError("registry_conflict");
-    const bundles = structuredClone(successors);
+    if (successors.length >= 129) throw new VaultError("registry_conflict");
+    const { first } = await this.checkVault(vault, this.pin);
+    if (first.checkpoint.issuedAt > at) throw new VaultError("registry_conflict");
     const owner = await this.owner;
     const verify = await registryBundleVerifier(vault.rootJwk);
-    // The first bundle always comes from the verified vault. An operation
-    // supplies only successors and cannot choose a separate registry start.
-    const first = vault.userAuthority
-      ? (await this.verifyUserVaultStart(vault, owner, verify)).first
-      : await verify(vault.registryHistory[0], owner, vault.vaultId, undefined, at);
-    if (
-      first.checkpoint.issuedAt > at ||
-      (!vault.userAuthority && first.checkpoint.registrySequence !== 1)
-    )
-      throw new VaultError("registry_conflict");
+    // Use the same already authenticated start as ordinary vault reads. An
+    // operation can supply only signed successors to that start.
     const history = [first];
-    for (const bundle of bundles) {
+    for (const bundle of structuredClone(successors)) {
       const previous = history.at(-1)!;
       const next = await verify(bundle, owner, vault.vaultId, previous, at);
       if (next.checkpoint.registrySequence !== previous.checkpoint.registrySequence + 1)
@@ -3912,8 +3904,13 @@ export class VaultCore {
       ? await this.verifyUserVaultStart(vault, owner, verifyHistory)
       : null;
     let registry: Registry | undefined = user?.first;
-    for (const bundle of vault.registryHistory.slice(user ? 1 : 0))
+    let first = registry;
+    for (const bundle of vault.registryHistory.slice(user ? 1 : 0)) {
       registry = await verifyHistory(bundle, owner, vault.vaultId, registry, this.now());
+      first ??= registry;
+    }
+    if (first!.checkpoint.registrySequence !== (user?.first.checkpoint.registrySequence ?? 1))
+      throw new VaultError("registry_conflict");
     const epoch = user ? 2 : 1;
     if (user && !equal(privateRegistryHead(registry!, epoch), vault.userAuthority!.registry))
       throw new VaultError("registry_conflict");
@@ -3975,7 +3972,7 @@ export class VaultCore {
       )
         throw new VaultError("registry_conflict");
     }
-    return registry!;
+    return { ...registry!, first: first! };
   }
   ownerUnlockStatus() {
     return {
