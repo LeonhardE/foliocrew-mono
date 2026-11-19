@@ -479,7 +479,7 @@ run "user_data_is_opt_in" {
   command = plan
 
   assert {
-    condition     = length(module.user_data_database) == 0
+    condition     = length(module.user_data_database) == 0 && length(google_firebaserules_release.user_data) == 0 && length(module.user_data_runtime_scope) == 0
     error_message = "Preparing the User root must not implicitly provision its database."
   }
 }
@@ -495,9 +495,14 @@ run "user_data_provisions_the_exact_database" {
     condition = (
       length(module.user_data_database) == 1 &&
       module.user_data_database[0].resource_name == "projects/${var.project_id}/databases/user-data" &&
-      module.user_data_database[0].location_id == "northamerica-northeast2"
+      module.user_data_database[0].location_id == "northamerica-northeast2" &&
+      google_firebaserules_release.user_data[0].name == "cloud.firestore/user-data" &&
+      strcontains(one(google_firebaserules_ruleset.user_data[0].source).files[0].content, "allow read, write: if false;") &&
+      module.user_data_runtime_scope[0].grants["runtime"].member == "serviceAccount:fa-user-runtime@${var.project_id}.iam.gserviceaccount.com" &&
+      module.user_data_runtime_scope[0].grants["runtime"].role == "roles/datastore.user" &&
+      module.user_data_runtime_scope[0].grants["runtime"].condition.expression == "resource.type == 'firestore.googleapis.com/Database' && resource.name == 'projects/${var.project_id}/databases/user-data'"
     )
-    error_message = "Provision only the named User authority database in the selected region."
+    error_message = "Protect the selected User database and scope its existing runtime to the exact named resource."
   }
 }
 
