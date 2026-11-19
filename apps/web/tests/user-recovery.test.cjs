@@ -23,7 +23,9 @@ const PAGE = VAULT + "/registry-pages/read";
 const CHECK = VAULT + "/handover/check";
 const HANDOVER = VAULT + "/handover";
 const START = VAULT + "/registry-start/read";
-const PATHS = [EVIDENCE, PAGE, CHECK, HANDOVER, START];
+const ADVANCE = VAULT + "/registry/advance";
+const REGISTER = VAULT + "/holdings-sources/holdings_A";
+const PATHS = [EVIDENCE, PAGE, CHECK, HANDOVER, START, ADVANCE, REGISTER];
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const OWNER = digest("owner_A");
 const HEAD = {
@@ -59,6 +61,20 @@ const HANDOVER_BODY = {
   firstBundle: BUNDLE,
 };
 const START_BODY = { ...SCOPE, profile: routes.REGISTRY_START_PROFILE, nonce: "n".repeat(32) };
+const ADVANCE_BODY = {
+  ...SCOPE,
+  profile: routes.REGISTRY_UPDATE_PROFILE,
+  operationId: "synthetic_registry_update_A",
+  expectedVaultVersion: 2,
+  registryBundle: BUNDLE,
+};
+const REGISTER_BODY = {
+  ...SCOPE,
+  profile: routes.HOLDINGS_REGISTRATION_PROFILE,
+  operationId: "synthetic_holdings_registration_A",
+  sourceId: "holdings_A",
+  command: PROOF,
+};
 const PAGE_PAYLOAD = {
   contractVersion: CONTRACT,
   profile: routes.REGISTRY_PAGE_PROFILE,
@@ -110,7 +126,11 @@ test.before(async () => {
   );
   createProxy = compile(
     "../lib/server/user-recovery.ts",
-    { "server-only": {}, "./owner-transport": transport },
+    {
+      "server-only": {},
+      "./owner-transport": transport,
+      canonicalize: (await import("canonicalize")).default,
+    },
     globals,
   ).createUserRecoveryProxy;
 });
@@ -265,6 +285,68 @@ test("unbound recovery evidence and registry page data stay behind the proxy", a
   assert.equal((await wrongEpoch.proxy(request(PAGE, PAGE_PAYLOAD))).status, 503);
   const extra = fixture({ reply: (input) => response(input, { legacy: "unexpected" }) });
   assert.equal((await extra.proxy(request())).status, 503);
+});
+
+test("User writes bind the original registry receipt and the generated holdings incarnation", async () => {
+  const headers = { "X-FolioView-Contract": CONTRACT };
+  const canonical = (value) =>
+    JSON.stringify(value, (_key, item) =>
+      item && typeof item === "object" && !Array.isArray(item)
+        ? Object.fromEntries(
+            Object.keys(item)
+              .sort()
+              .map((key) => [key, item[key]]),
+          )
+        : item,
+    );
+  const registry = {
+    ...SCOPE,
+    profile: routes.REGISTRY_UPDATE_PROFILE,
+    operationId: ADVANCE_BODY.operationId,
+    requestDigest: digest(canonical(ADVANCE_BODY)),
+    vaultVersion: 3,
+    registry: NEXT_HEAD,
+  };
+  const source = {
+    contractVersion: CONTRACT,
+    source: {
+      sourceEpoch: 1,
+      resourceRef: {
+        kind: "holdings",
+        sourceService: "portfolio",
+        resourceId: "holdings_A",
+        incarnation: "inc_" + digest(PROOF.protected + "." + PROOF.payload).slice(0, 32),
+      },
+    },
+  };
+  const { proxy } = fixture({
+    reply: (input) =>
+      Response.json(input.profile === registry.profile ? registry : source, { headers }),
+  });
+  assert.equal((await proxy(request(ADVANCE, ADVANCE_BODY))).status, 200);
+  assert.equal((await proxy(request(REGISTER, REGISTER_BODY))).status, 200);
+  assert.equal(
+    (await proxy(request(REGISTER, { ...REGISTER_BODY, sourceId: "holdings_B" }))).status,
+    400,
+  );
+  assert.equal(
+    (await proxy(request(ADVANCE, { ...ADVANCE_BODY, expectedVaultVersion: 3 }))).status,
+    503,
+  );
+  const other = fixture({
+    reply: () =>
+      Response.json(
+        {
+          ...source,
+          source: {
+            ...source.source,
+            resourceRef: { ...source.source.resourceRef, incarnation: "inc_other" },
+          },
+        },
+        { headers },
+      ),
+  });
+  assert.equal((await other.proxy(request(REGISTER, REGISTER_BODY))).status, 503);
 });
 
 test("the three handover requests use fixed scope and signed-input receipt identity", async () => {

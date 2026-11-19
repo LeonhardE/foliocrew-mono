@@ -1,11 +1,14 @@
 import "server-only";
 
+import canonicalize from "canonicalize";
 import { createHash } from "node:crypto";
 import {
   HANDOVER_CHECK_PROFILE,
   HANDOVER_PROFILE,
+  HOLDINGS_REGISTRATION_PROFILE,
   RECOVERY_PROFILE,
   REGISTRY_START_PROFILE,
+  REGISTRY_UPDATE_PROFILE,
   USER_RECOVERY_PROXY,
   userRecoveryRoute,
 } from "../user-recovery-route";
@@ -92,6 +95,18 @@ function validRequest(
       registryBundle(value.firstBundle)
     );
   if (rule.profile === REGISTRY_START_PROFILE) return matches(value.nonce, NONCE);
+  if (rule.profile === REGISTRY_UPDATE_PROFILE)
+    return (
+      matches(value.operationId, NONCE) &&
+      integer(value.expectedVaultVersion, 1) &&
+      registryBundle(value.registryBundle)
+    );
+  if (rule.profile === HOLDINGS_REGISTRATION_PROFILE)
+    return (
+      value.sourceId === rule.source &&
+      matches(value.operationId, NONCE) &&
+      signedObject(value.command)
+    );
   if (rule.profile === RECOVERY_PROFILE)
     return (
       matches(value.nonce, NONCE) &&
@@ -254,6 +269,45 @@ function validRegistryStart(value: Json, input: Json) {
 }
 
 function validReply(body: unknown, input: Json, expectedDigest: string) {
+  if (input.profile === HOLDINGS_REGISTRATION_PROFILE) {
+    return (
+      record(input.command) &&
+      fields(body, ["contractVersion", "source"]) &&
+      body.contractVersion === CONTRACT &&
+      fields(body.source, ["resourceRef", "sourceEpoch"]) &&
+      body.source.sourceEpoch === 1 &&
+      fields(body.source.resourceRef, ["kind", "sourceService", "resourceId", "incarnation"]) &&
+      body.source.resourceRef.kind === "holdings" &&
+      body.source.resourceRef.sourceService === "portfolio" &&
+      body.source.resourceRef.resourceId === input.sourceId &&
+      body.source.resourceRef.incarnation ===
+        "inc_" + digest(input.command.protected + "." + input.command.payload).slice(0, 32)
+    );
+  }
+  if (input.profile === REGISTRY_UPDATE_PROFILE) {
+    return (
+      fields(body, [
+        "contractVersion",
+        "profile",
+        "ownerSubject",
+        "vaultId",
+        "operationId",
+        "requestDigest",
+        "vaultVersion",
+        "registry",
+      ]) &&
+      body.contractVersion === CONTRACT &&
+      body.profile === input.profile &&
+      body.ownerSubject === input.ownerSubject &&
+      body.vaultId === input.vaultId &&
+      body.operationId === input.operationId &&
+      body.requestDigest === expectedDigest &&
+      integer(body.vaultVersion, 2) &&
+      body.vaultVersion === Number(input.expectedVaultVersion) + 1 &&
+      head(body.registry) &&
+      Number(body.registry.registryEpoch) >= 2
+    );
+  }
   if (!fieldsBelongToRequest(body, input)) return false;
   switch (input.profile) {
     case RECOVERY_PROFILE:
@@ -349,7 +403,9 @@ export function createUserRecoveryProxy(options: Options = {}) {
       const expectedDigest =
         rule.profile === RECOVERY_PROFILE
           ? digest(JSON.stringify(input, [...rule.keys].sort()))
-          : "";
+          : rule.profile === REGISTRY_UPDATE_PROFILE
+            ? digest(canonicalize(input) ?? fail())
+            : "";
       const result = await forwardResponse(response, signal, (body) =>
         validReply(body, input, expectedDigest),
       );
