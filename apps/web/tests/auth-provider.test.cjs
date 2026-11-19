@@ -159,6 +159,11 @@ function mountProvider({
   const imports = {
     "@/lib/currency-preferences": currencyContracts,
     "@/lib/language-preferences": languageContracts,
+    "@/lib/account-preference-reads": require("./resource-library-helpers.cjs").compile(
+      "../lib/account-preference-reads.ts",
+      { "./workspace-cache": cacheContracts },
+      { setTimeout, clearTimeout },
+    ),
     "@/lib/fx-follows": fxContracts,
     react,
     "react/jsx-runtime": { jsx: (type, props) => ({ type, props }) },
@@ -2962,6 +2967,15 @@ test("Traditional language store crosses the actual authenticated Config boundar
     env: { NEXT_PUBLIC_CONFIG_API_BASE_URL: "https://config.example.test" },
     fetchProfile: async (url, options) => {
       if (url.endsWith("/api/v1/me")) return profileResponse("a");
+      if (options.method === "GET") {
+        assert.equal(url, "https://config.example.test/api/v2/preferences");
+        return Response.json({
+          ui: { state: "available", preferences: null, version: 0 },
+          language: { state: "available", ...remote },
+          currency: { state: "unavailable" },
+          effective: {},
+        });
+      }
       assert.equal(url, "https://config.example.test/api/v2/preferences/language");
       if (options.method === "PUT") {
         const body = JSON.parse(options.body);
@@ -3012,6 +3026,58 @@ test("Traditional language store crosses the actual authenticated Config boundar
   } finally {
     first.dispose();
     restored?.dispose();
+    harness.unmount();
+  }
+});
+
+test("three preference views coalesce into one scoped read and refresh without legacy GETs", async () => {
+  let loads = 0;
+  const harness = mountProvider({
+    fetchProfile: async (url, options) => {
+      const owner = options.headers.Authorization.endsWith("-a") ? "a" : "b";
+      if (url.endsWith("/api/v1/me")) return profileResponse(owner);
+      assert.ok(url.endsWith("/api/v2/preferences"));
+      assert.equal(options.method, "GET");
+      loads++;
+      return Response.json({
+        ui: { state: "available", preferences: null, version: 0 },
+        language: {
+          state: "available",
+          preferences: { language: owner === "a" ? "zh-Hant" : "en" },
+          version: loads,
+        },
+        currency: { state: "unavailable" },
+        effective: {},
+      });
+    },
+  });
+  try {
+    harness.emitUser(user("a"));
+    await settle();
+    const read = (path, preferenceRead = "cached", key = "a:1") =>
+      harness.actions.requestPrivate("config", path, key, { preferenceRead });
+    const language = "/api/v2/preferences/language";
+    const [ui, choice, currency] = await Promise.all([
+      read("/api/v1/preferences"),
+      read(language),
+      read("/api/v2/preferences/currency"),
+    ]);
+    assert.equal(loads, 1);
+    assert.deepEqual(await ui.json(), { preferences: null, version: 0 });
+    assert.equal((await choice.json()).preferences.language, "zh-Hant");
+    assert.equal(currency.status, 503);
+    assert.equal((await (await read(language)).json()).version, 1);
+    const sameFlight = await Promise.all([read(language, "fresh"), read(language, "fresh")]);
+    assert.equal(loads, 2);
+    for (const response of sameFlight) assert.equal((await response.json()).version, 2);
+
+    harness.emitUser(user("b"));
+    await settle();
+    await assert.rejects(read(language), /account session changed/);
+    const byNewOwner = await read(language, "cached", harness.actions.sessionKey);
+    assert.equal((await byNewOwner.json()).preferences.language, "en");
+    assert.equal(loads, 3);
+  } finally {
     harness.unmount();
   }
 });

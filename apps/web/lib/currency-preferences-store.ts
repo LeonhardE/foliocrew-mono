@@ -1,3 +1,4 @@
+import type { PreferenceReadMode } from "./account-preference-reads";
 import {
   CURRENCY_PREFERENCES_PATH,
   effectivePortfolioCurrency,
@@ -16,7 +17,12 @@ export type CurrencyPreferenceState = Readonly<{
 }>;
 type Request = (
   path: string,
-  options: { method: "GET" | "PUT"; signal: AbortSignal; json?: unknown },
+  options: {
+    method: "GET" | "PUT";
+    signal: AbortSignal;
+    json?: unknown;
+    preferenceRead?: PreferenceReadMode;
+  },
 ) => Promise<Response>;
 
 /** One account/session. Unknown writes are read back before any further save. */
@@ -29,6 +35,7 @@ export class CurrencyPreferenceStore {
   #running = false;
   #intent: PortfolioCurrency | null = null;
   #needsRead = true;
+  #readMode: PreferenceReadMode = "cached";
   #conflicts = 0;
   #controller: AbortController | null = null;
   #timeout: number;
@@ -67,6 +74,7 @@ export class CurrencyPreferenceStore {
   retry() {
     if (!this.#active || this.#running || !this.#state.error) return;
     this.#needsRead = true;
+    this.#readMode = "fresh";
     this.#conflicts = 0;
     this.#emit({ error: null });
     this.#run();
@@ -76,6 +84,7 @@ export class CurrencyPreferenceStore {
     const age = Date.now() - this.#readAt;
     if (!force && this.#state.snapshot && age >= 0 && age < 60_000) return;
     this.#needsRead = true;
+    this.#readMode = "fresh";
     this.#run();
   }
   dispose() {
@@ -97,6 +106,7 @@ export class CurrencyPreferenceStore {
           const response = await this.#request(CURRENCY_PREFERENCES_PATH, {
             method,
             signal: controller.signal,
+            ...(method === "GET" ? { preferenceRead: this.#readMode } : {}),
             ...(json === undefined ? {} : { json }),
           });
           if (!this.#active || controller.signal.aborted)
@@ -157,6 +167,7 @@ export class CurrencyPreferenceStore {
           });
           if (reply.status === 409) {
             if (++this.#conflicts > 2) throw new Error("Currency conflict");
+            this.#readMode = "fresh";
             await this.#load();
             continue;
           }

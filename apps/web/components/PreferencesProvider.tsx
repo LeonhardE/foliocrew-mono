@@ -88,7 +88,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const requestPreferences = useCallback(
-    async (method: "GET" | "PUT") => {
+    async (method: "GET" | "PUT", fresh = false) => {
       if (!owner || ownerRef.current !== owner || requestRef.current) return;
       const current = stateRef.current;
       if (
@@ -118,10 +118,11 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
         });
       }, 20_000);
       try {
-        const readCurrent = async () => {
+        const readCurrent = async (recheck = false) => {
           const response = await requestPrivate("config", "/api/v1/preferences", owner, {
             method: "GET",
             signal: controller.signal,
+            preferenceRead: recheck ? "fresh" : "cached",
           });
           if (!ownsRequest()) return null;
           if (!response.ok) throw new Error("Preferences request failed");
@@ -129,7 +130,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
           return ownsRequest() ? snapshot : null;
         };
         if (method === "GET") {
-          const snapshot = await readCurrent();
+          const snapshot = await readCurrent(fresh);
           if (!snapshot) return;
           const { preferences, version } = snapshot;
           // Only a successful, explicitly missing record may adopt guest choices.
@@ -165,7 +166,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
           if (!ownsRequest()) return;
           if (response.status === 409) {
             if (attempt === 2) throw new Error("Preferences kept changing");
-            const snapshot = await readCurrent();
+            const snapshot = await readCurrent(true);
             if (!snapshot) return;
             const latest = stateRef.current;
             publish({
@@ -306,7 +307,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     if (!owner || ownerRef.current !== owner || requestRef.current) return;
     const current = stateRef.current;
     if (current.owner !== owner || !current.error) return;
-    void requestPreferences(current.loaded ? "PUT" : "GET");
+    void requestPreferences(current.loaded ? "PUT" : "GET", true);
   }, [owner, requestPreferences, accountLanguage.retry]);
 
   const preferencesPending = Boolean(

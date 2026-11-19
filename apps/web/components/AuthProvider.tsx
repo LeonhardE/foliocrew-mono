@@ -2,6 +2,12 @@
 import { holdingsViewRequest } from "@/lib/holdings-view";
 import { taskDetailRequest } from "@/lib/task-detail-read";
 import { taskOverviewRequest } from "@/lib/task-overview-request";
+import {
+  ACCOUNT_PREFERENCES_PATH,
+  AccountPreferenceReads,
+  type PreferenceReadMode,
+  type PreferenceSection,
+} from "@/lib/account-preference-reads";
 import { CURRENCY_PREFERENCES_PATH, currencyUpdate } from "@/lib/currency-preferences";
 import { FX_FOLLOWS_PATH, fxPreferences } from "@/lib/fx-follows";
 import { LANGUAGE_PREFERENCES_PATH, languageUpdate } from "@/lib/language-preferences";
@@ -44,6 +50,7 @@ const CONFIG_API_BASE_URL = process.env.NEXT_PUBLIC_CONFIG_API_BASE_URL || API_B
 export type PrivateService = "user" | "config" | "portfolio" | "agent-hub";
 type PrivateMethod = "GET" | "PUT" | "DELETE" | "POST" | "PATCH";
 type PrivateRequestOptions = {
+  preferenceRead?: PreferenceReadMode;
   coalesceDisplay?: boolean;
   coalesceDisplayScope?: string;
   method?: PrivateMethod;
@@ -662,7 +669,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const generationRef = useRef(0);
   const requestRef = useRef<AbortController | null>(null);
   const displayReads = useRef(new DisplayReadPool());
-  useEffect(() => () => displayReads.current.clear(), []);
+  const preferenceReads = useRef(new AccountPreferenceReads());
+  useEffect(
+    () => () => {
+      displayReads.current.clear();
+      preferenceReads.current.clear();
+    },
+    [],
+  );
+  useEffect(() => {
+    if (state.status !== "authenticated") preferenceReads.current.clear();
+  }, [state.status]);
   const verifiedSessionRef = useRef<{ key: string; user: User } | null>(null);
 
   useEffect(() => {
@@ -875,235 +892,267 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     else await signIn();
   }, [signIn, verifyUser]);
 
-  const requestPrivate = useCallback(
-    async (
-      service: PrivateService,
-      path: string,
-      sessionKey: string,
-      options: PrivateRequestOptions = {},
-    ): Promise<Response> => {
-      // Only a fixed route on its owning service may receive a Firebase token.
-      const method = options.method ?? "GET";
-      if (
-        options.coalesceDisplayScope !== undefined &&
-        (!options.coalesceDisplay ||
+  const requestPrivate = useCallback(async function requestPrivate(
+    service: PrivateService,
+    path: string,
+    sessionKey: string,
+    options: PrivateRequestOptions = {},
+  ): Promise<Response> {
+    // Only a fixed route on its owning service may receive a Firebase token.
+    const method = options.method ?? "GET";
+    const preferenceSection: PreferenceSection | null =
+      service !== "config"
+        ? null
+        : path === "/api/v1/preferences"
+          ? "ui"
+          : path === LANGUAGE_PREFERENCES_PATH
+            ? "language"
+            : path === CURRENCY_PREFERENCES_PATH
+              ? "currency"
+              : null;
+    const unifiedPreferences = service === "config" && path === ACCOUNT_PREFERENCES_PATH;
+    if (
+      (unifiedPreferences && method !== "GET") ||
+      (options.preferenceRead !== undefined &&
+        (!preferenceSection ||
           method !== "GET" ||
-          service !== "agent-hub" ||
-          path !== "/api/v3/resources/display" ||
-          typeof options.coalesceDisplayScope !== "string" ||
-          !options.coalesceDisplayScope ||
-          new TextEncoder().encode(options.coalesceDisplayScope).byteLength > 8192)
+          !["cached", "fresh"].includes(options.preferenceRead)))
+    )
+      throw Error("Invalid private API request");
+    if (
+      options.coalesceDisplayScope !== undefined &&
+      (!options.coalesceDisplay ||
+        method !== "GET" ||
+        service !== "agent-hub" ||
+        path !== "/api/v3/resources/display" ||
+        typeof options.coalesceDisplayScope !== "string" ||
+        !options.coalesceDisplayScope ||
+        new TextEncoder().encode(options.coalesceDisplayScope).byteLength > 8192)
+    )
+      throw new Error("Invalid private API request");
+    let origin: string;
+    let contractHeaders: Record<string, string> = {};
+    let maxBodyBytes = 589824;
+    let validatedJson = options.json;
+    if (service === "portfolio" || service === "agent-hub") {
+      let rule = encryptedRule(service, path, method);
+      if (
+        service === "portfolio" &&
+        method === "POST" &&
+        /^\/api\/v2\/holdings\/sources\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}\/mutations\/(fence|disconnect|delete)$/.test(
+          path,
+        )
+      )
+        rule = {
+          method: "POST",
+          keys: ["contractVersion", "expectedVersion", "expectedSourceEpoch", "command"],
+          idempotent: true,
+          author: true,
+        };
+      if (
+        service === "portfolio" &&
+        method === "PUT" &&
+        /^\/api\/v2\/holdings\/sources\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}\/snapshots\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(
+          path,
+        )
+      ) {
+        rule = {
+          method: "PUT",
+          keys: ["contractVersion", "expectedRevision", "carrier"],
+          idempotent: true,
+          author: true,
+        };
+      }
+      if (!rule) throw new Error("Invalid private API path");
+      const capability = service === "portfolio" ? "portfolio" : "agentHub";
+      const configured =
+        ownerConfigRef.current.status === "ready" && ownerConfigRef.current.flags[capability]
+          ? service === "portfolio"
+            ? "/api/private/portfolio"
+            : "/api/private/agent-hub"
+          : developmentEncryptedOrigin(service);
+      if (!configured) throw new Error("Encrypted workspace is not configured.");
+      origin = configured;
+      contractHeaders = encryptedRequestHeaders(rule, options);
+      maxBodyBytes = rule.maxBytes ?? 589824;
+    } else {
+      const currencyPath = service === "config" && path === CURRENCY_PREFERENCES_PATH;
+      const languagePath = service === "config" && path === LANGUAGE_PREFERENCES_PATH;
+      const preferencesPath = Boolean(preferenceSection) || unifiedPreferences;
+      const followsPath = service === "user" && path === "/api/v1/channel-follows";
+      const fxPath = service === "user" && path === FX_FOLLOWS_PATH;
+      const jsonPath = preferencesPath || followsPath || fxPath;
+      const watchlistPath =
+        /^\/api\/v1\/watchlist(?:\/[A-Z][A-Z0-9]{0,9}(?:[.-][A-Z0-9]{1,3})?)?$/.test(path);
+      if (
+        (service !== "user" && service !== "config") ||
+        (service === "user" && !watchlistPath && !followsPath && !fxPath) ||
+        (service === "config" && !preferencesPath)
+      )
+        throw new Error("Invalid private API path");
+      if (
+        !["GET", "PUT", "DELETE"].includes(method) ||
+        Object.keys(options.headers ?? {}).length ||
+        (options.json !== undefined && (!jsonPath || method !== "PUT")) ||
+        (jsonPath && (method === "DELETE" || (method === "PUT" && options.json === undefined)))
       )
         throw new Error("Invalid private API request");
-      let origin: string;
-      let contractHeaders: Record<string, string> = {};
-      let maxBodyBytes = 589824;
-      let validatedJson = options.json;
-      if (service === "portfolio" || service === "agent-hub") {
-        let rule = encryptedRule(service, path, method);
+      if (followsPath && method === "PUT") {
         if (
-          service === "portfolio" &&
-          method === "POST" &&
-          /^\/api\/v2\/holdings\/sources\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}\/mutations\/(fence|disconnect|delete)$/.test(
-            path,
-          )
-        )
-          rule = {
-            method: "POST",
-            keys: ["contractVersion", "expectedVersion", "expectedSourceEpoch", "command"],
-            idempotent: true,
-            author: true,
-          };
-        if (
-          service === "portfolio" &&
-          method === "PUT" &&
-          /^\/api\/v2\/holdings\/sources\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}\/snapshots\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(
-            path,
-          )
-        ) {
-          rule = {
-            method: "PUT",
-            keys: ["contractVersion", "expectedRevision", "carrier"],
-            idempotent: true,
-            author: true,
-          };
-        }
-        if (!rule) throw new Error("Invalid private API path");
-        const capability = service === "portfolio" ? "portfolio" : "agentHub";
-        const configured =
-          ownerConfigRef.current.status === "ready" && ownerConfigRef.current.flags[capability]
-            ? service === "portfolio"
-              ? "/api/private/portfolio"
-              : "/api/private/agent-hub"
-            : developmentEncryptedOrigin(service);
-        if (!configured) throw new Error("Encrypted workspace is not configured.");
-        origin = configured;
-        contractHeaders = encryptedRequestHeaders(rule, options);
-        maxBodyBytes = rule.maxBytes ?? 589824;
-      } else {
-        const currencyPath = service === "config" && path === CURRENCY_PREFERENCES_PATH;
-        const languagePath = service === "config" && path === LANGUAGE_PREFERENCES_PATH;
-        const preferencesPath = path === "/api/v1/preferences" || currencyPath || languagePath;
-        const followsPath = service === "user" && path === "/api/v1/channel-follows";
-        const fxPath = service === "user" && path === FX_FOLLOWS_PATH;
-        const jsonPath = preferencesPath || followsPath || fxPath;
-        const watchlistPath =
-          /^\/api\/v1\/watchlist(?:\/[A-Z][A-Z0-9]{0,9}(?:[.-][A-Z0-9]{1,3})?)?$/.test(path);
-        if (
-          (service !== "user" && service !== "config") ||
-          (service === "user" && !watchlistPath && !followsPath && !fxPath) ||
-          (service === "config" && !preferencesPath)
-        )
-          throw new Error("Invalid private API path");
-        if (
-          !["GET", "PUT", "DELETE"].includes(method) ||
-          Object.keys(options.headers ?? {}).length ||
-          (options.json !== undefined && (!jsonPath || method !== "PUT")) ||
-          (jsonPath && (method === "DELETE" || (method === "PUT" && options.json === undefined)))
+          !exact(options.json, ["expectedRevision", "items"]) ||
+          !Number.isSafeInteger(options.json.expectedRevision) ||
+          options.json.expectedRevision < 0
         )
           throw new Error("Invalid private API request");
-        if (followsPath && method === "PUT") {
-          if (
-            !exact(options.json, ["expectedRevision", "items"]) ||
-            !Number.isSafeInteger(options.json.expectedRevision) ||
-            options.json.expectedRevision < 0
-          )
-            throw new Error("Invalid private API request");
-          validatedJson = {
-            expectedRevision: options.json.expectedRevision,
-            items: channelInputs(options.json.items),
-          };
-          maxBodyBytes = 131072;
-        }
-        if (currencyPath && method === "PUT") {
-          validatedJson = currencyUpdate(options.json);
-          maxBodyBytes = 1024;
-        }
-        if (languagePath && method === "PUT") {
-          validatedJson = languageUpdate(options.json);
-          maxBodyBytes = 1024;
-        }
-        if (fxPath && method === "PUT") {
-          if (
-            !exact(options.json, ["expectedVersion", "preferences"]) ||
-            !Number.isSafeInteger(options.json.expectedVersion) ||
-            options.json.expectedVersion < 0
-          )
-            throw new Error("Invalid private API request");
-          validatedJson = {
-            expectedVersion: options.json.expectedVersion,
-            preferences: fxPreferences(options.json.preferences),
-          };
-          maxBodyBytes = 4096;
-        }
-        origin = service === "user" ? USER_API_BASE_URL : CONFIG_API_BASE_URL;
+        validatedJson = {
+          expectedRevision: options.json.expectedRevision,
+          items: channelInputs(options.json.items),
+        };
+        maxBodyBytes = 131072;
       }
-      const body = validatedJson === undefined ? undefined : JSON.stringify(validatedJson);
-      if (body !== undefined && new TextEncoder().encode(body).byteLength > maxBodyBytes)
-        throw new Error("Invalid private API request");
-      const session = verifiedSessionRef.current;
-      const ownsSession = () =>
-        session !== null &&
-        session.key === sessionKey &&
-        verifiedSessionRef.current === session &&
-        firebaseUserRef.current === session.user &&
-        authRef.current?.currentUser?.uid === session.user.uid &&
-        !signingOutRef.current &&
-        !options.signal?.aborted;
-      const sessionChanged = () => {
-        const error = new Error("Your account session changed. Please try again.");
-        error.name = "SessionChangedError";
-        return error;
-      };
-      if (!ownsSession() || !session) throw sessionChanged();
-      const invalidateSession = () => {
-        ++generationRef.current;
-        verifiedSessionRef.current = null;
-        requestRef.current?.abort();
-        setState({
-          status: "error",
-          profile: null,
-          error: "Your session could not be verified. Sign out and sign in again.",
-          hasFirebaseUser: true,
-        });
-      };
-      // Ask the SDK for a current token for each request; never persist a second copy.
-      let token: string;
-      try {
-        token = await untilSignal(session.user.getIdToken(), options.signal, sessionChanged);
-      } catch {
-        if (ownsSession()) invalidateSession();
-        throw sessionChanged();
+      if (currencyPath && method === "PUT") {
+        validatedJson = currencyUpdate(options.json);
+        maxBodyBytes = 1024;
       }
-      if (!ownsSession()) throw sessionChanged();
-      const send = (signal: AbortSignal | undefined) => {
-        if (!ownsSession() || signal?.aborted) throw sessionChanged();
-        return fetch(`${origin}${path}`, {
-          method,
-          headers: {
-            ...contractHeaders,
-            Authorization: `Bearer ${token}`,
-            ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-          },
-          ...(body === undefined ? {} : { body }),
-          cache: "no-store",
-          credentials: "omit",
-          redirect: "error",
-          referrerPolicy: "no-referrer",
-          signal,
-        });
-      };
-      // Leave room for mutations; duplicate only opted-in display GETs. Fresh
-      // authority reads and read-only POST queries get unique queue entries.
-      const readOnly =
-        method === "GET" ||
-        (method === "POST" &&
-          service === "portfolio" &&
-          /^\/api\/v3\/holdings\/sources\/[^/]+\/view\/query$/.test(path)) ||
-        (method === "POST" &&
-          service === "agent-hub" &&
-          /^\/api\/v3\/tasks\/[^/]+\/overview\/query$/.test(path)) ||
-        (method === "POST" && service === "agent-hub" && path === "/api/v2/tasks/packets/query") ||
-        (method === "POST" &&
-          /^\/api\/v3\/task-center\/[^/]+\/(?:trash\/query|tasks\/[^/]+\/(?:results|progress|detail)\/query)$/.test(
-            path,
-          ));
-      const response =
-        options.coalesceDisplay && method === "GET"
-          ? await displayReads.current.run(
-              JSON.stringify(
-                options.coalesceDisplayScope === undefined
-                  ? [sessionKey, service, path, contractHeaders]
-                  : [sessionKey, service, path, contractHeaders, options.coalesceDisplayScope],
-              ),
-              send,
-              options.signal,
-            )
-          : readOnly
-            ? await displayReads.current.queue(send, options.signal)
-            : await untilSignal(
-                send(options.signal).then((reply) => {
-                  if (!ownsSession()) {
-                    void reply.body?.cancel().catch(() => {});
-                    throw sessionChanged();
-                  }
-                  return reply;
-                }),
-                options.signal,
-                sessionChanged,
-              );
+      if (languagePath && method === "PUT") {
+        validatedJson = languageUpdate(options.json);
+        maxBodyBytes = 1024;
+      }
+      if (fxPath && method === "PUT") {
+        if (
+          !exact(options.json, ["expectedVersion", "preferences"]) ||
+          !Number.isSafeInteger(options.json.expectedVersion) ||
+          options.json.expectedVersion < 0
+        )
+          throw new Error("Invalid private API request");
+        validatedJson = {
+          expectedVersion: options.json.expectedVersion,
+          preferences: fxPreferences(options.json.preferences),
+        };
+        maxBodyBytes = 4096;
+      }
+      origin = service === "user" ? USER_API_BASE_URL : CONFIG_API_BASE_URL;
+    }
+    const body = validatedJson === undefined ? undefined : JSON.stringify(validatedJson);
+    if (body !== undefined && new TextEncoder().encode(body).byteLength > maxBodyBytes)
+      throw new Error("Invalid private API request");
+    const session = verifiedSessionRef.current;
+    const ownsSession = () =>
+      session !== null &&
+      session.key === sessionKey &&
+      verifiedSessionRef.current === session &&
+      firebaseUserRef.current === session.user &&
+      authRef.current?.currentUser?.uid === session.user.uid &&
+      !signingOutRef.current &&
+      !options.signal?.aborted;
+    const sessionChanged = () => {
+      const error = new Error("Your account session changed. Please try again.");
+      error.name = "SessionChangedError";
+      return error;
+    };
+    if (!ownsSession() || !session) throw sessionChanged();
+    if (preferenceSection && options.preferenceRead) {
+      const response = await preferenceReads.current.read(
+        sessionKey,
+        preferenceSection,
+        options.preferenceRead,
+        (signal) => requestPrivate("config", ACCOUNT_PREFERENCES_PATH, sessionKey, { signal }),
+        options.signal,
+      );
       if (!ownsSession()) {
         void response.body?.cancel().catch(() => {});
         throw sessionChanged();
       }
-      if (response.status === 401) {
-        invalidateSession();
-        throw sessionChanged();
-      }
       return response;
-    },
-    [],
-  );
+    }
+    if (preferenceSection && method === "PUT") preferenceReads.current.invalidate();
+    const invalidateSession = () => {
+      ++generationRef.current;
+      verifiedSessionRef.current = null;
+      preferenceReads.current.clear();
+      requestRef.current?.abort();
+      setState({
+        status: "error",
+        profile: null,
+        error: "Your session could not be verified. Sign out and sign in again.",
+        hasFirebaseUser: true,
+      });
+    };
+    // Ask the SDK for a current token for each request; never persist a second copy.
+    let token: string;
+    try {
+      token = await untilSignal(session.user.getIdToken(), options.signal, sessionChanged);
+    } catch {
+      if (ownsSession()) invalidateSession();
+      throw sessionChanged();
+    }
+    if (!ownsSession()) throw sessionChanged();
+    const send = (signal: AbortSignal | undefined) => {
+      if (!ownsSession() || signal?.aborted) throw sessionChanged();
+      return fetch(`${origin}${path}`, {
+        method,
+        headers: {
+          ...contractHeaders,
+          Authorization: `Bearer ${token}`,
+          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        },
+        ...(body === undefined ? {} : { body }),
+        cache: "no-store",
+        credentials: "omit",
+        redirect: "error",
+        referrerPolicy: "no-referrer",
+        signal,
+      });
+    };
+    // Leave room for mutations; duplicate only opted-in display GETs. Fresh
+    // authority reads and read-only POST queries get unique queue entries.
+    const readOnly =
+      method === "GET" ||
+      (method === "POST" &&
+        service === "portfolio" &&
+        /^\/api\/v3\/holdings\/sources\/[^/]+\/view\/query$/.test(path)) ||
+      (method === "POST" &&
+        service === "agent-hub" &&
+        /^\/api\/v3\/tasks\/[^/]+\/overview\/query$/.test(path)) ||
+      (method === "POST" && service === "agent-hub" && path === "/api/v2/tasks/packets/query") ||
+      (method === "POST" &&
+        /^\/api\/v3\/task-center\/[^/]+\/(?:trash\/query|tasks\/[^/]+\/(?:results|progress|detail)\/query)$/.test(
+          path,
+        ));
+    const response =
+      options.coalesceDisplay && method === "GET"
+        ? await displayReads.current.run(
+            JSON.stringify(
+              options.coalesceDisplayScope === undefined
+                ? [sessionKey, service, path, contractHeaders]
+                : [sessionKey, service, path, contractHeaders, options.coalesceDisplayScope],
+            ),
+            send,
+            options.signal,
+          )
+        : readOnly
+          ? await displayReads.current.queue(send, options.signal)
+          : await untilSignal(
+              send(options.signal).then((reply) => {
+                if (!ownsSession()) {
+                  void reply.body?.cancel().catch(() => {});
+                  throw sessionChanged();
+                }
+                return reply;
+              }),
+              options.signal,
+              sessionChanged,
+            );
+    if (!ownsSession()) {
+      void response.body?.cancel().catch(() => {});
+      throw sessionChanged();
+    }
+    if (response.status === 401) {
+      invalidateSession();
+      throw sessionChanged();
+    }
+    return response;
+  }, []);
 
   const requestNativeAccount = useCallback(
     async (
