@@ -34,7 +34,7 @@ export type TaskOverview = {
   vaultId: string;
   tasks: J;
   capabilities: J;
-  feeds: { persistent: J; foreground: J; archived: J };
+  feeds: { persistent: J; foreground?: J; archived?: J };
   connections: J;
   packets: J | null;
 };
@@ -59,7 +59,7 @@ export function parseTaskOverview(
     v.profile !== "folioview.owner-task-overview.v1" ||
     v.vaultId !== vault ||
     !identifier(vault) ||
-    !exact(v.feeds, ["persistent", "foreground", "archived"])
+    (!exact(v.feeds, ["persistent"]) && !exact(v.feeds, ["persistent", "foreground", "archived"]))
   )
     throw Error("invalid_response");
   const tasks = taskPage(v.tasks);
@@ -91,8 +91,10 @@ export function parseTaskOverview(
   )
     throw Error("invalid_response");
   resultPage("persistent", v.feeds.persistent);
-  resultPage("foreground", v.feeds.foreground);
-  resultPage("foreground", v.feeds.archived);
+  if ("foreground" in v.feeds) {
+    resultPage("foreground", v.feeds.foreground);
+    resultPage("foreground", v.feeds.archived);
+  }
   readReportProviders(v.connections, vault);
   const ids = packetLimit === 4 ? overviewPacketIds(tasks, known) : [];
   if (v.packets !== null) {

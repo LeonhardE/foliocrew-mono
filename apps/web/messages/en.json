@@ -1499,6 +1499,7 @@
   },
   "taskCenter": {
     "title": "Task center",
+    "retiredReportLink": "This earlier report has been retired.",
     "taskList": "Tasks",
     "noTasks": "No tasks yet.",
     "refresh": "Refresh",

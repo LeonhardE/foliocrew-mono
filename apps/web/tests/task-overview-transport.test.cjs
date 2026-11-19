@@ -14,6 +14,21 @@ function config(send, patch = {}) {
     ...patch,
   };
 }
+test("overview accepts persistent-only and complete compatibility feeds", () => {
+  const legacy = body();
+  assert.deepEqual(overview.parseTaskOverview(legacy, "vault_A", []).feeds, legacy.feeds);
+  const feeds = { persistent: legacy.feeds.persistent };
+  assert.deepEqual(overview.parseTaskOverview({ ...legacy, feeds }, "vault_A", []).feeds, feeds);
+  assert.throws(
+    () =>
+      overview.parseTaskOverview(
+        { ...legacy, feeds: { ...feeds, archived: legacy.feeds.archived } },
+        "vault_A",
+        [],
+      ),
+    /invalid_response/,
+  );
+});
 test("overview subscribers cancel independently and an immutable receipt cannot poison another consumer", async () => {
   let release,
     sends = 0;

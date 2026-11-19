@@ -290,7 +290,7 @@ test("fresh route reentry uses zero requests and expired reentry sends known nam
     h.close();
   }
 });
-test("explicit list refresh remains one request and report refresh four requests", async () => {
+test("explicit list refresh takes one request and persistent report refresh takes two", async () => {
   const h = harness();
   try {
     let x = await h.ready();
@@ -301,7 +301,7 @@ test("explicit list refresh remains one request and report refresh four requests
     start = h.calls.length;
     await h.current.r.reload();
     await h.ready();
-    assert.equal(h.calls.length - start, 4);
+    assert.equal(h.calls.length - start, 2);
     assert.equal(h.calls.filter((c) => c.path.endsWith("/overview/query")).length, 1);
   } finally {
     h.close();
