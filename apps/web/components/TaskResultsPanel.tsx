@@ -33,7 +33,6 @@ export function TaskResultsPanel({
   }, [
     detail?.row.metadata.resultId,
     detail?.row.metadata.stateVersion,
-    detail?.historical,
     model.scope,
     model.canWrite,
     model.pending,
@@ -156,7 +155,7 @@ export function TaskResultsPanel({
       <ReportDialog
         id="task-result"
         open={Boolean(detail) && Boolean(model.scope)}
-        identity={`${model.scope}:${detail?.row.metadata.resultId}:${detail?.row.metadata.revision ?? 0}`}
+        identity={`${model.scope}:${detail?.row.metadata.resultId}`}
         title={detail?.content.title ?? t("title")}
         closeLabel={t("close")}
         onClose={close}
@@ -167,29 +166,26 @@ export function TaskResultsPanel({
               <span>{agentName(model.providerFor(detail.row))}</span>
               <span>{t(`trigger.${detail.row.triggerKind}`)}</span>
               <time>{date(detail.row.metadata.receivedAt)}</time>
-              {detail.historical && <span>{t("historical")}</span>}
             </div>
-            {!detail.historical && (
-              <div className={styles.reportActions}>
-                <button
-                  disabled={model.busy || model.pending || !model.canWrite}
-                  aria-pressed={detail.row.metadata.starred}
-                  onClick={() =>
-                    void model.change(detail.row, { starred: !detail.row.metadata.starred })
-                  }
-                >
-                  {t(detail.row.metadata.starred ? "unstar" : "star")}
-                </button>
-                <button
-                  disabled={model.busy || model.pending || !model.canWrite}
-                  onClick={() =>
-                    void model.change(detail.row, { archived: !detail.row.metadata.archived })
-                  }
-                >
-                  {t(detail.row.metadata.archived ? "unarchive" : "archive")}
-                </button>
-              </div>
-            )}
+            <div className={styles.reportActions}>
+              <button
+                disabled={model.busy || model.pending || !model.canWrite}
+                aria-pressed={detail.row.metadata.starred}
+                onClick={() =>
+                  void model.change(detail.row, { starred: !detail.row.metadata.starred })
+                }
+              >
+                {t(detail.row.metadata.starred ? "unstar" : "star")}
+              </button>
+              <button
+                disabled={model.busy || model.pending || !model.canWrite}
+                onClick={() =>
+                  void model.change(detail.row, { archived: !detail.row.metadata.archived })
+                }
+              >
+                {t(detail.row.metadata.archived ? "unarchive" : "archive")}
+              </button>
+            </div>
             <p className={styles.summary}>{detail.content.summary}</p>
             {detail.content.sections.map((section, i) => (
               <section key={section.sectionId} aria-label={t("section", { number: i + 1 })}>
@@ -204,25 +200,6 @@ export function TaskResultsPanel({
                     <li key={i}>{v}</li>
                   ))}
                 </ul>
-              </details>
-            )}
-            {model.history.length > 1 && (
-              <details>
-                <summary>{t("history")}</summary>
-                <select
-                  aria-label={t("history")}
-                  value={detail.row.metadata.revision ?? ""}
-                  onChange={(e) => void model.open(detail.row, Number(e.target.value))}
-                >
-                  {model.history.map((m) => (
-                    <option key={m.revision} value={m.revision}>
-                      {t("version", { number: m.revision })}
-                    </option>
-                  ))}
-                </select>
-                {model.historyHasMore && (
-                  <button onClick={() => void model.moreHistory()}>{t("loadMore")}</button>
-                )}
               </details>
             )}
           </article>

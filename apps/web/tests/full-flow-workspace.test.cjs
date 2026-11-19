@@ -17,11 +17,6 @@ const {
 const CONTRACT = "folioview.agent-workspace.v2.0";
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 const clone = (value) => JSON.parse(JSON.stringify(value));
-const deferred = () => {
-  let resolve;
-  const promise = new Promise((yes) => (resolve = yes));
-  return { promise, resolve };
-};
 const response = (body, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
@@ -151,45 +146,16 @@ function hooks() {
     },
   };
 }
-const metadata = (resultId, connectionId, revision = 1) => ({
-  resultId,
-  taskId: "task_synthetic_daily",
-  runId: "run_" + resultId,
-  revision,
-  deliveryRevision: 1,
-  envelopeFingerprint: String(revision).repeat(64),
-  connectionId,
-  receivedAt: "2026-10-30T10:00:00Z",
-  taskVersion: 1,
-  stateVersion: 0,
-  read: false,
-  starred: false,
-  archived: false,
-  manifestId: "manifest_" + resultId,
-  keyEpoch: 1,
-});
-
-/**
- * Compose current workspace routing and resource hooks with the retained legacy
- * report reader inside its task host. The current result consumer has dedicated
- * task-results-hook/reader tests; this fixture preserves historical reader behavior and
- * useInbox with one owner workspace. Hooks/window/HTTP and the decryptor are
- * explicit synthetic facades: this checks orchestration, not native React/DOM,
- * Firebase, server authorization or cryptography (covered in the crypto suite).
- */
-function flow({ hash = "", search = "", owner = "A:1", locked = false, hidden = false } = {}) {
+/** Compose current workspace navigation with its real watchlist and resource hooks. */
+function flow({ hash = "", search = "", owner = "A:1" } = {}) {
   const pageHooks = hooks(),
-    inboxHooks = hooks(),
     libraryHooks = hooks();
   const windows = eventTarget(),
     documents = eventTarget(),
     intervals = new Map(),
     timers = new Map();
   let serial = 0,
-    visible = !hidden,
-    active = "markets",
-    asyncOpen = null,
-    transport = null;
+    active = "markets";
   const location = { origin: "http://localhost", pathname: "/", search, hash };
   const window = {
     ...windows,
@@ -220,14 +186,14 @@ function flow({ hash = "", search = "", owner = "A:1", locked = false, hidden = 
   const document = {
     ...documents,
     get visibilityState() {
-      return visible ? "visible" : "hidden";
+      return "visible";
     },
   };
   const shared = {
     owner,
     authenticated: Boolean(owner),
     authStatus: owner ? "authenticated" : "anonymous",
-    phase: locked ? "locked" : "unlocked",
+    phase: owner ? "unlocked" : "anonymous",
     vaultGeneration: 1,
     vaultConfigured: true,
     canWriteState: false,
@@ -237,39 +203,12 @@ function flow({ hash = "", search = "", owner = "A:1", locked = false, hidden = 
       shared.phase = "locked";
       shared.vaultGeneration++;
     },
-    async refreshVault() {
-      return { registryHistory: [{ checkpoint: {}, entries: [] }] };
-    },
-    async openResult(input) {
-      opens.push({ owner: shared.owner, id: input.result.metadata.resultId });
-      return asyncOpen ? asyncOpen(input) : privateContent(input.result.metadata);
-    },
   };
-  const calls = [],
-    opens = [];
-  const store = {
-    A: {
-      rows: [metadata("result_A1", "agent_A1"), metadata("result_A2", "agent_A2")],
-      list: stocks(),
-    },
-    B: { rows: [metadata("result_B1", "agent_B1")], list: stocks("OTHER") },
-  };
-  function privateContent(meta) {
-    return {
-      title: `PRIVATE_${meta.resultId}_revision_${meta.revision}`,
-      summary: "PRIVATE_SYNTHETIC_SUMMARY",
-      sections: [{ sectionId: "risk", markdown: "PRIVATE_SYNTHETIC_BODY" }],
-      citations: [],
-      limitations: [],
-    };
-  }
+  const calls = [];
+  const store = { A: { list: stocks() } };
   const requestPrivate = async (service, route, sessionKey, options = {}) => {
     assert.equal(sessionKey, shared.owner, "Only the current owner may start a request");
     calls.push({ service, route, owner: sessionKey, options });
-    if (transport) {
-      const supplied = await transport({ service, route, sessionKey, options });
-      if (supplied !== undefined) return supplied;
-    }
     const current = store[sessionKey.split(":")[0]];
     if (service === "user" && route.startsWith("/api/v1/watchlist")) {
       if (options.method === "PUT")
@@ -278,54 +217,7 @@ function flow({ hash = "", search = "", owner = "A:1", locked = false, hidden = 
     }
     if (route === "/api/v1/channel-follows") return response(channels());
     if (route === "/api/v2/resources/catalogue") return response(catalogue());
-    const rows = current.rows;
-    if (route.startsWith("/api/v2/results?"))
-      return response({ contractVersion: CONTRACT, items: rows, nextCursor: null });
-    if (route === "/api/v2/results/counts")
-      return response({
-        contractVersion: CONTRACT,
-        profile: "folioview.owner-result-counts.v1",
-        asOf: "2026-10-30T10:00:00Z",
-        counts: {
-          all: rows.length,
-          unread: rows.length,
-          starred: 0,
-          archived: 0,
-          total: rows.length,
-        },
-      });
-    const id = /^\/api\/v2\/results\/([^/?]+)/.exec(route)?.[1];
-    const row = rows.find((candidate) => candidate.resultId === id);
-    if (!row) return response({ code: "not_found" }, 404);
-    const revision =
-      Number(new URL(route, location.origin).searchParams.get("revision")) || row.revision;
-    if (/\/evidence$/.test(route))
-      return response({
-        contractVersion: CONTRACT,
-        profile: "folioview.owner-result-evidence.v1",
-        receipt: { receivedAt: row.receivedAt },
-        manifest: { entries: [] },
-        authorProof: { registrySequence: 1 },
-        registryProofs: [
-          {
-            registrySequence: 1,
-            checkpointDigest: "a".repeat(64),
-            path: `/api/v2/results/${id}/revisions/${/\/revisions\/(\d+)/.exec(route)[1]}/registries/1`,
-          },
-        ],
-      });
-    if (/\/revisions\?/.test(route))
-      return response({
-        contractVersion: CONTRACT,
-        items: [row, { ...row, revision: 2, envelopeFingerprint: "2".repeat(64) }],
-        nextCursor: null,
-      });
-    return response({
-      contractVersion: CONTRACT,
-      metadata: { ...row, revision, envelopeFingerprint: String(revision).repeat(64) },
-      signedObject: { protected: "opaque", payload: "ciphertext", signature: "synthetic" },
-      keyProofs: {},
-    });
+    return response({ code: "not_found" }, 404);
   };
   const auth = {
     useAuth: () => ({
@@ -338,7 +230,6 @@ function flow({ hash = "", search = "", owner = "A:1", locked = false, hidden = 
   };
   const watchlistTypes = compile("../lib/watchlist.ts");
   const links = compile("../lib/inbox-link.ts", {}, { window });
-  const inboxTypes = compile("../lib/inbox-types.ts");
   const useWatchlist = compile(
     "../components/useWatchlist.ts",
     {
@@ -357,31 +248,12 @@ function flow({ hash = "", search = "", owner = "A:1", locked = false, hidden = 
     },
     { window, document },
   ).useResourceLibrary;
-  const useInbox = compile(
-    "../components/useInbox.ts",
-    { react: inboxHooks.react, "@/components/AuthProvider": auth, "@/lib/inbox-types": inboxTypes },
-    { window, document },
-  ).useInbox;
   const jsx = (type, props, key) => ({ type, props, key });
   const ResourcePanel = () => null,
     TasksPanel = () => null,
     AgentsPanel = () => null,
     Sidebar = () => null,
     WatchlistAction = () => null;
-  const InboxPanel = compile(
-    "../components/InboxPanel.tsx",
-    {
-      react: inboxHooks.react,
-      "react/jsx-runtime": { jsx, jsxs: jsx },
-      "next-intl": { useLocale: () => "en", useTranslations: () => (key) => key },
-      "./useInbox": { useInbox },
-      "./SafeReportMarkdown": { SafeReportMarkdown: () => null, reportLink: () => false },
-      "@/lib/inbox-link": links,
-      "./InboxPanel.module.css": { __esModule: true, default: {} },
-      "./PasskeyHelp": { PasskeyHelp: () => null },
-    },
-    { window, document },
-  ).default;
   const noData = () => ({ data: null, loading: false, hasSettled: true, error: "" });
   const Dashboard = compile(
     "../components/WorkspaceShell.tsx",
@@ -411,7 +283,6 @@ function flow({ hash = "", search = "", owner = "A:1", locked = false, hidden = 
       "@/components/ResourcesPanel": { __esModule: true, default: ResourcePanel },
       "@/components/TasksPanel": { __esModule: true, default: TasksPanel },
       "@/components/AgentsPanel": { __esModule: true, default: AgentsPanel },
-      "@/components/InboxPanel": { __esModule: true, default: InboxPanel },
       "@/components/useHoldingsWorkspace": { useHoldingsWorkspace: () => shared },
       "@/lib/ui-messages": { localizeMessage: (message) => message ?? "" },
       "@/lib/inbox-link": links,
@@ -429,26 +300,19 @@ function flow({ hash = "", search = "", owner = "A:1", locked = false, hidden = 
     },
     { window },
   ).default;
-  let page, inbox, resources;
+  let page, resources;
   const render = (flush = true) => {
     page = pageHooks.run(() => Dashboard(), flush);
     active = find(page, (n) => n.type === Sidebar).props.activeView;
-    const props = find(page, (n) => n.type === TasksPanel)?.props ?? {
-      workspace: shared,
-      active: false,
-    };
-    inbox = inboxHooks.run(() => InboxPanel(props), flush).props.model;
     resources = libraryHooks.run(
       () => useResourceLibrary({ active: active === "resources" }),
       flush,
     );
-    return { page, inbox, resources, active };
+    return { page, resources, active };
   };
   return {
     shared,
     calls,
-    opens,
-    store,
     location,
     links,
     render,
@@ -486,36 +350,8 @@ function flow({ hash = "", search = "", owner = "A:1", locked = false, hidden = 
       windows.emit(event);
       return render();
     },
-    visible(next) {
-      visible = next;
-      documents.emit("visibilitychange");
-      return render();
-    },
-    owner(next, unlocked = false) {
-      shared.owner = next;
-      shared.authenticated = Boolean(next);
-      shared.authStatus = next ? "authenticated" : "anonymous";
-      shared.phase = unlocked ? "unlocked" : next ? "locked" : "anonymous";
-      shared.vaultGeneration++;
-      return render();
-    },
-    unlock() {
-      shared.phase = "unlocked";
-      shared.vaultGeneration++;
-      return render();
-    },
-    deferOpen(callback) {
-      asyncOpen = callback;
-    },
-    transport(callback) {
-      transport = callback;
-    },
-    poll() {
-      for (const fn of [...intervals.values()]) fn();
-    },
     close() {
       pageHooks.close();
-      inboxHooks.close();
       libraryHooks.close();
       assert.equal(intervals.size, 0);
     },
@@ -539,12 +375,12 @@ test("public result links are closed canonical fragments and OAuth handoff retai
     "https://example.test/#inbox/result/r",
   ])
     assert.equal(h.links.readInboxResultLink(hash), null, hash);
-  assert.equal(h.links.inboxResultHref("r\n", 1), null);
+  assert.equal(h.links.readInboxResultLink("#inbox/result/r\n/revisions/1"), null);
   assert.equal(h.render().active, "markets");
   h.location.search = "?native_request=request_synthetic&native_nonce=nonce_synthetic";
   assert.equal(h.link("#inbox/result/result_A1").active, "agents");
   await h.settle();
-  assert.equal(h.opens.length, 0);
+  assert.ok(h.calls.every(({ route }) => !route.startsWith("/api/v2/results")));
   h.close();
 });
 
@@ -584,170 +420,6 @@ test("Market edits and resource discovery use the same owner source through the 
   h.close();
 });
 
-test("a direct locked link waits for unlock, keeps history exact and survives a memory lock", async () => {
-  const h = flow({ hash: "#inbox/result/result_A1/revisions/2", locked: true });
-  let state = await h.ready();
-  assert.equal(state.active, "tasks");
-  assert.equal(h.opens.length, 0);
-  assert.ok(h.calls.every((call) => !/\/results\/result_/.test(call.route)));
-  h.unlock();
-  state = await h.settle();
-  assert.equal(state.inbox.selected.metadata.revision, 2);
-  assert.equal(state.inbox.selected.historical, true);
-  assert.equal(state.inbox.selected.content.title, "PRIVATE_result_A1_revision_2");
-  assert.ok(h.calls.every((call) => call.options.method !== "PATCH"));
-  const unlockedWorkspace = h.shared;
-  const direct = new URL("/" + h.links.inboxResultHref("result_A2", 1), h.location.origin);
-  h.link(direct.hash);
-  state = await h.settle();
-  assert.equal(
-    h.shared,
-    unlockedWorkspace,
-    "Same-document report navigation keeps the owner Worker",
-  );
-  assert.equal(state.inbox.selected.metadata.resultId, "result_A2");
-  h.shared.lock();
-  state = h.render(false);
-  assert.equal(state.inbox.selected, null, "The render observing lock already masks plaintext");
-  h.render();
-  h.unlock();
-  state = await h.settle();
-  assert.equal(state.inbox.selected.metadata.revision, 1);
-  assert.equal(state.inbox.selected.metadata.resultId, "result_A2");
-  h.close();
-});
-
-test("hidden and inactive linked lookups resume once, while an explicit refresh retries a failed target", async () => {
-  const h = flow({ hash: "#inbox/result/result_A1", hidden: true });
-  await h.ready();
-  assert.equal(h.opens.length, 0);
-  h.visible(true);
-  let state = await h.settle();
-  assert.equal(state.inbox.selected.metadata.resultId, "result_A1");
-  const late = deferred();
-  h.deferOpen(() => late.promise);
-  h.link("#inbox/result/result_A2");
-  await settle();
-  h.navigate("markets");
-  late.resolve({
-    title: "LATE_PRIVATE",
-    summary: "",
-    sections: [],
-    citations: [],
-    limitations: [],
-  });
-  await h.settle();
-  assert.equal(h.render().active, "markets");
-  h.deferOpen(null);
-  h.link("#inbox/result/result_A2", "popstate");
-  state = await h.settle();
-  assert.equal(state.inbox.selected.metadata.resultId, "result_A2");
-  h.link("#inbox/result/result_missing");
-  state = await h.settle();
-  assert.equal(state.inbox.error, "not_found");
-  const count = () =>
-    h.calls.filter((call) => call.route === "/api/v2/results/result_missing").length;
-  assert.equal(count(), 1);
-  for (let i = 0; i < 3; i++) h.render();
-  assert.equal(count(), 1, "A missing link cannot become an effect retry loop");
-  await state.inbox.reload();
-  await h.settle();
-  assert.equal(
-    count(),
-    2,
-    "A user refresh can explicitly retry a linked result outside the loaded list",
-  );
-  h.close();
-});
-
-test("established-owner changes clear links and fence delayed content; initial anonymous links remain usable", async () => {
-  const h = flow({ hash: "#inbox/result/result_A1", owner: null, locked: true });
-  await h.ready();
-  assert.equal(h.location.hash, "#inbox/result/result_A1");
-  h.owner("A:1", true);
-  let state = await h.settle();
-  assert.equal(state.inbox.selected.metadata.connectionId, "agent_A1");
-  await state.inbox.openResult("result_A2");
-  state = await h.settle();
-  assert.equal(state.inbox.selected.metadata.connectionId, "agent_A2");
-  const late = deferred();
-  h.deferOpen(() => late.promise);
-  h.link("#inbox/result/result_A1");
-  await settle();
-  state = h.owner(null);
-  assert.equal(state.inbox.selected, null);
-  assert.equal(h.location.hash, "");
-  h.owner("B:1", true);
-  late.resolve({
-    title: "PRIVATE_FROM_A",
-    summary: "",
-    sections: [],
-    citations: [],
-    limitations: [],
-  });
-  h.deferOpen(null);
-  state = await h.settle();
-  assert.equal(state.inbox.selected, null);
-  assert.ok(state.inbox.items.every((item) => item.metadata.connectionId === "agent_B1"));
-  const previousCalls = h.calls.length;
-  h.render();
-  await h.settle();
-  assert.ok(h.calls.slice(previousCalls).every((call) => !/result_A/.test(call.route)));
-  h.link("#inbox/result/result_A1");
-  state = await h.settle();
-  assert.equal(state.inbox.error, "not_found");
-  assert.equal(state.inbox.selected, null);
-  h.link("#inbox/result/result_B1");
-  state = await h.settle();
-  assert.equal(state.inbox.selected.metadata.connectionId, "agent_B1");
-  h.close();
-});
-
-test("result arrivals preserve the active page and selection without portfolio synchronization", async () => {
-  const h = flow();
-  await h.ready();
-  const count = h.calls.length;
-  h.store.A.rows.unshift(metadata("result_A_new", "agent_A2"));
-  h.poll();
-  await h.settle();
-  assert.equal(h.render().active, "markets");
-  assert.equal(h.calls.length, count, "Hidden inbox has no polling work");
-  h.navigate("inbox");
-  let state = await h.settle();
-  await state.inbox.openResult("result_A1");
-  state = await h.settle();
-  const selected = state.inbox.selected.content.title;
-  h.store.A.rows.unshift(metadata("result_A_newer", "agent_A1"));
-  h.poll();
-  state = await h.settle();
-  assert.equal(state.active, "tasks");
-  assert.equal(state.inbox.selected.content.title, selected);
-  assert.equal(state.inbox.notice, "new_results");
-  assert.ok(h.calls.every((call) => call.service !== "portfolio"));
-  assert.ok(
-    h.calls.every((call) => !/sync|broker|wealthsimple|refresh-holdings/i.test(call.route)),
-  );
-  h.close();
-});
-
-test("logout discards the old intent but a new anonymous link can be opened by the next signed-in owner", async () => {
-  const h = flow({ hash: "#inbox/result/result_A1" });
-  await h.ready();
-  await h.settle();
-  h.owner(null);
-  assert.equal(h.location.hash, "");
-  h.link("#inbox/result/result_B1/revisions/2");
-  await h.settle();
-  assert.equal(h.location.hash, "#inbox/result/result_B1/revisions/2");
-  h.owner("B:2", true);
-  const state = await h.settle();
-  assert.equal(h.location.hash, "#inbox/result/result_B1/revisions/2");
-  assert.equal(state.inbox.selected.metadata.resultId, "result_B1");
-  assert.equal(state.inbox.selected.metadata.revision, 2);
-  assert.equal(state.inbox.selected.metadata.connectionId, "agent_B1");
-  h.close();
-});
-
 test("first-load Agent and Inbox handoffs wait for parent router setup and ignore a disposed mount", async () => {
   for (const [options, expected] of [
     [{ search: "?native_request=synthetic_request&native_nonce=" + "n".repeat(43) }, "/agents"],
@@ -759,7 +431,7 @@ test("first-load Agent and Inbox handoffs wait for parent router setup and ignor
     await h.settle();
     assert.equal(h.location.pathname, expected);
     assert.equal(h.render().active, expected.slice(1));
-    assert.equal(h.opens.length, 0);
+    assert.ok(h.calls.every(({ route }) => !route.startsWith("/api/v2/results")));
     h.close();
   }
   const h = flow({

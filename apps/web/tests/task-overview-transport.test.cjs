@@ -88,6 +88,7 @@ test("ignored transport abort settles at the original metadata deadline and cann
   const local = compile(
     "../lib/task-overview.ts",
     {
+      "./inbox-types": require("./task-overview-helpers.cjs").inbox,
       "./task-types": types,
       "./task-overview-request": request,
       "./task-result-reader": reader,

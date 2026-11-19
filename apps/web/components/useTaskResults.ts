@@ -9,7 +9,6 @@ import type { PersistentWorkspaceModel } from "./usePersistentWorkspace";
 import { DisplayLru, untilSignal } from "@/lib/workspace-cache";
 import { readReportProviders } from "@/lib/report-provider-attribution";
 import { readInboxResultLink, clearInboxResultLink } from "@/lib/inbox-link";
-import { metadata as foregroundMetadata, metadataPage } from "@/lib/inbox-types";
 import {
   RESULT_CONTRACT as C,
   resultPage,
@@ -57,8 +56,6 @@ export function useTaskResults(
     busy: boolean;
     pending: boolean;
     revision: number;
-    history: J[];
-    historyCursor: string | null;
     selection: string | null;
   }>({
     scope: null,
@@ -71,8 +68,6 @@ export function useTaskResults(
     busy: false,
     pending: false,
     revision: 0,
-    history: [],
-    historyCursor: null,
     selection: null,
   });
   const wanted = useRef(new Map<string, ResultRow>()),
@@ -311,12 +306,7 @@ export function useTaskResults(
       for (const row of incoming) {
         const key = resultKey(row),
           old = rows.current.get(key);
-        if (
-          !old ||
-          (row.kind === "foreground" && row.metadata.revision > old.metadata.revision) ||
-          (row.metadata.revision === old.metadata.revision &&
-            old.metadata.stateVersion <= row.metadata.stateVersion)
-        )
+        if (!old || old.metadata.stateVersion <= row.metadata.stateVersion)
           rows.current.set(key, {
             ...row,
             triggerKind:
@@ -377,7 +367,7 @@ export function useTaskResults(
                 {},
                 start.scope,
               );
-          const page = resultPage("persistent", data);
+          const page = resultPage(data);
           if (live.current.scope !== start.scope || generation.current !== epoch) return;
           feed.current = { cursor: page.nextCursor, done: page.nextCursor === null };
           merge(page.items, start.scope);
@@ -413,7 +403,7 @@ export function useTaskResults(
   );
   loadAgain.current = load;
   const read = useCallback(
-    async (row: ResultRow, freshRead = true, revision?: number) => {
+    async (row: ResultRow, freshRead = true) => {
       if (freshRead) overview?.invalidate(false);
       const start = live.current,
         epoch = generation.current;
@@ -434,7 +424,6 @@ export function useTaskResults(
         scope: start.scope,
         assert,
         fresh: freshRead,
-        revision,
       });
       assert();
       return result;
@@ -479,7 +468,7 @@ export function useTaskResults(
     }
   };
   const open = useCallback(
-    async (row: ResultRow, revision?: number) => {
+    async (row: ResultRow) => {
       const start = live.current;
       if (!start.scope || !start.active) return;
       const serial = ++selectedSerial.current;
@@ -488,30 +477,15 @@ export function useTaskResults(
       try {
         // Ordinary task read applies current deletion visibility before a cached report can be shown.
         await api(`/api/v2/tasks/${row.metadata.taskId}`, { fresh: true }, start.scope);
-        const detail = await read(row, true, revision);
+        const detail = await read(row, true);
         if (serial !== selectedSerial.current || live.current.scope !== start.scope) return;
-        if (!detail.historical) {
-          merge([detail.row], start.scope);
-          titles.current.set(resultKey(row), {
-            version: JSON.stringify(immutableMetadata(detail.row.metadata)),
-            title: detail.content.title,
-          });
-        }
+        merge([detail.row], start.scope);
+        titles.current.set(resultKey(row), {
+          version: JSON.stringify(immutableMetadata(detail.row.metadata)),
+          title: detail.content.title,
+        });
         selections.current.set(row.metadata.taskId, resultKey(row));
-        update({ detail, busy: false, history: [], selection: resultKey(row) }, start.scope);
-        if (row.kind === "foreground") {
-          const history = metadataPage(
-            await api(
-              `/api/v2/results/${row.metadata.resultId}/revisions?limit=20`,
-              {},
-              start.scope,
-            ),
-          );
-          if (history.items.some((m) => m.resultId !== row.metadata.resultId))
-            throw Error("invalid_response");
-          if (serial === selectedSerial.current)
-            update({ history: history.items, historyCursor: history.nextCursor }, start.scope);
-        }
+        update({ detail, busy: false, selection: resultKey(row) }, start.scope);
       } catch (e) {
         if (serial === selectedSerial.current)
           update(
@@ -530,7 +504,6 @@ export function useTaskResults(
           ...s,
           detail:
             s.detail &&
-            !s.detail.historical &&
             resultKey(s.detail.row) === resultKey(row) &&
             s.detail.row.metadata.stateVersion <= row.metadata.stateVersion &&
             JSON.stringify(immutableMetadata(s.detail.row.metadata)) ===
@@ -551,14 +524,11 @@ export function useTaskResults(
         if (pending.current && !retry) throw Error("state_pending");
         if (!retry) {
           const raw = await api(
-              resultRecordPath(row.kind, start.workspace.vault!.vaultId, row.metadata.resultId),
+              resultRecordPath(start.workspace.vault!.vaultId, row.metadata.resultId),
               { fresh: true },
               start.scope,
             ),
-            meta: J =
-              row.kind === "persistent"
-                ? persistentResultMetadata(raw.metadata)
-                : foregroundMetadata(raw.metadata);
+            meta = persistentResultMetadata(raw.metadata);
           if (
             JSON.stringify(immutableMetadata(meta)) !==
             JSON.stringify(immutableMetadata(row.metadata))
@@ -567,10 +537,10 @@ export function useTaskResults(
           const current = { ...row, metadata: meta };
           publishState(current, start.scope);
           if (Object.keys(changes).every((k) => meta[k] === changes[k])) return;
-          const packet =
-            row.kind === "persistent"
-              ? await start.workspace.signPersistentResultState({ metadata: meta, changes })
-              : await start.workspace.signResultState({ metadata: meta as any, changes });
+          const packet = await start.workspace.signPersistentResultState({
+            metadata: meta,
+            changes,
+          });
           if (live.current.scope !== start.scope) throw Error("cancelled");
           pending.current = { scope: start.scope, row: current, changes, packet };
           update({ pending: true }, start.scope);
@@ -578,8 +548,7 @@ export function useTaskResults(
         const p = pending.current;
         if (!p || p.scope !== start.scope) throw Error("cancelled");
         const ack = await api(
-          resultRecordPath(p.row.kind, start.workspace.vault!.vaultId, p.row.metadata.resultId) +
-            "/state",
+          resultRecordPath(start.workspace.vault!.vaultId, p.row.metadata.resultId) + "/state",
           {
             method: "PATCH",
             json: { contractVersion: C, command: p.packet.command },
@@ -618,7 +587,6 @@ export function useTaskResults(
       const key = `${live.current.scope}:${resultKey(detail.row)}:${detail.row.metadata.stateVersion}`;
       if (
         !live.current.workspace.canWriteState ||
-        detail.historical ||
         detail.row.metadata.read ||
         attemptedRead.current.has(key) ||
         pending.current
@@ -643,8 +611,6 @@ export function useTaskResults(
           ...state,
           rows: [],
           detail: null,
-          history: [],
-          historyCursor: null,
           selection: null,
           ready: false,
           loading: Boolean(scope),
@@ -779,8 +745,6 @@ export function useTaskResults(
       busy: false,
       pending: false,
       revision: 0,
-      history: [],
-      historyCursor: null,
       selection: null,
     });
   }, [scope]);
@@ -873,35 +837,32 @@ export function useTaskResults(
           )
         )
           throw Error("invalid_response");
-        const parsed: ResultRow[] = page.items.map((r: J) => {
+        const parsed: ResultRow[] = [];
+        for (const item of page.items) {
+          if (item.kind === "foreground") continue;
           if (
-            !["persistent", "foreground"].includes(r.kind) ||
-            !["manual", "scheduled", "legacy_unknown"].includes(r.triggerKind)
+            item.kind !== "persistent" ||
+            !["manual", "scheduled", "legacy_unknown"].includes(item.triggerKind)
           )
             throw Error("invalid_response");
-          const metadata =
-            r.kind === "persistent"
-              ? persistentResultMetadata(r.metadata)
-              : foregroundMetadata(r.metadata);
+          const metadata = persistentResultMetadata(item.metadata);
           if (metadata.taskId !== target) throw Error("invalid_response");
-          return { kind: r.kind, metadata, triggerKind: r.triggerKind };
-        });
+          const row: ResultRow = { kind: "persistent", metadata, triggerKind: item.triggerKind };
+          parsed.push(row);
+        }
         if (new Set(parsed.map(resultKey)).size !== parsed.length) throw Error("invalid_response");
-        for (let n = 0; n < parsed.length; n++) {
-          if (parsed[n].kind !== "persistent") continue;
-          attributions.current.set(resultKey(parsed[n]), {
-            triggerKind: parsed[n].triggerKind,
-            provider: page.items[n].attribution?.provider,
+        for (const item of page.items) {
+          if (item.kind !== "persistent") continue;
+          attributions.current.set(`persistent:${item.metadata.resultId}`, {
+            triggerKind: item.triggerKind,
+            provider: item.attribution?.provider,
             taskId: target,
           });
         }
         pageState.cursor = page.nextCursor;
         pageState.done = page.nextCursor === null;
         pageState.fresh = Date.now();
-        merge(
-          parsed.filter((row) => row.kind === "persistent"),
-          start.scope,
-        );
+        merge(parsed, start.scope);
       } catch (e) {
         if (current())
           update({ error: e instanceof Error ? e.message : "request_failed" }, start.scope);
@@ -946,8 +907,6 @@ export function useTaskResults(
     selectedSerial.current++;
     update({
       detail: null,
-      history: [],
-      historyCursor: null,
       selection: selections.current.get(task) ?? null,
     });
   }, [task, update]);
@@ -962,9 +921,8 @@ export function useTaskResults(
       setRetiredReportLink(retired);
       if (!value || retired || !scope) return;
       try {
-        const raw = await api(
-          resultRecordPath("persistent", workspace.vault!.vaultId, value.resultId, value.revision),
-        );
+        if (value.revision !== undefined && value.revision !== 1) throw Error("not_found");
+        const raw = await api(resultRecordPath(workspace.vault!.vaultId, value.resultId));
         const meta = persistentResultMetadata(raw.metadata);
         await api(`/api/v2/tasks/${meta.taskId}`, { fresh: true });
         if (!stopped && link.current === value)
@@ -990,7 +948,7 @@ export function useTaskResults(
     }
     const r = linkedRow;
     setLinkedRow(null);
-    void open(r, link.current?.revision);
+    void open(r);
   }, [
     scope,
     active,
@@ -1030,7 +988,6 @@ export function useTaskResults(
       update({
         rows: [...rows.current.values()],
         detail: null,
-        history: [],
         pending: Boolean(pending.current),
         revision: ++uiRevision.current,
       });
@@ -1098,38 +1055,6 @@ export function useTaskResults(
         }
       : null,
     selection: current.selection,
-    history: current.history,
-    historyHasMore: Boolean(current.historyCursor),
-    moreHistory: async () => {
-      const d = current.detail,
-        cursor = current.historyCursor,
-        start = live.current.scope,
-        serial = selectedSerial.current;
-      if (!d || !cursor || !start) return;
-      try {
-        const p = metadataPage(
-          await api(
-            `/api/v2/results/${d.row.metadata.resultId}/revisions?limit=20&cursor=${encodeURIComponent(cursor)}`,
-            {},
-            start,
-          ),
-        );
-        if (p.items.some((m) => m.resultId !== d.row.metadata.resultId))
-          throw Error("invalid_response");
-        if (serial === selectedSerial.current)
-          update(
-            {
-              history: [
-                ...new Map([...current.history, ...p.items].map((m) => [m.revision, m])).values(),
-              ].slice(0, 32),
-              historyCursor: p.nextCursor,
-            },
-            start,
-          );
-      } catch {
-        update({ error: "request_failed" }, start);
-      }
-    },
     pending: current.pending,
     unreadCounts,
     partial:
@@ -1166,7 +1091,7 @@ export function useTaskResults(
     open,
     close: () => {
       selectedSerial.current++;
-      update({ detail: null, history: [], historyCursor: null });
+      update({ detail: null });
       link.current = null;
       setLinkedRow(null);
       setRetiredReportLink(false);

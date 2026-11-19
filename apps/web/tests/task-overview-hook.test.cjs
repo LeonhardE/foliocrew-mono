@@ -93,6 +93,7 @@ function harness({ count = 2, respond, open, overviewEnabled = true, readDetail 
   const localOverview = compile(
     "../lib/task-overview.ts",
     {
+      "./inbox-types": require("./task-overview-helpers.cjs").inbox,
       "./task-types": types,
       "./task-overview-request": require("./task-overview-helpers.cjs").request,
       "./task-result-reader": reader,

@@ -9,7 +9,7 @@ const jsx = require("react/jsx-runtime"),
 function render({
   ready = true,
   loading = false,
-  historical = false,
+  canWrite = true,
   detail = false,
   read = false,
 } = {}) {
@@ -51,7 +51,7 @@ function render({
   };
   const model = {
     scope: "scope_A",
-    canWrite: true,
+    canWrite,
     rows: ready ? [row] : [],
     ready,
     loading,
@@ -62,7 +62,6 @@ function render({
     providerFor: () => "muse",
     title: () => "PRIVATE <script> report",
     titleFailed: () => false,
-    history: [],
     hasMore: false,
     scroll: { current: new Map() },
     presented() {
@@ -71,7 +70,6 @@ function render({
     detail: detail
       ? {
           row,
-          historical,
           content: {
             title: "PRIVATE <script> report",
             summary: "Summary <img src=https://evil.test/secret>",
@@ -99,9 +97,16 @@ test("task-owned reports display historical Agent and honest unknown provenance,
   assert.match(html, /PRIVATE &lt;script&gt; report/);
   assert.doesNotMatch(render({ read: true }), /Unread result/);
 });
-test("initial loading is distinct from an empty task and historical modal content never offers current-state mutations", () => {
+test("earlier persistent reports remain readable and current controls follow device authorization", () => {
   assert.doesNotMatch(render({ ready: false, loading: true }), /No matching results/);
-  const html = render({ detail: true, historical: true });
-  assert.match(html, /Historical revision/);
-  assert.doesNotMatch(html, /<img|<script|opaque_section_id|>Archive<|>Star</);
+  const html = render({ detail: true });
+  assert.match(html, /Source unknown/);
+  assert.match(html, /Summary &lt;img/);
+  assert.match(html, /<button>Archive<\/button>/);
+  assert.match(html, /<button>Star<\/button>/);
+  assert.doesNotMatch(html, /<img|<script|opaque_section_id/);
+  const readOnly = render({ detail: true, canWrite: false });
+  assert.match(readOnly, /Summary &lt;img/);
+  assert.match(readOnly, /<button disabled="">Archive<\/button>/);
+  assert.match(readOnly, /<button disabled="">Star<\/button>/);
 });

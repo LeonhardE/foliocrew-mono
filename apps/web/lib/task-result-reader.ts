@@ -1,16 +1,14 @@
-import { metadata as foregroundMetadata, metadataPage } from "./inbox-types";
 import type { HoldingsWorkspace } from "@/components/useHoldingsWorkspace";
 import type { DisplayLru } from "./workspace-cache";
 import type { ResultContent } from "./encrypted-types";
 export type ResultRow = {
-  kind: "persistent" | "foreground";
+  kind: "persistent";
   metadata: Record<string, any>;
   triggerKind: "manual" | "scheduled" | "legacy_unknown";
 };
 export type ResultDetail = {
   row: ResultRow;
   content: ResultContent;
-  historical: boolean;
   version: string;
 };
 type J = Record<string, any>;
@@ -42,16 +40,7 @@ export function persistentResultMetadata(v: any) {
     throw Error("invalid_response");
   return v as J;
 }
-export function resultPage(kind: ResultRow["kind"], body: J) {
-  if (kind === "foreground") {
-    const p = metadataPage(body);
-    return {
-      ...p,
-      items: p.items.map(
-        (metadata) => ({ kind, metadata, triggerKind: "legacy_unknown" }) as ResultRow,
-      ),
-    };
-  }
+export function resultPage(body: J) {
   if (
     !fields(body, ["contractVersion", "profile", "items", "nextCursor"]) ||
     body.contractVersion !== RESULT_CONTRACT ||
@@ -67,7 +56,7 @@ export function resultPage(kind: ResultRow["kind"], body: J) {
     items: body.items.map(
       (m: any) =>
         ({
-          kind,
+          kind: "persistent",
           metadata: persistentResultMetadata(m),
           triggerKind: "legacy_unknown",
         }) as ResultRow,
@@ -84,21 +73,9 @@ export function immutableMetadata(meta: J) {
       .map((k) => [k, meta[k]]),
   );
 }
-export function resultRecordPath(
-  kind: ResultRow["kind"],
-  vault: string,
-  result: string,
-  revision?: number,
-) {
-  if (
-    !id(vault) ||
-    !id(result) ||
-    (revision !== undefined && (!Number.isInteger(revision) || revision < 1 || revision > 32))
-  )
-    throw Error("invalid_response");
-  return kind === "persistent"
-    ? `/api/v2/persistent-results/${vault}/${result}`
-    : `/api/v2/results/${result}${revision ? `?revision=${revision}` : ""}`;
+export function resultRecordPath(vault: string, result: string) {
+  if (!id(vault) || !id(result)) throw Error("invalid_response");
+  return `/api/v2/persistent-results/${vault}/${result}`;
 }
 export async function readTaskResult({
   row,
@@ -108,7 +85,6 @@ export async function readTaskResult({
   scope,
   assert,
   fresh = true,
-  revision,
 }: {
   row: ResultRow;
   workspace: HoldingsWorkspace;
@@ -117,9 +93,8 @@ export async function readTaskResult({
   scope: string;
   assert: () => void;
   fresh?: boolean;
-  revision?: number;
 }): Promise<ResultDetail> {
-  const key = `task-results:${scope}:${resultKey(row)}:${revision ?? "head"}`;
+  const key = `task-results:${scope}:${resultKey(row)}`;
   const cached = cache.get(key) as
     { scope: string; version: string; detail: ResultDetail } | undefined;
   if (
@@ -131,98 +106,37 @@ export async function readTaskResult({
     assert();
     return { ...cached.detail, row: { ...cached.detail.row, metadata: row.metadata } };
   }
-  const raw = await api(
-    resultRecordPath(row.kind, workspace.vault!.vaultId, row.metadata.resultId, revision),
-  );
+  const raw = await api(resultRecordPath(workspace.vault!.vaultId, row.metadata.resultId));
   assert();
-  const meta: J =
-    row.kind === "persistent"
-      ? persistentResultMetadata(raw.metadata)
-      : foregroundMetadata(raw.metadata);
+  const meta = persistentResultMetadata(raw.metadata);
   if (
     meta.resultId !== row.metadata.resultId ||
     meta.taskId !== row.metadata.taskId ||
     meta.connectionId !== row.metadata.connectionId ||
-    meta.runId !== row.metadata.runId ||
-    (revision !== undefined && meta.revision !== revision)
+    meta.runId !== row.metadata.runId
   )
     throw Error("invalid_response");
-  let content: ResultContent, version: string;
-  if (row.kind === "persistent") {
-    version = JSON.stringify([
-      immutableMetadata(meta),
-      raw.envelope,
-      raw.manifest,
-      raw.manifestFingerprint,
-      raw.identity,
-      raw.binding,
-      raw.receipt,
-    ]);
-    content =
-      cached?.scope === scope && cached.version === version
-        ? cached.detail.content
-        : await workspace.openPersistentResult({ record: raw, resultId: meta.resultId });
-    assert();
-  } else {
-    const evidence = await api(
-      `/api/v2/results/${meta.resultId}/revisions/${meta.revision}/evidence`,
-    );
-    assert();
-    if (
-      evidence.contractVersion !== RESULT_CONTRACT ||
-      evidence.profile !== "folioview.owner-result-evidence.v1" ||
-      !evidence.authorProof ||
-      !Number.isInteger(evidence.authorProof.registrySequence) ||
-      evidence.authorProof.registrySequence < 1 ||
-      evidence.authorProof.registrySequence > 32 ||
-      !Array.isArray(evidence.registryProofs) ||
-      evidence.registryProofs.length !== evidence.authorProof.registrySequence
-    )
-      throw Error("invalid_response");
-    const bundles = [];
-    for (let n = 0; n < evidence.registryProofs.length; n++) {
-      const p = evidence.registryProofs[n],
-        path = `/api/v2/results/${meta.resultId}/revisions/${meta.revision}/registries/${n + 1}`;
-      if (
-        !fields(p, ["registrySequence", "checkpointDigest", "path"]) ||
-        p.registrySequence !== n + 1 ||
-        p.path !== path ||
-        !/^[a-f0-9]{64}$/.test(p.checkpointDigest)
-      )
-        throw Error("invalid_response");
-      bundles.push(workspace.vault!.registryHistory[n] ?? (await api(path)));
-      assert();
-    }
-    version = JSON.stringify([
-      immutableMetadata(meta),
-      raw.signedObject,
-      raw.keyProofs,
-      evidence,
-      bundles,
-    ]);
-    content =
-      cached?.scope === scope && cached.version === version
-        ? cached.detail.content
-        : await workspace.openResult({
-            result: raw as any,
-            evidence: evidence as any,
-            registryBundles: bundles as any,
-          });
-    assert();
-  }
-  const detail = {
-    row: { ...row, metadata: meta },
-    content,
-    historical: revision !== undefined,
-    version,
-  };
+  const version = JSON.stringify([
+    immutableMetadata(meta),
+    raw.envelope,
+    raw.manifest,
+    raw.manifestFingerprint,
+    raw.identity,
+    raw.binding,
+    raw.receipt,
+  ]);
+  const content =
+    cached?.scope === scope && cached.version === version
+      ? cached.detail.content
+      : await workspace.openPersistentResult({ record: raw, resultId: meta.resultId });
+  assert();
+  const detail = { row: { ...row, metadata: meta }, content, version };
   cache.set(key, { scope, version, detail });
   assert();
   return detail;
 }
 export function stateReceipt(row: ResultRow, changes: J, response: J) {
-  const meta: J =
-    row.kind === "persistent" ? persistentResultMetadata(response) : foregroundMetadata(response);
+  const meta = persistentResultMetadata(response);
   if (
     JSON.stringify(immutableMetadata(meta)) !== JSON.stringify(immutableMetadata(row.metadata)) ||
     meta.stateVersion !== row.metadata.stateVersion + 1 ||

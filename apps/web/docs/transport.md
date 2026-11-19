@@ -78,17 +78,15 @@ requests remain rejected and both Firebase and workload authentication still app
 forwards only its established upstream headers and sends private responses with `no-store`.
 
 Hub forwarding covers owner vault enrollment/registry/source controls and authority tokens,
-resource catalogue, encrypted tasks and versions/transitions, Inbox lists/counts/details/history/
-proofs/state, connection listing/revocation and preparation intent/staging/commit. Only the named
+resource catalogue, encrypted tasks and versions/transitions, persistent report list/detail/state, connection
+listing/revocation, and preparation intent/staging/commit. Only the named
 list/history/detail queries (`limit`, `cursor`, `filter`, `taskId`, `revision`, `deliveryRevision`)
 are allowed on their corresponding reads, with canonical numbers, duplicates/unknowns rejected and
 no encoded path selection. Writes preserve only their required operation/author headers and exact
 bounded original JSON. Hub state controls have the actual 65536-byte limit; preparation commit
 is limited to 8192 bytes, and other writes never exceed 589824 bytes. Formal task/result responses
-use existing shared schemas; custom Hub profiles retain closed top-level fields. The exact stage
-descriptor and formal `ResultMetadata` state ACK have no `contractVersion` field in the current
-producer and are passed unchanged only for those two named operations. Old state ACKs remain
-original operation facts, not an implicit refresh of newer state.
+use existing shared schemas; custom Hub profiles retain closed top-level fields. The stage descriptor has no `contractVersion` field and is passed unchanged for the named
+staging operation. Persistent report state changes return the original operation acknowledgement.
 
 All `/api/v2/agent-authorizations/...` browser-flow endpoints remain excluded: the existing Hub
 protocol requires its own exact issuer Origin and `fv_oauth_flow` cookie. Web does not copy that

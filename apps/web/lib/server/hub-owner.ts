@@ -17,6 +17,7 @@ import { cancellationRequest, cancellationResponse } from "./upload-cancellation
 
 import {
   hubResponse,
+  retiredResultMetadataPage,
   vaultKeyRenewalRequest,
   vaultLifecycleArchive,
   vaultLifecycleCommand,
@@ -134,8 +135,8 @@ function taskDisplayResponse(path: string, body: unknown, request: unknown, uid:
       taskCenterResponse("/api/v3/task-center/capabilities", v.capabilities) &&
       persistentResponse(`/api/v2/persistent-results/${v.vaultId}`, "GET", v.feeds.persistent) &&
       (!v.feeds.foreground ||
-        (hubResponse("/api/v2/results", "GET", v.feeds.foreground) &&
-          hubResponse("/api/v2/results", "GET", v.feeds.archived))) &&
+        (retiredResultMetadataPage(v.feeds.foreground) &&
+          retiredResultMetadataPage(v.feeds.archived))) &&
       persistentResponse("/api/v2/persistent-connections", "GET", v.connections) &&
       (v.packets === null ||
         hubResponse("/api/v2/tasks/packets/query", "POST", v.packets, undefined, ids))
@@ -176,10 +177,7 @@ type Rule = {
   author?: boolean;
   vaultId?: string;
   responseStatus?: 200 | 201;
-  query?: Record<
-    string,
-    "limit" | "cursor" | "filter" | "id" | "revision" | "delivery" | "persistent-cursor"
-  >;
+  query?: Record<string, "limit" | "cursor" | "persistent-cursor">;
   cancel?: { slot: string; id?: string };
 };
 type Config = { origin: string; project: string };
@@ -310,25 +308,6 @@ function route(
     new RegExp(`^/api/v2/tasks/${ID}(?:/versions/(?:[1-9]|[1-4][0-9]|50))?$`).test(path)
   )
     rule = { kind: "read", max: 0 };
-  else if (get && path === "/api/v2/results")
-    rule = {
-      kind: "read",
-      max: 0,
-      query: { limit: "limit", cursor: "cursor", filter: "filter", taskId: "id" },
-    };
-  else if (get && path === "/api/v2/results/counts")
-    rule = { kind: "read", max: 0, query: { taskId: "id" } };
-  else if (get && new RegExp(`^/api/v2/results/${ID}$`).test(path))
-    rule = { kind: "read", max: 0, query: { revision: "revision", deliveryRevision: "delivery" } };
-  else if (get && new RegExp(`^/api/v2/results/${ID}/revisions$`).test(path))
-    rule = { kind: "read", max: 0, query: { limit: "limit", cursor: "cursor" } };
-  else if (
-    get &&
-    new RegExp(
-      `^/api/v2/results/${ID}/revisions/([1-9]|[12][0-9]|3[0-2])/(?:evidence|registries/([1-9]|[12][0-9]|3[0-2]))$`,
-    ).test(path)
-  )
-    rule = { kind: "read", max: 0 };
   else if (
     get &&
     new RegExp(`^/api/v2/agent-connections/${ID}/tasks/${ID}/preparation-intent$`).test(path)
@@ -380,8 +359,6 @@ function route(
     rule = { kind: "task-update", max: 589824, operation: true, author: true };
   else if (request.method === "POST" && new RegExp(`^/api/v2/tasks/${ID}/transitions$`).test(path))
     rule = { kind: "task-transition", max: 589824, operation: true, author: true };
-  else if (request.method === "PATCH" && new RegExp(`^/api/v2/results/${ID}/state$`).test(path))
-    rule = { kind: "control", max: 65536, operation: true, author: true };
   else if (
     request.method === "POST" &&
     new RegExp(`^/api/v2/agent-connections/${ID}/(?:revoke|grants/${ID}/revoke)$`).test(path)
@@ -406,17 +383,9 @@ function route(
       url.searchParams.getAll(key).length !== 1 ||
       (kind === "limit"
         ? !decimal(value, 50)
-        : kind === "revision"
-          ? !decimal(value, 32)
-          : kind === "delivery"
-            ? !decimal(value, Number.MAX_SAFE_INTEGER)
-            : kind === "id"
-              ? !identifier(value)
-              : kind === "persistent-cursor"
-                ? !/^[A-Za-z0-9_-]{22,128}:[1-9][0-9]{0,2}$/.test(value)
-                : kind === "cursor"
-                  ? !/^[A-Za-z0-9_-]{1,2048}$/.test(value)
-                  : !["all", "unread", "starred", "archived"].includes(value))
+        : kind === "persistent-cursor"
+          ? !/^[A-Za-z0-9_-]{22,128}:[1-9][0-9]{0,2}$/.test(value)
+          : !/^[A-Za-z0-9_-]{1,2048}$/.test(value))
     )
       fail("unsupported_query");
   }

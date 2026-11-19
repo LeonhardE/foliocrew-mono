@@ -2,7 +2,7 @@ const { compile } = require("./resource-library-helpers.cjs");
 const types = compile("../lib/task-types.ts");
 const request = compile("../lib/task-overview-request.ts", { "./task-types": types });
 const inbox = compile("../lib/inbox-types.ts");
-const reader = compile("../lib/task-result-reader.ts", { "./inbox-types": inbox });
+const reader = compile("../lib/task-result-reader.ts");
 const providers = compile("../lib/report-provider-attribution.ts");
 const detail = compile("../lib/task-detail-read.ts", {
   "./task-types": types,
@@ -15,6 +15,7 @@ const overview = compile(
     "./task-types": types,
     "./task-overview-request": request,
     "./task-result-reader": reader,
+    "./inbox-types": inbox,
     "./report-provider-attribution": providers,
     "./workspace-cache": compile("../lib/workspace-cache.ts"),
   },

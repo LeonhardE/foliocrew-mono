@@ -41,23 +41,6 @@ const TASK = {
   createdAt: "2026-10-30T00:00:00Z",
   updatedAt: "2026-10-30T00:00:00Z",
 };
-const RESULT = {
-  resultId: "result_A",
-  taskId: "task_A",
-  runId: "run_A",
-  revision: 1,
-  deliveryRevision: 1,
-  envelopeFingerprint: "a".repeat(64),
-  connectionId: "connection_A",
-  receivedAt: "2026-10-30T00:00:00Z",
-  taskVersion: 1,
-  stateVersion: 0,
-  read: false,
-  starred: false,
-  archived: false,
-  manifestId: "manifest_A",
-  keyEpoch: 1,
-};
 const DESCRIPTOR = {
   objectId: "task_A",
   objectType: "task",
@@ -455,33 +438,6 @@ test("named owner reads preserve Firebase and strip cookies, identity, delegatio
       },
     ],
     [
-      "/api/v2/results?filter=unread&limit=1&taskId=task_A",
-      { contractVersion: CONTRACT, items: [RESULT], nextCursor: null },
-    ],
-    [
-      "/api/v2/results/result_A?revision=1&deliveryRevision=1",
-      {
-        contractVersion: CONTRACT,
-        metadata: RESULT,
-        signedObject: SIGNED,
-        keyProofs: { checkpoint: SIGNED, certificates: [SIGNED] },
-      },
-    ],
-    [
-      "/api/v2/results/result_A/revisions?cursor=abc&limit=50",
-      { contractVersion: CONTRACT, items: [RESULT], nextCursor: null },
-    ],
-    ["/api/v2/results/result_A/revisions/32/registries/32", REGISTRY],
-    [
-      "/api/v2/results/counts?taskId=task_A",
-      {
-        contractVersion: CONTRACT,
-        profile: "folioview.owner-result-counts.v1",
-        asOf: "2026-10-30T00:00:00Z",
-        counts: { all: 1, unread: 1, starred: 0, archived: 0, total: 1 },
-      },
-    ],
-    [
       "/api/v2/agent-connections",
       { contractVersion: CONTRACT, items: [], authorizationAttempts: [] },
     ],
@@ -652,7 +608,7 @@ test("public Host origin checks reject cross-origin, ambiguous hosts and forward
   }
 });
 
-test("signed owner writes and the two bare ACK profiles preserve original bytes without retry", async () => {
+test("signed owner writes and the bare stage acknowledgement preserve original bytes without retry", async () => {
   const archive = {
     profile: "folioview.passkey-vault.v1",
     ownerSubject: "owner",
@@ -711,13 +667,6 @@ test("signed owner writes and the two bare ACK profiles preserve original bytes 
         signedObject: SIGNED,
         keyProofs: { checkpoint: SIGNED, certificates: [SIGNED] },
       },
-    ],
-    [
-      "/api/v2/results/result_A/state",
-      "PATCH",
-      { contractVersion: CONTRACT, command: SIGNED },
-      write,
-      RESULT,
     ],
     [STAGE, "PUT", { contractVersion: CONTRACT, envelope: CARRIER }, write, DESCRIPTOR],
     [
@@ -780,11 +729,15 @@ test("closed bodies reject private fields, duplicate JSON and over-budget contro
   }
   for (const raw of [
     '{"contractVersion":"' + CONTRACT + '","contractVersion":"duplicate","command":{}}',
-    " ".repeat(65537),
+    " ".repeat(66561),
   ]) {
     const h = harness();
     const result = await h.proxy(
-      request("/api/v2/results/result_A/state", { method: "PATCH", raw, headers: write }),
+      request("/api/v2/vaults/vault_A/holdings-sources/source_A", {
+        method: "POST",
+        raw,
+        headers: write,
+      }),
     );
     assert.ok([400, 413].includes(result.status));
     assert.equal(h.calls.length, 0);
@@ -828,18 +781,18 @@ test("real Google signature/project/provider/times/UID checks precede Hub access
   assert.equal(h.hub().length, 0);
 });
 
-test("two verified owners share public JWKS only and preserve their own bearer and result bytes", async () => {
+test("two verified owners share public JWKS only and preserve their own bearer and task bytes", async () => {
   const tokenB = await token({ sub: "owner_B" });
   const h = harness({
     upstream: (_url, init) =>
       response({
         contractVersion: CONTRACT,
-        items: init.headers.get("authorization") === "Bearer " + tokenA ? [RESULT] : [],
+        items: init.headers.get("authorization") === "Bearer " + tokenA ? [TASK] : [],
         nextCursor: null,
       }),
   });
-  const first = await h.proxy(request("/api/v2/results"));
-  const second = await h.proxy(request("/api/v2/results", { auth: tokenB }));
+  const first = await h.proxy(request("/api/v2/tasks"));
+  const second = await h.proxy(request("/api/v2/tasks", { auth: tokenB }));
   assert.equal((await first.json()).items.length, 1);
   assert.equal((await second.json()).items.length, 0);
   assert.equal(h.keys().length, 1);
@@ -1429,6 +1382,32 @@ test("persistent list uses its bounded opaque pagination and rejects plaintext u
   const r = await x.proxy(request("/api/v2/persistent-results/vault_A", { auth }));
   assert.equal(r.status, 503);
   assert.doesNotMatch(await r.text(), /CANARY/);
+});
+
+test("all retired foreground report routes stop at the Web proxy", async () => {
+  const h = harness();
+  for (const path of [
+    "/api/v2/results",
+    "/api/v2/results/counts",
+    "/api/v2/results/old_report",
+    "/api/v2/results/old_report/revisions",
+    "/api/v2/results/old_report/revisions/1/evidence",
+    "/api/v2/results/old_report/revisions/1/registries/1",
+  ]) {
+    await error(await h.proxy(request(path)), 400, "malformed_request");
+  }
+  await error(
+    await h.proxy(
+      request("/api/v2/results/old_report/state", {
+        method: "PATCH",
+        headers: write,
+        json: { contractVersion: CONTRACT, command: SIGNED },
+      }),
+    ),
+    400,
+    "malformed_request",
+  );
+  assert.equal(h.calls.length, 0);
 });
 
 test("retired executor and browser pairing routes are refused before any upstream request", async () => {
