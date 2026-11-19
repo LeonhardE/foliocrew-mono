@@ -479,6 +479,24 @@ run "market_cache_is_scoped_to_only_the_default_database" {
   }
 }
 
+run "market_cache_provisioning_creates_only_the_owned_database_boundary" {
+  command = plan
+
+  variables {
+    market_cache_database_enabled = true
+  }
+
+  assert {
+    condition = (
+      length(module.market_cache_database) == 1 &&
+      module.market_cache_database[0].resource_name == "projects/${var.project_id}/databases/market-cache" &&
+      module.market_cache_database[0].location_id == "northamerica-northeast2" &&
+      module.market_database_scope.database_resource_name == "projects/${var.project_id}/databases/(default)"
+    )
+    error_message = "Prepare the Toronto Market cache while the runtime stays on its existing database."
+  }
+}
+
 run "user_execution_business_roles_cannot_create_delete_or_administer_resources" {
   command = plan
 

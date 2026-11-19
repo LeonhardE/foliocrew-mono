@@ -115,6 +115,13 @@ no-change plans remain required for integration.
 
 ## Existing database scope and historical evidence
 
+INF-022 prepares `market-cache` in the administrator bootstrap root. The first
+saved plan sets `market_cache_database_enabled=true` and adds exactly the
+protected Toronto database. Preserve that setting in subsequent administrator
+plans. The running Market service and its scope keep using `(default)` during
+preparation. Publish the new database's deny rules and verify the scoped
+migration identity before copying any cache entries.
+
 `google_project_iam_member.market_cache` remains administrator-owned with its exact condition
 limiting the selected runtime's existing Datastore User role to this project's `(default)`
 database. The shared scope-only module creates no second grant or database owner; application
