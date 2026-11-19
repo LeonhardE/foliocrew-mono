@@ -5,6 +5,7 @@ supplies a root or owner; the Hub verifies workload identity and its narrow
 delegation, and Portfolio independently binds the returned owner/source.
 """
 
+import hashlib
 import json
 import os
 import re
@@ -21,6 +22,10 @@ from folioview_shared.auth import CurrentUser, require_google_user
 from folioview_shared.encrypted.constants import CONTRACT_VERSION, MAX_READ_BYTES
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import canonical_json, strict_json_loads
+from folioview_shared.encrypted.private_resources import (
+    PRIVATE_AUTHORITY_PROFILE,
+    private_authority_lookup,
+)
 from folioview_shared.http import PrivateRoute
 from folioview_shared.identity import owner_key
 
@@ -28,6 +33,11 @@ from .api import _invoke, _read_json, _transport, get_service
 from .holdings import PortfolioService
 
 MAX_AUTHORITY_BYTES = MAX_READ_BYTES
+USER_AUTHORITY_PATH = "/internal/v2/private-resources/portfolio-authority/read"
+_OWNER = re.compile(r"[a-f0-9]{64}\Z")
+_HUB_NUMBERED_ORIGIN = re.compile(
+    r"https://agent-hub-api-([1-9][0-9]{5,19}\.[a-z][a-z0-9-]*[0-9]\.run\.app)\Z"
+)
 _TOKEN = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\Z")
 
 
@@ -73,6 +83,19 @@ def workload_token(audience):
         raise ContractError("authorization_unavailable") from None
 
 
+def user_authority_origin(owner, hub_origin, user_origin, selected_owner):
+    if not selected_owner and not user_origin:
+        return None
+    if _OWNER.fullmatch(selected_owner) is None or not user_origin:
+        raise ContractError("authorization_unavailable")
+    if owner != selected_owner:
+        return None
+    same_deployment = _HUB_NUMBERED_ORIGIN.fullmatch(hub_origin)
+    if same_deployment is None or user_origin != "https://user-api-" + same_deployment[1]:
+        raise ContractError("authorization_unavailable")
+    return user_origin
+
+
 class HubAuthorityClient:
     def __init__(
         self, origin, *, token_factory=workload_token, transport=None, clock=time.monotonic
@@ -82,7 +105,7 @@ class HubAuthorityClient:
         self.transport = transport
         self.clock = clock
 
-    def read(self, uid, source, delegation):
+    def _fetch(self, path, packet, delegation, *, user=False):
         if (
             not isinstance(delegation, str)
             or len(delegation) > 16_384
@@ -105,7 +128,7 @@ class HubAuthorityClient:
             ) as client:
                 with client.stream(
                     "POST",
-                    self.origin + "/internal/v2/portfolio-authorities/read",
+                    self.origin + path,
                     headers={
                         "Authorization": "Bearer " + token,
                         "X-FolioView-Delegation": delegation,
@@ -114,9 +137,7 @@ class HubAuthorityClient:
                         "Cache-Control": "no-store",
                         "Accept-Encoding": "identity",
                     },
-                    content=canonical_json(
-                        {"contractVersion": CONTRACT_VERSION, "sourceId": source}
-                    ),
+                    content=canonical_json(packet),
                 ) as response:
                     if response.status_code in (401, 403, 404):
                         raise ContractError(
@@ -131,7 +152,9 @@ class HubAuthorityClient:
                         != "application/json"
                     ):
                         raise ContractError("source_unavailable")
-                    if response.headers.get("content-encoding", "identity") != "identity":
+                    if response.headers.get("content-encoding", "identity") != "identity" or (
+                        user and response.headers.get("x-folioview-contract") != CONTRACT_VERSION
+                    ):
                         raise ContractError("source_unavailable")
                     body = bytearray()
                     for chunk in response.iter_bytes():
@@ -140,21 +163,103 @@ class HubAuthorityClient:
                         if len(chunk) > MAX_AUTHORITY_BYTES - len(body):
                             raise ContractError("payload_too_large")
                         body.extend(chunk)
-            value = strict_json_loads(bytes(body), max_bytes=MAX_AUTHORITY_BYTES)
-            if (
-                type(value) is not dict
-                or set(value) != {"contractVersion", "authority"}
-                or value["contractVersion"] != CONTRACT_VERSION
-                or type(value["authority"]) is not dict
-                or value["authority"].get("ownerSubject") != owner_key(uid)
-                or value["authority"].get("sourceId") != source
-            ):
-                raise ContractError("recipient_binding_mismatch")
-            return value["authority"]
+            return strict_json_loads(bytes(body), max_bytes=MAX_AUTHORITY_BYTES)
         except ContractError:
             raise
         except (httpx.HTTPError, ValueError, TypeError, KeyError, json.JSONDecodeError):
             raise ContractError("source_unavailable") from None
+
+    def read(self, uid, source, delegation):
+        value = self._fetch(
+            "/internal/v2/portfolio-authorities/read",
+            {"contractVersion": CONTRACT_VERSION, "sourceId": source},
+            delegation,
+        )
+        if (
+            type(value) is not dict
+            or set(value) != {"contractVersion", "authority"}
+            or value["contractVersion"] != CONTRACT_VERSION
+            or type(value["authority"]) is not dict
+            or value["authority"].get("ownerSubject") != owner_key(uid)
+            or value["authority"].get("sourceId") != source
+        ):
+            raise ContractError("recipient_binding_mismatch")
+        return value["authority"]
+
+
+class UserAuthorityClient(HubAuthorityClient):
+    def read_user(self, uid, source, delegation, body):
+        if type(body) is not dict or body.keys() != {
+            "contractVersion",
+            "vaultId",
+            "nonce",
+            "minimumRegistryEpoch",
+        }:
+            raise ContractError("malformed_request")
+        request = private_authority_lookup(
+            {
+                **body,
+                "profile": PRIVATE_AUTHORITY_PROFILE,
+                "consumer": "portfolio",
+                "ownerSubject": owner_key(uid),
+                "sourceId": source,
+            }
+        )
+        result = self._fetch(USER_AUTHORITY_PATH, request, delegation, user=True)
+        expected = {
+            key: request[key] for key in ("contractVersion", "profile", "consumer", "nonce")
+        }
+        expected["requestDigest"] = hashlib.sha256(canonical_json(request)).hexdigest()
+        if (
+            type(result) is not dict
+            or set(result) != {*expected, "authority"}
+            or any(result[key] != value for key, value in expected.items())
+        ):
+            raise ContractError("recipient_binding_mismatch")
+        authority = result["authority"]
+        if (
+            type(authority) is not dict
+            or authority.keys()
+            != {
+                "ownerSubject",
+                "sourceId",
+                "vaultId",
+                "rootKeyId",
+                "rootJwk",
+                "vaultVersion",
+                "registry",
+                "registryStart",
+                "archive",
+                "signedTransition",
+                "sourcesDigest",
+                "registryHistory",
+                "resourceRef",
+                "sourceEpoch",
+                "writerKeyIds",
+                "recipientKeyIds",
+            }
+            or any(
+                authority[key] != request[key] for key in ("ownerSubject", "vaultId", "sourceId")
+            )
+            or type(authority["registry"]) is not dict
+            or type(authority["registry"].get("registryEpoch")) is not int
+            or authority["registry"]["registryEpoch"] < request["minimumRegistryEpoch"]
+        ):
+            raise ContractError("recipient_binding_mismatch")
+        return {
+            **{
+                key: field
+                for key, field in authority.items()
+                if key not in {"archive", "sourcesDigest"}
+            },
+            "version": authority["vaultVersion"],
+            "active": True,
+        }
+
+
+@lru_cache(maxsize=1)
+def configured_user_client(origin):
+    return UserAuthorityClient(origin)
 
 
 @lru_cache(maxsize=1)
@@ -183,15 +288,26 @@ async def synchronize(
     if len(values) != 1:
         raise HTTPException(401, {"code": "invalid_token"})
     body = await _read_json(request, max_bytes=1024)
-    if body != {"contractVersion": CONTRACT_VERSION} or type(body) is not dict:
-        raise HTTPException(400, {"code": "malformed_request"})
 
     def sync():
         # Validate routing before a credential-bearing network request.
         from .holdings import _identifier
 
         _identifier(source_id)
-        authority = client.read(user.uid, source_id, values[0])
+        user_origin = user_authority_origin(
+            owner_key(user.uid),
+            os.getenv("PORTFOLIO_HUB_AUTHORITY_ORIGIN", ""),
+            os.getenv("PORTFOLIO_USER_AUTHORITY_ORIGIN", ""),
+            os.getenv("PORTFOLIO_USER_AUTHORITY_OWNER", ""),
+        )
+        if user_origin is None:
+            if body != {"contractVersion": CONTRACT_VERSION} or type(body) is not dict:
+                raise ContractError("malformed_request")
+            authority = client.read(user.uid, source_id, values[0])
+        else:
+            authority = configured_user_client(user_origin).read_user(
+                user.uid, source_id, values[0], body
+            )
         return service.synchronize_authority(user.uid, source_id, authority)
 
     return await run_in_threadpool(_invoke, sync)

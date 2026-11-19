@@ -24,17 +24,13 @@ from folioview_shared.http import PrivateRoute
 from folioview_shared.identity import owner_key
 
 from .api import Owner, Service, _invoke, _read_json, _transport
-from .authority_sync import _origin
+from .authority_sync import _origin, user_authority_origin
 from .holdings import PortfolioError
 from .lifecycle import public_mutation
 
 MAX_ACK_BYTES = 8192
 DELIVERY_TIMEOUT_SECONDS = 12
 _TOKEN = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\Z")
-_OWNER = re.compile(r"[a-f0-9]{64}\Z")
-_HUB_NUMBERED_ORIGIN = re.compile(
-    r"https://agent-hub-api-([1-9][0-9]{5,19}\.[a-z][a-z0-9-]*[0-9]\.run\.app)\Z"
-)
 _TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z\Z")
 _ACK_FIELDS = {"contractVersion", "mutationId", "ref", "acknowledgedSourceEpoch", "acknowledgedAt"}
 _REASONS = {"fence": "account_scope_changed", "disconnect": "disconnected", "delete": "deleted"}
@@ -200,16 +196,8 @@ def _configured_user_client(origin):
 
 
 def fence_client_for_owner(owner, hub_origin, user_origin, selected_owner):
-    if not selected_owner and not user_origin:
-        return configured_client(hub_origin)
-    if _OWNER.fullmatch(selected_owner) is None or not user_origin:
-        raise ContractError("authorization_unavailable")
-    if owner != selected_owner:
-        return configured_client(hub_origin)
-    same_deployment = _HUB_NUMBERED_ORIGIN.fullmatch(hub_origin)
-    if same_deployment is None or user_origin != "https://user-api-" + same_deployment[1]:
-        raise ContractError("authorization_unavailable")
-    return _configured_user_client(user_origin)
+    destination = user_authority_origin(owner, hub_origin, user_origin, selected_owner)
+    return _configured_user_client(destination) if destination else configured_client(hub_origin)
 
 
 async def synchronize(service, uid, source, operation, client_factory):
