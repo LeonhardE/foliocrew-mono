@@ -120,6 +120,7 @@ USER_HUB_TRUST_FIELDS = {
 HUB_SUBJECT = re.compile(r"[1-9][0-9]{0,127}\Z")
 WEB_OWNER_FLAGS = {"portfolio", "agentHub"}
 WEB_OWNER_USER_RECOVERY_FIELDS = {"FOLIOVIEW_USER_OWNER_ENABLED", "FOLIOVIEW_USER_ORIGIN"}
+WEB_OWNER_USER_SCOPE_FIELDS = {"FOLIOVIEW_USER_HANDOVER_OWNER", "FOLIOVIEW_USER_CURRENT_OWNER"}
 WEB_OWNER_ENVIRONMENT_FIELDS = {
     "FOLIOVIEW_OWNER_FIREBASE_PROJECT_ID",
     "FOLIOVIEW_PORTFOLIO_OWNER_ENABLED",
@@ -880,9 +881,12 @@ def validate_web_owner_server(value, instance):
         environment = value["environment"]
         require(type(environment) is dict)
         has_user = bool(environment.keys() & WEB_OWNER_USER_RECOVERY_FIELDS)
+        scoped = environment.keys() & WEB_OWNER_USER_SCOPE_FIELDS
         fields(
             environment,
-            WEB_OWNER_ENVIRONMENT_FIELDS | (WEB_OWNER_USER_RECOVERY_FIELDS if has_user else set()),
+            WEB_OWNER_ENVIRONMENT_FIELDS
+            | (WEB_OWNER_USER_RECOVERY_FIELDS if has_user else set())
+            | scoped,
         )
         require(all(type(item) is str for item in environment.values()))
         portfolio_enabled = environment["FOLIOVIEW_PORTFOLIO_OWNER_ENABLED"]
@@ -890,6 +894,10 @@ def validate_web_owner_server(value, instance):
         require(portfolio_enabled in {"true", "false"} and hub_enabled in {"true", "false"})
         user_enabled = environment.get("FOLIOVIEW_USER_OWNER_ENABLED", "false")
         require(user_enabled in {"true", "false"})
+        if scoped:
+            require(user_enabled == "true")
+            owners = {environment[field] for field in scoped}
+            require(len(owners) == 1 and re.fullmatch(r"[a-f0-9]{64}", next(iter(owners))))
         enabled = "true" in {portfolio_enabled, hub_enabled, user_enabled}
         project = instance["project"]["id"]
         require(environment["FOLIOVIEW_OWNER_FIREBASE_PROJECT_ID"] == (project if enabled else ""))
