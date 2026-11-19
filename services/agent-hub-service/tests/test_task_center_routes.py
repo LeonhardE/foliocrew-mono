@@ -28,7 +28,7 @@ class TaskCenterRouteTests(unittest.TestCase):
         )
 
         def call(kind, *args, **kwargs):
-            self.calls.append((kind, args))
+            self.calls.append((kind, (*args, kwargs["cursor"]) if kind == "trash" else args))
             return {"kind": kind}
 
         self.app.dependency_overrides[get_owner_center] = lambda: SimpleNamespace(
@@ -177,20 +177,20 @@ class TaskCenterRouteTests(unittest.TestCase):
         self.app.dependency_overrides.pop(require_owner)
         self.assertEqual(self.client.post(path, headers=self.headers, json=value).status_code, 401)
 
-    def test_trash_pagination_uses_closed_post_body_not_url_queries(self):
-        response = self.client.post(
-            "/api/v3/task-center/vault_A/trash/query",
-            headers=self.headers,
-            json={"contractVersion": CONTRACT_VERSION, "cursor": "task_A"},
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(self.calls[-1][0], "trash")
-        self.assertEqual(
-            self.client.get(
-                "/api/v3/task-center/vault_A/trash?cursor=task_A", headers=self.headers
-            ).status_code,
-            400,
-        )
+    def test_trash_uses_closed_post_for_first_page_and_cursor(self):
+        path = "/api/v3/task-center/vault_A/trash/query"
+        for cursor in (None, "task_A"):
+            response = self.client.post(
+                path,
+                headers=self.headers,
+                json={"contractVersion": CONTRACT_VERSION, "cursor": cursor},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(self.calls[-1], ("trash", ("synthetic_owner", "vault_A", cursor)))
+        response = self.client.get(path.removesuffix("/query"), headers=self.headers)
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(len(self.calls), 2)
 
     def test_manual_creation_is_gated_but_cancel_and_original_progress_remain_owner_only(self):
         with patch("app.task_center_routes.task_center_enabled", return_value=False):

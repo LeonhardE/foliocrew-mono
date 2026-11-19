@@ -156,10 +156,10 @@ class NativeTransportRoutes(unittest.TestCase):
             self.assertNotIn("set-cookie", response.headers)
         self.assertEqual(len(self.calls), before)
 
-    def test_owner_pending_and_approval_bind_exact_origin_cookie_and_google_identity(self):
+    def test_owner_approval_binds_exact_origin_cookie_and_google_identity(self):
         self.install()
-        self.assertEqual(self.client.get(self.path, headers=self.headers).status_code, 200)
-        self.assertEqual(self.calls[-1], ("synthetic_owner", "synthetic_native_request", BROWSER))
+        self.assertEqual(self.client.get(self.path, headers=self.headers).status_code, 404)
+        self.assertEqual(self.calls, [])
         response = self.client.post(
             self.path + "/approvals",
             headers=self.headers,
