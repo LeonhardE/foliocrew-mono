@@ -56,6 +56,37 @@ class VaultTests(unittest.TestCase):
         )
         self.assertEqual(first, restarted.current(UID))
 
+    def test_frozen_owner_preserves_vault_replays_and_isolates_new_writes(self):
+        self.create()
+        old_source = self.source()
+        original = self.service.current(UID)
+        marker = document_path("hub_private_resource_writer_fences", owner_key(UID))
+        self.service.store.transact(lambda unit: unit.put(marker, {"state": "frozen"}))
+
+        self.assertEqual(self.create(), original)
+        self.assertEqual(self.source(), old_source)
+        self.code(
+            "authorization_unavailable",
+            lambda: self.source("synthetic_new_holdings", "synthetic_source_create_0002"),
+        )
+        next_registry = {
+            "contractVersion": self.f.bundle["contractVersion"],
+            "expectedVersion": original["vault"]["version"],
+            "registryBundle": self.f.make_bundle(previous=self.f.registry),
+        }
+        self.code(
+            "authorization_unavailable",
+            lambda: self.service.update_registry(
+                UID, self.f.vault, next_registry, "synthetic_registry_update_0001"
+            ),
+        )
+        self.assertEqual(self.service.current(UID), original)
+
+        other = VaultFixture(OTHER_UID)
+        self.assertEqual(
+            self.service.bootstrap(OTHER_UID, other.bootstrap(), BOOT)["vault"]["version"], 1
+        )
+
     def test_parallel_first_enrollment_keeps_one_root_and_does_not_overwrite(self):
         other = VaultFixture(UID)
 

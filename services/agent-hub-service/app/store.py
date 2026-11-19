@@ -29,6 +29,7 @@ COLLECTIONS = frozenset(
     {
         "hub_vaults",
         "hub_private_display_names",
+        "hub_private_resource_writer_fences",
         "hub_private_display_name_operations",
         "hub_agent_recoveries",
         "hub_executor_connections",
@@ -126,6 +127,17 @@ def document_path(collection: str, *parts: str) -> str:
     if collection not in COLLECTIONS:
         raise ValueError("Invalid Hub collection.")
     return f"{collection}/{document_id(*parts)}"
+
+
+def require_legacy_private_writer(unit, owner: str) -> None:
+    """Bind a new legacy resource commit to the account's writer fence.
+
+    The missing-document read must be in the same transaction as the writes.
+    Firestore retries a conflicting commit and SQLite serializes it with a freeze.
+    Existing receipts are resolved before this check.
+    """
+    if unit.get(document_path("hub_private_resource_writer_fences", owner)) is not None:
+        raise ContractError("authorization_unavailable")
 
 
 # These are logical read ceilings, not HTTP or physical storage write budgets.
