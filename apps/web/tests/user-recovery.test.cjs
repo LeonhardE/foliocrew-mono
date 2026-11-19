@@ -20,6 +20,10 @@ const routes = compile("../lib/user-recovery-route.ts");
 const VAULT = "/api/v3/private-resources/vaults/vault_A";
 const EVIDENCE = VAULT + "/recovery-evidence";
 const PAGE = VAULT + "/registry-pages/read";
+const CHECK = VAULT + "/handover/check";
+const HANDOVER = VAULT + "/handover";
+const START = VAULT + "/registry-start/read";
+const PATHS = [EVIDENCE, PAGE, CHECK, HANDOVER, START];
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const OWNER = digest("owner_A");
 const HEAD = {
@@ -38,6 +42,23 @@ const PAYLOAD = {
   deviceSigningKeyId: "s".repeat(43),
   deviceEncryptionKeyId: "e".repeat(43),
 };
+const PROOF = { protected: "eA", payload: "eQ", signature: "eg" };
+const BUNDLE = {
+  contractVersion: CONTRACT,
+  checkpoint: PROOF,
+  entries: [{ certificate: PROOF, active: true }],
+};
+const NEXT_HEAD = { ...HEAD, registryEpoch: 2, registrySequence: 3 };
+const SCOPE = { contractVersion: CONTRACT, ownerSubject: OWNER, vaultId: "vault_A" };
+const CHECK_BODY = { ...SCOPE, profile: routes.HANDOVER_CHECK_PROFILE };
+const HANDOVER_BODY = {
+  ...SCOPE,
+  profile: routes.HANDOVER_PROFILE,
+  operationId: "synthetic_transition_requested",
+  signedTransition: PROOF,
+  firstBundle: BUNDLE,
+};
+const START_BODY = { ...SCOPE, profile: routes.REGISTRY_START_PROFILE, nonce: "n".repeat(32) };
 const PAGE_PAYLOAD = {
   contractVersion: CONTRACT,
   profile: routes.REGISTRY_PAGE_PROFILE,
@@ -116,7 +137,29 @@ function response(input, patch = {}) {
     vaultId: input.vaultId,
     rootKeyId: "r".repeat(43),
   };
-  const signed = { protected: "eA", payload: "eQ", signature: "eg" };
+  const handovers = {
+    [routes.HANDOVER_CHECK_PROFILE]: { status: "ready", vaultVersion: 1 },
+    [routes.HANDOVER_PROFILE]: {
+      operationId: input.operationId,
+      baselineDigest: "a".repeat(64),
+      transitionFingerprint: digest(PROOF.protected + "." + PROOF.payload),
+      nextVaultVersion: 2,
+      registryStart: NEXT_HEAD,
+      writerEpoch: 2,
+    },
+    [routes.REGISTRY_START_PROFILE]: {
+      nonce: input.nonce,
+      vaultVersion: 2,
+      archive: { state: "active", version: 1, digest: "b".repeat(64) },
+      registry: NEXT_HEAD,
+      registryStart: NEXT_HEAD,
+      sourcesDigest: "c".repeat(64),
+      rootJwk: { kty: "EC", crv: "P-256", x: "x".repeat(43), y: "y".repeat(43) },
+      signedTransition: PROOF,
+      firstBundle: BUNDLE,
+    },
+  };
+  const signed = PROOF;
   const result =
     input.profile === routes.RECOVERY_PROFILE
       ? {
@@ -144,7 +187,10 @@ function response(input, patch = {}) {
           ],
         };
   return Response.json(
-    { ...result, ...patch },
+    {
+      ...(handovers[input.profile] ? { ...scope, ...handovers[input.profile] } : result),
+      ...patch,
+    },
     { headers: { "X-FolioView-Contract": CONTRACT, "Set-Cookie": "fixture=private" } },
   );
 }
@@ -159,7 +205,7 @@ function fixture({ env = ENV, reply = response } = {}) {
       if (url === JWKS) return Response.json({ keys: [jwk] });
       if (url === METADATA + `?audience=${encodeURIComponent(ORIGIN)}&format=full`)
         return new Response(workload, { headers: { "Metadata-Flavor": "Google" } });
-      assert.ok([ORIGIN + EVIDENCE, ORIGIN + PAGE].includes(url));
+      assert.ok(PATHS.some((path) => ORIGIN + path === url));
       return reply(JSON.parse(new TextDecoder().decode(options.body)));
     },
   });
@@ -219,4 +265,46 @@ test("unbound recovery evidence and registry page data stay behind the proxy", a
   assert.equal((await wrongEpoch.proxy(request(PAGE, PAGE_PAYLOAD))).status, 503);
   const extra = fixture({ reply: (input) => response(input, { legacy: "unexpected" }) });
   assert.equal((await extra.proxy(request())).status, 503);
+});
+
+test("the three handover requests use fixed scope and signed-input receipt identity", async () => {
+  const { proxy, calls } = fixture();
+  for (const [path, value] of [
+    [CHECK, CHECK_BODY],
+    [HANDOVER, HANDOVER_BODY],
+    [START, START_BODY],
+  ]) {
+    const result = await proxy(request(path, value));
+    assert.equal(result.status, 200);
+    assert.equal(result.headers.get("Cache-Control"), "no-store");
+    assert.equal(result.headers.get("Set-Cookie"), null);
+  }
+  assert.deepEqual(
+    calls.map(([url]) => url).filter((url) => new URL(url).origin === ORIGIN),
+    [ORIGIN + CHECK, ORIGIN + HANDOVER, ORIGIN + START],
+  );
+  const wrongReceipt = fixture({
+    reply: (input) => response(input, { transitionFingerprint: "0".repeat(64) }),
+  });
+  assert.equal((await wrongReceipt.proxy(request(HANDOVER, HANDOVER_BODY))).status, 503);
+  const wrongNonce = fixture({ reply: (input) => response(input, { nonce: "q".repeat(32) }) });
+  assert.equal((await wrongNonce.proxy(request(START, START_BODY))).status, 503);
+});
+
+test("handover rejects foreign scope and any plaintext Passkey material before forwarding", async () => {
+  const foreign = fixture();
+  assert.equal(
+    (await foreign.proxy(request(CHECK, { ...CHECK_BODY, ownerSubject: "0".repeat(64) }))).status,
+    404,
+  );
+  assert.deepEqual(
+    foreign.calls.map(([url]) => url),
+    [JWKS],
+  );
+  const plaintext = fixture();
+  assert.equal(
+    (await plaintext.proxy(request(HANDOVER, { ...HANDOVER_BODY, prf: "forbidden" }))).status,
+    400,
+  );
+  assert.equal(plaintext.calls.length, 0);
 });

@@ -2,8 +2,10 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import {
+  HANDOVER_CHECK_PROFILE,
+  HANDOVER_PROFILE,
   RECOVERY_PROFILE,
-  USER_RECOVERY_MAX_REQUEST,
+  REGISTRY_START_PROFILE,
   USER_RECOVERY_PROXY,
   userRecoveryRoute,
 } from "../user-recovery-route";
@@ -82,6 +84,14 @@ function validRequest(
   )
     return false;
 
+  if (rule.profile === HANDOVER_CHECK_PROFILE) return true;
+  if (rule.profile === HANDOVER_PROFILE)
+    return (
+      matches(value.operationId, NONCE) &&
+      signedObject(value.signedTransition) &&
+      registryBundle(value.firstBundle)
+    );
+  if (rule.profile === REGISTRY_START_PROFILE) return matches(value.nonce, NONCE);
   if (rule.profile === RECOVERY_PROFILE)
     return (
       matches(value.nonce, NONCE) &&
@@ -114,16 +124,39 @@ function validEvidence(value: unknown, expectedDigest: string) {
     integer(value.vaultVersion, 1) &&
     head(value.registry) &&
     (value.registryStart === null || head(value.registryStart)) &&
-    fields(value.archive, ["state", "version", "digest"]) &&
-    value.archive.state === "active" &&
-    integer(value.archive.version, 1) &&
-    matches(value.archive.digest, DIGEST) &&
+    activeArchive(value.archive) &&
     value.device === "active" &&
     matches(value.sourcesDigest, DIGEST) &&
     integer(value.verifiedAt, 0) &&
     integer(value.expiresAt, 1) &&
     Number(value.verifiedAt) < Number(value.expiresAt) &&
     Number(value.expiresAt) - Number(value.verifiedAt) <= 60
+  );
+}
+
+function activeArchive(value: unknown) {
+  return (
+    fields(value, ["state", "version", "digest"]) &&
+    value.state === "active" &&
+    integer(value.version, 1) &&
+    matches(value.digest, DIGEST)
+  );
+}
+
+function registryBundle(bundle: unknown) {
+  return (
+    fields(bundle, ["contractVersion", "checkpoint", "entries"]) &&
+    bundle.contractVersion === CONTRACT &&
+    signedObject(bundle.checkpoint) &&
+    Array.isArray(bundle.entries) &&
+    bundle.entries.length > 0 &&
+    bundle.entries.length <= 64 &&
+    bundle.entries.every(
+      (entry) =>
+        fields(entry, ["certificate", "active"]) &&
+        typeof entry.active === "boolean" &&
+        signedObject(entry.certificate),
+    )
   );
 }
 
@@ -144,22 +177,96 @@ function validPage(value: unknown, input: Json) {
     Array.isArray(value.bundles) &&
     value.bundles.length > 0 &&
     value.bundles.length <= 4 &&
-    value.bundles.every(
-      (bundle) =>
-        fields(bundle, ["contractVersion", "checkpoint", "entries"]) &&
-        bundle.contractVersion === CONTRACT &&
-        signedObject(bundle.checkpoint) &&
-        Array.isArray(bundle.entries) &&
-        bundle.entries.length > 0 &&
-        bundle.entries.length <= 64 &&
-        bundle.entries.every(
-          (entry) =>
-            fields(entry, ["certificate", "active"]) &&
-            typeof entry.active === "boolean" &&
-            signedObject(entry.certificate),
-        ),
-    )
+    value.bundles.every(registryBundle)
   );
+}
+
+const SCOPE_FIELDS = ["contractVersion", "profile", "ownerSubject", "vaultId", "rootKeyId"];
+
+function validHandoverCheck(value: Json) {
+  if (value.status === "ready") {
+    return (
+      fields(value, [...SCOPE_FIELDS, "status", "vaultVersion"]) && integer(value.vaultVersion, 1)
+    );
+  }
+  return (
+    fields(value, [...SCOPE_FIELDS, "status", "operationId"]) &&
+    value.status === "installed" &&
+    matches(value.operationId, NONCE)
+  );
+}
+
+function validHandoverReceipt(value: Json, input: Json) {
+  const signed = input.signedTransition;
+  return (
+    record(signed) &&
+    value.transitionFingerprint === digest(signed.protected + "." + signed.payload) &&
+    fields(value, [
+      ...SCOPE_FIELDS,
+      "operationId",
+      "baselineDigest",
+      "transitionFingerprint",
+      "nextVaultVersion",
+      "registryStart",
+      "writerEpoch",
+    ]) &&
+    value.operationId === input.operationId &&
+    matches(value.baselineDigest, DIGEST) &&
+    matches(value.transitionFingerprint, DIGEST) &&
+    integer(value.nextVaultVersion, 2) &&
+    head(value.registryStart) &&
+    value.registryStart.registryEpoch === 2 &&
+    value.writerEpoch === 2
+  );
+}
+
+function validRegistryStart(value: Json, input: Json) {
+  return (
+    fields(value, [
+      ...SCOPE_FIELDS,
+      "nonce",
+      "vaultVersion",
+      "archive",
+      "registry",
+      "registryStart",
+      "sourcesDigest",
+      "rootJwk",
+      "signedTransition",
+      "firstBundle",
+    ]) &&
+    value.nonce === input.nonce &&
+    integer(value.vaultVersion, 2) &&
+    activeArchive(value.archive) &&
+    head(value.registry) &&
+    head(value.registryStart) &&
+    value.registryStart.registryEpoch === 2 &&
+    value.registry.registryEpoch === value.registryStart.registryEpoch &&
+    Number(value.registry.registrySequence) >= Number(value.registryStart.registrySequence) &&
+    matches(value.sourcesDigest, DIGEST) &&
+    fields(value.rootJwk, ["kty", "crv", "x", "y"]) &&
+    value.rootJwk.kty === "EC" &&
+    value.rootJwk.crv === "P-256" &&
+    matches(value.rootJwk.x, KEY) &&
+    matches(value.rootJwk.y, KEY) &&
+    signedObject(value.signedTransition) &&
+    registryBundle(value.firstBundle)
+  );
+}
+
+function validReply(body: unknown, input: Json, expectedDigest: string) {
+  if (!fieldsBelongToRequest(body, input)) return false;
+  switch (input.profile) {
+    case RECOVERY_PROFILE:
+      return validEvidence(body, expectedDigest);
+    case HANDOVER_CHECK_PROFILE:
+      return validHandoverCheck(body);
+    case HANDOVER_PROFILE:
+      return validHandoverReceipt(body, input);
+    case REGISTRY_START_PROFILE:
+      return validRegistryStart(body, input);
+    default:
+      return validPage(body, input);
+  }
 }
 
 export function createUserRecoveryProxy(options: Options = {}) {
@@ -208,7 +315,7 @@ export function createUserRecoveryProxy(options: Options = {}) {
         request.headers.get("content-type")?.split(";", 1)[0].toLowerCase() !== "application/json"
       )
         fail("unsupported_media_type");
-      const raw = await bytes(request.body, USER_RECOVERY_MAX_REQUEST, signal);
+      const raw = await bytes(request.body, rule.maxRequestBytes, signal);
       const input = json(raw);
       if (!validRequest(input, rule)) return fail();
       const uid = await verifyOwner(authorization.slice(7), project, signal);
@@ -243,14 +350,8 @@ export function createUserRecoveryProxy(options: Options = {}) {
         rule.profile === RECOVERY_PROFILE
           ? digest(JSON.stringify(input, [...rule.keys].sort()))
           : "";
-      const result = await forwardResponse(
-        response,
-        signal,
-        (body) =>
-          fieldsBelongToRequest(body, input) &&
-          (rule.profile === RECOVERY_PROFILE
-            ? validEvidence(body, expectedDigest)
-            : validPage(body, input)),
+      const result = await forwardResponse(response, signal, (body) =>
+        validReply(body, input, expectedDigest),
       );
       return timeProxyResponse(result, started);
     } catch (error) {
@@ -262,7 +363,7 @@ export function createUserRecoveryProxy(options: Options = {}) {
   };
 }
 
-function fieldsBelongToRequest(body: unknown, input: Json) {
+function fieldsBelongToRequest(body: unknown, input: Json): body is Json {
   return (
     record(body) &&
     body.contractVersion === CONTRACT &&

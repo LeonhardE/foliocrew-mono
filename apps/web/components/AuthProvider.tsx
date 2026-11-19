@@ -1,10 +1,6 @@
 "use client";
 import { holdingsViewRequest } from "@/lib/holdings-view";
-import {
-  USER_RECOVERY_MAX_REQUEST,
-  USER_RECOVERY_PROXY,
-  userRecoveryRoute,
-} from "@/lib/user-recovery-route";
+import { USER_RECOVERY_PROXY, userRecoveryRoute } from "@/lib/user-recovery-route";
 import { taskDetailRequest } from "@/lib/task-detail-read";
 import { taskOverviewRequest } from "@/lib/task-overview-request";
 import {
@@ -911,7 +907,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         { method: "POST", keys: recoveryRead.keys },
         options,
       );
-      maxBodyBytes = USER_RECOVERY_MAX_REQUEST;
+      maxBodyBytes = recoveryRead.maxRequestBytes;
     } else if (service === "portfolio" || service === "agent-hub") {
       let rule = encryptedRule(service, path, method);
       if (
