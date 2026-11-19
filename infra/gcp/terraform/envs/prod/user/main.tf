@@ -7,11 +7,12 @@ locals {
     alltrue([for value in values(var.hub_trust) : value == ""]) ? {} : var.hub_trust
   )
   environment = merge({
-    FIREBASE_PROJECT_ID = local.project_id
-    CORS_ORIGINS        = local.browser_cors_origins
-    FIRESTORE_DATABASE  = "(default)"
-    USER_STORE_BACKEND  = "firestore"
-    MARKET_API_BASE_URL = var.deployment.market_origin
+    FIREBASE_PROJECT_ID     = local.project_id
+    CORS_ORIGINS            = local.browser_cors_origins
+    FIRESTORE_DATABASE      = "(default)"
+    USER_STORE_BACKEND      = "firestore"
+    USER_LIST_WRITES_PAUSED = "true"
+    MARKET_API_BASE_URL     = var.deployment.market_origin
   }, local.hub_trust_environment)
 }
 
