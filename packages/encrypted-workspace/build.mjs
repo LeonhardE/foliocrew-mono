@@ -56,8 +56,25 @@ await writeFile(
   resolve(root, "src/validators.cjs"),
   await format((standalone.default ?? standalone)(ajv, mapping)),
 );
+const recoverySchema = JSON.parse(
+  await readFile(resolve(root, "private-recovery.schema.json"), "utf8"),
+);
+for (const name of Object.keys(recoverySchema.$defs)) {
+  if (Object.hasOwn(defs, name)) throw new Error("Duplicate private recovery schema");
+}
+ajv.addSchema({ ...recoverySchema, $defs: { ...defs, ...recoverySchema.$defs } });
+const recovery = {};
+for (const name of ["PrivateRecoveryRequest", "PrivateRecoveryEvidence"]) {
+  const id = "runtime:" + name;
+  ajv.addSchema({ $ref: recoverySchema.$id + "#/$defs/" + name }, id);
+  recovery[name] = id;
+}
+await writeFile(
+  resolve(root, "src/private-recovery-validators.cjs"),
+  await format((standalone.default ?? standalone)(ajv, recovery)),
+);
 await mkdir(resolve(root, "dist"), { recursive: true });
-for (const entry of ["core"]) {
+for (const entry of ["core", "private-recovery"]) {
   const out = await build({
     absWorkingDir: root,
     entryPoints: ["src/" + entry + ".mjs"],
@@ -68,6 +85,7 @@ for (const entry of ["core"]) {
     minify: true,
     write: false,
     legalComments: "none",
+    ...(entry === "private-recovery" ? { external: ["../dist/core.mjs"] } : {}),
   });
   await writeFile(resolve(root, "dist/" + entry + ".mjs"), await format(out.outputFiles[0].text));
 }
@@ -77,6 +95,7 @@ const files = [
   "package.json",
   "package-lock.json",
   "schemas.json",
+  "private-recovery.schema.json",
   "build.mjs",
   "THIRD_PARTY_NOTICES.md",
   "src/core.mjs",
@@ -86,10 +105,14 @@ const files = [
   "src/consents.mjs",
   "src/authority.mjs",
   "src/leases.mjs",
+  "src/private-recovery.mjs",
   "tests/leases.test.mjs",
   "tests/registry-memo.test.mjs",
+  "tests/private-resource-contracts.test.mjs",
   "dist/core.mjs",
   "dist/core.d.mts",
+  "dist/private-recovery.mjs",
+  "dist/private-recovery.d.mts",
   "README.md",
   "tests/contracts.test.mjs",
   "tests/markdown-links.test.mjs",

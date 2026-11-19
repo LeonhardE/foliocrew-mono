@@ -21,6 +21,11 @@ This package holds no keys, storage, network, OAuth credentials, Worker dispatch
 or UI. Private CryptoKey handles stay inside each consumer's existing closed Worker.
 Root/owner private material must never reach an Agent or a page-facing interface.
 
+The separate `dist/private-recovery.mjs` verifier accepts an authenticated Owner response whose nonce
+request, vault, device, Root pin, validity window and monotonic boundaries can be checked
+locally. A previous authenticated result can supply the local rollback floor. Archive opening
+and registry advancement require separate proof.
+
 ## Reproduce and consume
 
 Use the exact package lock with `npm ci --ignore-scripts`, then `npm run build`.

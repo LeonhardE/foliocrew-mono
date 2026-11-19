@@ -24,6 +24,10 @@
     ".": {
       "types": "./dist/core.d.mts",
       "import": "./dist/core.mjs"
+    },
+    "./private-recovery": {
+      "types": "./dist/private-recovery.d.mts",
+      "import": "./dist/private-recovery.mjs"
     }
   }
 }
