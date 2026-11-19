@@ -15,6 +15,7 @@ from folioview_shared.encrypted.private_resources import (
 from folioview_shared.identity import owner_key
 
 from ..resources import ResourceUnavailable
+from .archive_lifecycle import PrivateArchiveLifecycle
 from .authority_cutover import UserAuthorityCutover
 from .legacy_baselines import _sha
 from .recovery import COLLECTION as HEADS
@@ -54,7 +55,7 @@ class PrivateAuthorityViews:
         self.cutover = UserAuthorityCutover(store)
 
     def owner_current(self, uid, nonce, *, now):
-        """Read the original sealed archive together with only current authority."""
+        """Read the verified sealed archive and the current authority for the Owner."""
         self.cutover._named_store()
         owner = owner_key(uid)
         head = self.cutover._read(((HEADS, owner),))[0]
@@ -83,10 +84,28 @@ class PrivateAuthorityViews:
         original = strict_json_loads(baseline)
         archive = original["archive"]
         root = lookup["rootKeyId"]
+        lifecycle = None
+        boundary = lookup["archive"]
+        if boundary != original["archiveBoundary"]:
+            snapshot = PrivateArchiveLifecycle(self.cutover.store, clock=lambda: now).read(
+                uid, vault_id, nonce, None
+            )
+            state = snapshot["state"]
+            registry = lookup["registry"]
+            if (
+                snapshot["rootKeyId"] != root
+                or state["vaultVersion"] != lookup["vaultVersion"]
+                or state["registrySequence"] != registry["registrySequence"]
+                or state["checkpointDigest"] != registry["checkpointDigest"]
+                or state["keyEpoch"] != registry["keyEpoch"]
+                or state["lifecycleVersion"] + 1 != boundary["version"]
+                or state["archiveDigest"] != boundary["digest"]
+            ):
+                raise ContractError("version_conflict")
+            archive = state["archive"]
+            lifecycle = {"state": state, "originalCheckpoints": snapshot["originalCheckpoints"]}
         validate_passkey_archive(archive, owner=owner, vault=vault_id, root=root)
-        if lookup["archive"] != original["archiveBoundary"] or lookup["archive"]["digest"] != _sha(
-            canonical_json(archive)
-        ):
+        if boundary["digest"] != _sha(canonical_json(archive)):
             raise ContractError("source_unavailable")
         result = {
             "contractVersion": CONTRACT_VERSION,
@@ -113,6 +132,8 @@ class PrivateAuthorityViews:
                 )
             },
         }
+        if lifecycle is not None:
+            result["proof"]["archiveLifecycle"] = lifecycle
         check_read_response(result)
         return result
 

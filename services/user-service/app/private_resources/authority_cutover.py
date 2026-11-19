@@ -42,7 +42,8 @@ from .source_invalidations import INVALIDATION_RECEIPTS, SOURCE_INDEX
 
 WITNESSES = "user_private_handover_witnesses"
 HANDOVERS = "user_private_handover_receipts"
-_BYTES_FIELDS = {HEADS: "view", HISTORY: "entry", HANDOVERS: "record"}
+ARCHIVE_RECORDS = "user_private_archive_records"
+_BYTES_FIELDS = {HEADS: "view", HISTORY: "entry", HANDOVERS: "record", ARCHIVE_RECORDS: "record"}
 
 
 class FrozenScope(ClosedModel):
