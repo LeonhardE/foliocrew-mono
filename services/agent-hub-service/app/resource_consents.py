@@ -123,9 +123,12 @@ class ResourceConsentService(PersistentAgentService):
     def state(self, uid, vault_id, connection):
         identifier(vault_id)
         identifier(connection)
+        user_scope = self.user_vaults.read(uid, vault_id)
 
         def read(unit):
-            owner, _, _, conn = self._context(unit, uid, vault_id, connection)
+            owner, _, _, conn = self._context(
+                unit, uid, vault_id, connection, user_scope=user_scope
+            )
             identity = self._identity(unit, owner, vault_id, connection, conn, active=False)
             row = stored_consent(unit, owner, vault_id, connection)
             return {
@@ -203,7 +206,7 @@ class ResourceConsentService(PersistentAgentService):
         validate_schema("OperationIdentifier", operation)
 
         def read(unit):
-            owner, _, _, _ = self._context(unit, uid, vault_id, connection)
+            owner = self._receipt_owner(unit, uid, vault_id, connection)
             saved = unit.get(operation_path(owner, vault_id, operation))
             if saved is None or saved.get("connectionId") != connection:
                 raise ContractError("not_found")
