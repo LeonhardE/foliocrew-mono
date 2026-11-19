@@ -2,6 +2,7 @@
 export const CONTRACT = "folioview.agent-workspace.v2.0";
 export const OWNER_RECOVERY_PROFILE = "folioview.owner-recovery-evidence.v1";
 export const OWNER_REGISTRY_PAGE_PROFILE = "folioview.owner-registry-page.v1";
+export const OWNER_ORIGINAL_REGISTRY_HEAD_PROFILE = "folioview.owner-original-registry-head.v1";
 export type Json = Record<string, any>;
 export type Signed = { protected: string; payload: string; signature: string };
 export type RegistryBundle = {

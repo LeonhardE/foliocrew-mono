@@ -451,8 +451,40 @@ test("the original Passkey opens a renewed archive after the new epoch omits rev
     assert.equal(pinned.registryEpoch, 2);
     assert.equal(pinned.checkpointDigest, nextHead.checkpointDigest);
 
-    const reload = db.client(old.uid, storage, { readOriginalRegistryPage: page });
+    const headProof = (request) => ({
+      ...request,
+      rootKeyId: current.rootKeyId,
+      bundle: renewed.vault.registryHistory.at(-1),
+    });
+    const rejectedHead = db.client(old.uid, storage, {
+      readOriginalRegistryHead: async (request) => ({
+        ...headProof(request),
+        bundle: renewed.vault.registryHistory[0],
+      }),
+      readOriginalRegistryPage: async () =>
+        assert.fail("an incorrect terminal proof cannot fall back"),
+    });
+    await assert.rejects(
+      rejectedHead.unlockForResults(current, old.material()),
+      /registry_conflict/,
+    );
+    const headRequests = [];
+    const reload = db.client(old.uid, storage, {
+      readOriginalRegistryHead: async (request) => {
+        headRequests.push(request);
+        return headProof(request);
+      },
+      readOriginalRegistryPage: async () =>
+        assert.fail("the terminal bundle suffices for this vault"),
+    });
     assert.equal((await reload.unlockForResults(current, old.material())).canWriteState, true);
+    assert.equal(headRequests.length, 1);
+    assert.deepEqual(headRequests[0].target, previousHead);
+    const oldServer = db.client(old.uid, storage, {
+      readOriginalRegistryHead: async () => null,
+      readOriginalRegistryPage: page,
+    });
+    assert.equal((await oldServer.unlockForResults(current, old.material())).canWriteState, true);
   });
 });
 

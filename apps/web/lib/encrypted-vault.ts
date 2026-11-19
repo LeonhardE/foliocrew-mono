@@ -9,10 +9,12 @@ import type {
   OwnerRecoveryRequest,
   OwnerRecoveryTransport,
   OwnerRegistryPageRequest,
+  OriginalRegistryHeadRequest,
   RegistryTransitionPacket,
 } from "./encrypted-user-recovery";
 import {
   CONTRACT,
+  OWNER_ORIGINAL_REGISTRY_HEAD_PROFILE,
   VaultError,
   requireArchive,
   type ArchiveDeletionPacket,
@@ -277,6 +279,10 @@ export class EncryptedVaultSession {
   private closed = false;
   private readonly lifetime = new AbortController();
   private readonly readOriginalRegistryPage?: OwnerRecoveryTransport["page"];
+  private readonly readOriginalRegistryHead?: (
+    request: OriginalRegistryHeadRequest,
+    signal: AbortSignal,
+  ) => Promise<unknown>;
   private renewalOnly = false;
   private deletionOnly = false;
   private saving: Promise<void> = Promise.resolve();
@@ -292,9 +298,11 @@ export class EncryptedVaultSession {
       sharedUnlock?: boolean;
       onInvalidated?: () => void;
       readOriginalRegistryPage?: OwnerRecoveryTransport["page"];
+      readOriginalRegistryHead?: EncryptedVaultSession["readOriginalRegistryHead"];
     } = {},
   ) {
     this.readOriginalRegistryPage = options.readOriginalRegistryPage;
+    this.readOriginalRegistryHead = options.readOriginalRegistryHead;
     this.storage = options.storage ?? new BrowserEncryptedStorage();
     const shared = options.sharedUnlock && !options.workerFactory ? sharedOwnerWorker(uid) : null;
     this.sharedUnlock = Boolean(shared);
@@ -477,10 +485,29 @@ export class EncryptedVaultSession {
     if (!read || !vault.userAuthority || (!originalPin && !restoreArchivedKeys)) return;
     const generation = this.generation;
     const signal = AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(60_000)]);
-    let page: { id: string; request: OwnerRegistryPageRequest } | null = await this.rpc(
-      "beginOriginalRegistryBridge",
-      { vault, pin: originalPin, restoreArchivedKeys },
-    );
+    let page: { id: string; request: OwnerRegistryPageRequest; tryHead?: boolean } | null =
+      await this.rpc("beginOriginalRegistryBridge", {
+        vault,
+        pin: originalPin,
+        restoreArchivedKeys,
+      });
+    if (page?.tryHead && this.readOriginalRegistryHead) {
+      const { contractVersion, ownerSubject, vaultId, target } = page.request;
+      const value = await this.readOriginalRegistryHead(
+        {
+          contractVersion,
+          profile: OWNER_ORIGINAL_REGISTRY_HEAD_PROFILE,
+          ownerSubject,
+          vaultId,
+          target,
+        },
+        signal,
+      );
+      this.assert(generation);
+      signal.throwIfAborted();
+      if (value !== null && (await this.rpc("checkOriginalRegistryHead", { id: page.id, value })))
+        return;
+    }
     for (let pages = 0; page; pages++) {
       if (pages >= 32) throw new VaultError("too_large");
       signal.throwIfAborted();

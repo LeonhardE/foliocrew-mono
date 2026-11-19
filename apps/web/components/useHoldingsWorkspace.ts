@@ -806,6 +806,13 @@ export function useHoldingsWorkspace() {
       new EncryptedVaultSession(subject, {
         sharedUnlock: true,
         onInvalidated: () => sharedHandlers.current.lock(),
+        readOriginalRegistryHead: (json, signal) =>
+          api(
+            "user",
+            `/api/v3/private-resources/vaults/${json.vaultId}/original-registry-head/read`,
+            signal,
+            { method: "POST", json, allowMissing: true },
+          ),
         readOriginalRegistryPage: (json, signal) =>
           api(
             "user",

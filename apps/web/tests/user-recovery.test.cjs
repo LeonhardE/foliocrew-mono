@@ -20,6 +20,7 @@ const routes = compile("../lib/user-recovery-route.ts");
 const VAULT = "/api/v3/private-resources/vaults/vault_A";
 const EVIDENCE = VAULT + "/recovery-evidence";
 const PAGE = VAULT + "/registry-pages/read";
+const ORIGINAL_HEAD = VAULT + "/original-registry-head/read";
 const CHECK = VAULT + "/handover/check";
 const HANDOVER = VAULT + "/handover";
 const START = VAULT + "/registry-start/read";
@@ -32,6 +33,7 @@ const RENEWAL_RECEIPT = VAULT + "/key-renewals/read";
 const PATHS = [
   EVIDENCE,
   PAGE,
+  ORIGINAL_HEAD,
   START,
   ADVANCE,
   REGISTER,
@@ -555,6 +557,33 @@ test("registry-start evidence retains fixed scope and nonce validation", async (
   assert.deepEqual(
     foreign.calls.map(([url]) => url),
     [JWKS],
+  );
+});
+
+test("the original registry head is bound to the selected owner and exact legacy target", async () => {
+  const body = { ...SCOPE, profile: routes.ORIGINAL_REGISTRY_HEAD_PROFILE, target: HEAD };
+  const reply = (input) =>
+    Response.json(
+      { ...input, rootKeyId: "r".repeat(43), bundle: BUNDLE },
+      { headers: { "X-FolioView-Contract": CONTRACT } },
+    );
+  const env = { ...ENV, FOLIOVIEW_USER_CURRENT_OWNER: OWNER };
+  const accepted = fixture({ env, reply });
+  const result = await accepted.proxy(request(ORIGINAL_HEAD, body));
+  assert.equal(result.status, 200);
+  assert.equal(result.headers.get("Cache-Control"), "no-store");
+  const wrong = fixture({ env, reply: (input) => reply({ ...input, target: NEXT_HEAD }) });
+  assert.equal((await wrong.proxy(request(ORIGINAL_HEAD, body))).status, 503);
+  const foreign = fixture({ env: { ...env, FOLIOVIEW_USER_CURRENT_OWNER: "0".repeat(64) }, reply });
+  assert.equal((await foreign.proxy(request(ORIGINAL_HEAD, body))).status, 404);
+  assert.deepEqual(
+    foreign.calls.map(([url]) => url),
+    [JWKS],
+  );
+  const older = fixture({ env, reply: () => Response.json({}, { status: 404 }) });
+  assert.deepEqual(
+    await (await older.proxy(request(ORIGINAL_HEAD, body))).json().then((doc) => doc.error.code),
+    "not_found",
   );
 });
 

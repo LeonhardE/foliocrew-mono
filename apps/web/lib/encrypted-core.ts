@@ -25,6 +25,7 @@ import schemas from "./encrypted-schemas.json";
 import { holdingsFacts } from "../../../packages/encrypted-workspace/valuation/dist/holdings.mjs";
 import {
   CONTRACT,
+  OWNER_ORIGINAL_REGISTRY_HEAD_PROFILE,
   OWNER_RECOVERY_PROFILE,
   OWNER_REGISTRY_PAGE_PROFILE,
   VaultError,
@@ -3712,7 +3713,62 @@ export class VaultCore {
       expiresAt: this.now() + 60,
     };
     this.originalRegistryBridge = bridge;
-    return this.originalBridgePage(bridge);
+    return {
+      ...this.originalBridgePage(bridge),
+      tryHead: Boolean(bridge.archiveProof && (!initial || equal(initial, target))),
+    };
+  }
+
+  async checkOriginalRegistryHead(id: string, value: Json) {
+    const bridge = this.originalRegistryBridge;
+    if (!bridge?.archiveProof || bridge.id !== id || bridge.expiresAt <= this.now())
+      throw new VaultError("untrusted_vault");
+    exact(value, [
+      "contractVersion",
+      "profile",
+      "ownerSubject",
+      "vaultId",
+      "rootKeyId",
+      "target",
+      "bundle",
+    ]);
+    if (
+      value.contractVersion !== CONTRACT ||
+      value.profile !== OWNER_ORIGINAL_REGISTRY_HEAD_PROFILE ||
+      value.ownerSubject !== bridge.scope.ownerSubject ||
+      value.vaultId !== bridge.scope.vaultId ||
+      value.rootKeyId !== bridge.scope.rootKeyId ||
+      !equal(value.target, bridge.target) ||
+      (bridge.pin &&
+        (bridge.pin.registrySequence !== bridge.target.registrySequence ||
+          bridge.pin.checkpointDigest !== bridge.target.checkpointDigest ||
+          bridge.pin.keyEpoch !== bridge.target.keyEpoch))
+    )
+      throw new VaultError("registry_conflict");
+    bounded(value, 262144);
+    const registry = await bridge.verify(
+      value.bundle,
+      bridge.scope.ownerSubject,
+      bridge.scope.vaultId,
+      undefined,
+      this.now(),
+    );
+    if (
+      this.originalRegistryBridge !== bridge ||
+      !equal(privateRegistryHead(registry), bridge.target) ||
+      bridge.expiresAt <= this.now()
+    )
+      throw new VaultError("registry_conflict");
+    const { transition, missingKeys } = bridge.archiveProof;
+    const certificates = new Map<string, Json>();
+    for (const keyId of missingKeys) {
+      const certificate = registry.certificates.get(keyId);
+      if (!certificate) return false;
+      if (certificate.connectionId === null) certificates.set(keyId, certificate);
+    }
+    this.originalArchiveCertificates = { transition, certificates };
+    this.originalRegistryBridge = undefined;
+    return true;
   }
 
   async checkOriginalRegistryBridgePage(id: string, value: Json) {
