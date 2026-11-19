@@ -4,6 +4,11 @@ import {
   sameEncryptedRecord,
   type EncryptedStorage,
 } from "./encrypted-storage";
+import type {
+  OwnerRecoveryProgress,
+  OwnerRecoveryRequest,
+  OwnerRecoveryTransport,
+} from "./encrypted-user-recovery";
 import {
   VaultError,
   requireArchive,
@@ -717,6 +722,37 @@ export class EncryptedVaultSession {
         throw error;
       }
     });
+  }
+  async verifyUserRecovery(
+    transport: OwnerRecoveryTransport,
+    sourcesDigest: string,
+    signal?: AbortSignal,
+  ) {
+    const g = this.generation;
+    const request: OwnerRecoveryRequest = await this.rpc("beginUserRecovery", { sourcesDigest });
+    const active = AbortSignal.any([
+      this.lifetime.signal,
+      AbortSignal.timeout(60_000),
+      ...(signal ? [signal] : []),
+    ]);
+    active.throwIfAborted();
+    const value = await transport.evidence(request, active);
+    active.throwIfAborted();
+    this.assert(g);
+    let result: OwnerRecoveryProgress = await this.rpc("checkUserRecoveryEvidence", {
+      nonce: request.nonce,
+      value,
+    });
+    for (let pages = 0; result.status === "page"; pages++) {
+      if (pages >= 32) throw new VaultError("too_large");
+      const value = await transport.page(result.request, active);
+      active.throwIfAborted();
+      this.assert(g);
+      result = await this.rpc("checkUserRegistryPage", { nonce: request.nonce, value });
+    }
+    this.assert(g);
+    active.throwIfAborted();
+    return result.status;
   }
   async verifyLifecycle(vault: Vault, state: VaultLifecycleState): Promise<VaultLifecyclePin> {
     const g = this.generation,

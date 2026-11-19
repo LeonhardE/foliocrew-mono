@@ -3,6 +3,12 @@ import {
   createRegistryCertificateVerifier,
   markdownDestinations,
 } from "../../../packages/encrypted-workspace/dist/core.mjs";
+import { verifyOwnerRecoveryEvidence } from "../../../packages/encrypted-workspace/dist/private-recovery.mjs";
+import type {
+  OwnerRecoveryProgress,
+  OwnerRecoveryRequest,
+  PrivateRegistryHead,
+} from "./encrypted-user-recovery";
 import {
   GeneralEncrypt,
   FlattenedSign,
@@ -19,6 +25,8 @@ import schemas from "./encrypted-schemas.json";
 import { holdingsFacts } from "../../../packages/encrypted-workspace/valuation/dist/holdings.mjs";
 import {
   CONTRACT,
+  OWNER_RECOVERY_PROFILE,
+  OWNER_REGISTRY_PAGE_PROFILE,
   VaultError,
   requireArchive,
   type ArchiveDeletionPacket,
@@ -383,6 +391,27 @@ type Registry = {
   certificates: Map<string, Json>;
   active: Set<string>;
   localEpochs: Map<string, number>;
+};
+function privateRegistryHead(registry: Registry): PrivateRegistryHead {
+  return {
+    registryEpoch: 1,
+    registrySequence: registry.checkpoint.registrySequence,
+    checkpointDigest: registry.digest,
+    keyEpoch: registry.checkpoint.keyEpoch,
+  };
+}
+type OwnerRecoveryRead = {
+  request: OwnerRecoveryRequest;
+  vault: Vault;
+  base: Registry;
+  lifecycle: VaultLifecyclePin;
+  expiresAt: number;
+  sourcesDigest: string;
+  continuation?: {
+    target: PrivateRegistryHead;
+    current: Registry;
+    verify: Awaited<ReturnType<typeof registryBundleVerifier>>;
+  };
 };
 const CAP: Record<string, string[]> = {
   root_sig: [],
@@ -831,6 +860,7 @@ export class VaultCore {
   private vault?: Vault;
   private registry?: Registry;
   private pin?: Pin;
+  private userRecoveryRead?: OwnerRecoveryRead;
   private device?: {
     deviceId: string;
     sig: CryptoKey;
@@ -4114,6 +4144,182 @@ export class VaultCore {
       throw new VaultError("device_change_pending");
     this.deviceChange = undefined;
     return { operationId };
+  }
+  async beginUserRecovery(sourcesDigest: string): Promise<OwnerRecoveryRequest> {
+    this.requireOrdinarySession();
+    this.userRecoveryRead = undefined;
+    const vault = this.vault,
+      base = this.registry,
+      lifecycle = this.lifecyclePin,
+      device = this.device;
+    if (!this.wrapping || !vault?.archive || !base || !lifecycle || !device)
+      throw new VaultError("locked");
+    const owner = await this.owner;
+    if (
+      typeof sourcesDigest !== "string" ||
+      !/^[a-f0-9]{64}$/.test(sourcesDigest) ||
+      lifecycle.ownerSubject !== owner ||
+      lifecycle.vaultId !== vault.vaultId ||
+      lifecycle.rootKeyId !== vault.rootKeyId ||
+      lifecycle.archiveDigest !== (await sha(canonical(vault.archive))) ||
+      this.pin?.checkpointDigest !== base.digest
+    )
+      throw new VaultError("untrusted_lifecycle");
+    const now = this.now();
+    cert(base, device.sigId, "device_sig", now);
+    cert(base, device.encId, "device_enc", now);
+    const request = {
+      contractVersion: CONTRACT,
+      profile: OWNER_RECOVERY_PROFILE,
+      ownerSubject: owner,
+      vaultId: vault.vaultId,
+      nonce: randomId(),
+      deviceId: device.deviceId,
+      deviceSigningKeyId: device.sigId,
+      deviceEncryptionKeyId: device.encId,
+    } as const;
+    this.userRecoveryRead = { request, vault, base, lifecycle, sourcesDigest, expiresAt: now + 60 };
+    return request;
+  }
+  private takeUserRecovery(nonce: string) {
+    this.requireOrdinarySession();
+    const read = this.userRecoveryRead;
+    if (!read || read.request.nonce !== nonce) throw new VaultError("untrusted_vault");
+    this.userRecoveryRead = undefined;
+    if (
+      read.expiresAt <= this.now() ||
+      this.vault !== read.vault ||
+      this.registry !== read.base ||
+      this.lifecyclePin !== read.lifecycle ||
+      this.pin?.checkpointDigest !== read.base.digest ||
+      this.device?.sigId !== read.request.deviceSigningKeyId ||
+      this.device?.encId !== read.request.deviceEncryptionKeyId
+    )
+      throw new VaultError("untrusted_vault");
+    return read;
+  }
+  private nextUserRegistryPage(read: OwnerRecoveryRead, current: Registry): OwnerRecoveryProgress {
+    const { target, verify } = read.continuation!;
+    this.userRecoveryRead = { ...read, continuation: { target, verify, current } };
+    return {
+      status: "page",
+      request: {
+        contractVersion: CONTRACT,
+        profile: OWNER_REGISTRY_PAGE_PROFILE,
+        ownerSubject: read.request.ownerSubject,
+        vaultId: read.vault.vaultId,
+        base: privateRegistryHead(current),
+        target,
+      },
+    };
+  }
+  async checkUserRecoveryEvidence(
+    nonce: string,
+    evidence: unknown,
+  ): Promise<OwnerRecoveryProgress> {
+    const read = this.takeUserRecovery(nonce);
+    if (read.continuation) throw new VaultError("untrusted_vault");
+    let verified: Json;
+    try {
+      verified = (await verifyOwnerRecoveryEvidence(evidence, {
+        request: read.request,
+        pinnedRootKeyId: read.vault.rootKeyId,
+        now: this.now(),
+      })) as Json;
+    } catch {
+      throw new VaultError("untrusted_vault");
+    }
+    const target: PrivateRegistryHead = verified.registry;
+    const base = privateRegistryHead(read.base);
+    const archiveVersion = read.lifecycle.lifecycleVersion + 1;
+    if (
+      verified.vaultVersion < read.vault.version ||
+      verified.archive.version < archiveVersion ||
+      target.registrySequence < base.registrySequence ||
+      target.keyEpoch < base.keyEpoch ||
+      (target.registrySequence === base.registrySequence && !equal(target, base)) ||
+      (verified.archive.version === archiveVersion &&
+        verified.archive.digest !== read.lifecycle.archiveDigest)
+    )
+      throw new VaultError("rollback_detected");
+    if (
+      target.registryEpoch !== base.registryEpoch ||
+      verified.archive.version !== archiveVersion ||
+      verified.sourcesDigest !== read.sourcesDigest
+    )
+      return { status: "refresh-required" };
+    if (equal(target, base)) {
+      return {
+        status: verified.vaultVersion === read.vault.version ? "unchanged" : "refresh-required",
+      };
+    }
+    const continuation = {
+      target,
+      current: read.base,
+      verify: await registryBundleVerifier(read.vault.rootJwk),
+    };
+    return this.nextUserRegistryPage(
+      {
+        ...read,
+        continuation,
+        expiresAt: Math.min(read.expiresAt, verified.expiresAt),
+      },
+      read.base,
+    );
+  }
+  async checkUserRegistryPage(nonce: string, value: Json): Promise<OwnerRecoveryProgress> {
+    const read = this.takeUserRecovery(nonce);
+    if (!read.continuation) throw new VaultError("untrusted_vault");
+    const { target, verify } = read.continuation;
+    let current = read.continuation.current;
+    exact(value, [
+      "contractVersion",
+      "profile",
+      "ownerSubject",
+      "vaultId",
+      "rootKeyId",
+      "base",
+      "target",
+      "bundles",
+    ]);
+    if (
+      value.contractVersion !== CONTRACT ||
+      value.profile !== OWNER_REGISTRY_PAGE_PROFILE ||
+      value.ownerSubject !== read.request.ownerSubject ||
+      value.vaultId !== read.vault.vaultId ||
+      value.rootKeyId !== read.vault.rootKeyId ||
+      !equal(value.base, privateRegistryHead(current)) ||
+      !equal(value.target, target) ||
+      !Array.isArray(value.bundles) ||
+      value.bundles.length < 1 ||
+      value.bundles.length > 4
+    )
+      throw new VaultError("registry_conflict");
+    bounded(value, 262144);
+    for (const bundle of value.bundles) {
+      const expected = current.checkpoint.registrySequence + 1;
+      current = await verify(
+        bundle,
+        read.request.ownerSubject,
+        read.vault.vaultId,
+        current,
+        this.now(),
+      );
+      if (
+        current.checkpoint.registrySequence !== expected ||
+        expected > target.registrySequence ||
+        current.checkpoint.keyEpoch > target.keyEpoch
+      )
+        throw new VaultError("registry_conflict");
+    }
+    if (this.now() >= read.expiresAt) throw new VaultError("untrusted_vault");
+    if (current.checkpoint.registrySequence !== target.registrySequence)
+      return this.nextUserRegistryPage(read, current);
+    if (!equal(privateRegistryHead(current), target)) throw new VaultError("registry_conflict");
+    cert(current, read.request.deviceSigningKeyId, "device_sig", this.now());
+    cert(current, read.request.deviceEncryptionKeyId, "device_enc", this.now());
+    // Keep the proven head separate from authorization until a full current refresh adopts it.
+    return { status: "registry-verified" };
   }
   async verifyRecovery(vault: Vault): Promise<RecoveryVerification> {
     this.requireOrdinarySession();
