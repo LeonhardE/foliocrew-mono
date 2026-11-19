@@ -30,6 +30,7 @@ UNAVAILABLE = "Market data is temporarily unavailable. Please try again later."
 STALE = "Showing previously fetched Yahoo data while a refresh is unavailable."
 SHARED_CACHE_WARNING = "Market refreshes are paused because the shared cache is unavailable."
 CACHED_SNAPSHOT = "Cached snapshot; checking for newer data."
+NO_HISTORY = "No market data is available for this symbol."
 QUERY_PATTERN = re.compile(r"^[\w .&^+\-]{1,50}$", re.UNICODE)
 
 
@@ -438,7 +439,10 @@ class MarketService:
             values = self.provider.history([item], now, chart_range)
             payload = values.get(symbol)
             if not payload:
-                raise UpstreamError
+                self.cache.fail(key, now, cool_provider=False)
+                if previous:
+                    return self.with_status(previous.value, previous.updated_at, now, STALE)
+                raise HTTPException(404, NO_HISTORY)
             payload["_refreshAfter"] = self.refresh_after(now, payload["dataDate"])
             self.cache.put(key, payload, now)
             return self.public_payload(payload)

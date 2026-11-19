@@ -52,7 +52,13 @@ class MarketCache:
         raise NotImplementedError
 
     def fail(
-        self, key: str, now: float, *, rate_limited: bool = False, provider: str = "yahoo"
+        self,
+        key: str,
+        now: float,
+        *,
+        rate_limited: bool = False,
+        provider: str = "yahoo",
+        cool_provider: bool = True,
     ) -> None:
         raise NotImplementedError
 
@@ -200,7 +206,13 @@ class SQLiteMarketCache(MarketCache):
             )
 
     def fail(
-        self, key: str, now: float, *, rate_limited: bool = False, provider: str = "yahoo"
+        self,
+        key: str,
+        now: float,
+        *,
+        rate_limited: bool = False,
+        provider: str = "yahoo",
+        cool_provider: bool = True,
     ) -> None:
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -209,11 +221,12 @@ class SQLiteMarketCache(MarketCache):
                 "ON CONFLICT(key) DO UPDATE SET lease=0,retry=excluded.retry",
                 (key, now + 300),
             )
-            state = json.loads(
-                db.execute("SELECT value FROM market_state WHERE id=1").fetchone()[0]
-            )
-            state[cooldown_key(provider)] = now + (900 if rate_limited else 300)
-            db.execute("UPDATE market_state SET value=? WHERE id=1", (json.dumps(state),))
+            if cool_provider:
+                state = json.loads(
+                    db.execute("SELECT value FROM market_state WHERE id=1").fetchone()[0]
+                )
+                state[cooldown_key(provider)] = now + (900 if rate_limited else 300)
+                db.execute("UPDATE market_state SET value=? WHERE id=1", (json.dumps(state),))
 
 
 class FirestoreMarketCache(MarketCache):
@@ -372,21 +385,26 @@ class FirestoreMarketCache(MarketCache):
             raise CacheUnavailable from error
 
     def fail(
-        self, key: str, now: float, *, rate_limited: bool = False, provider: str = "yahoo"
+        self,
+        key: str,
+        now: float,
+        *,
+        rate_limited: bool = False,
+        provider: str = "yahoo",
+        cool_provider: bool = True,
     ) -> None:
         try:
             batch = self.client.batch()
-            self.queue_writes(
-                batch,
-                [
-                    (self.document(key), {"lease": 0, "retry": now + 300}, True),
+            writes = [(self.document(key), {"lease": 0, "retry": now + 300}, True)]
+            if cool_provider:
+                writes.append(
                     (
                         self.collection.document("shared_upstream_budget"),
                         {cooldown_key(provider): now + (900 if rate_limited else 300)},
                         True,
-                    ),
-                ],
-            )
+                    )
+                )
+            self.queue_writes(batch, writes)
             batch.commit(timeout=4, retry=None)
         except MarketLimited:
             raise

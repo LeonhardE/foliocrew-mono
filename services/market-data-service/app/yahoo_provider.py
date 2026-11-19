@@ -163,30 +163,59 @@ class YahooProvider:
         self, instruments: list[Instrument], now: float, chart_range="1m"
     ) -> dict[str, dict[str, Any]]:
         period, interval = HISTORY_RANGES[chart_range]
-        symbols = [item.yahoo_symbol for item in instruments]
+        if not instruments:
+            return {}
+        options = {
+            "period": period,
+            "interval": interval,
+            "auto_adjust": True,
+            "actions": False,
+            "prepost": False,
+            "timeout": 6,
+        }
         try:
             # Cached market browsing does not need pandas/numpy or Yahoo's
             # client. Defer their startup cost until a real refresh is needed.
             import yfinance as yf
+            from yfinance.exceptions import YFPricesMissingError
+
+            # The batch API logs provider exceptions and returns empty frames.
+            # For a single instrument, use the history API that can raise the
+            # original exception so explicit provider throttling is preserved.
+            if len(instruments) == 1:
+                (instrument,) = instruments
+                try:
+                    with DOWNLOAD_LOCK:
+                        frame = yf.Ticker(instrument.yahoo_symbol).history(
+                            **options, raise_errors=True
+                        )
+                except YFPricesMissingError as error:
+                    # Preserve SDK status placeholders and explicit provider
+                    # errors such as authorization failures.
+                    reason = error.yahoo_reason
+                    if "Yahoo status_code" in error.debug_info or (
+                        reason is not None
+                        and not reason.lower().startswith(
+                            ("no data", "no price", "data doesn't exist")
+                        )
+                    ):
+                        raise
+                    return {}
+                payload = candle_payload(instrument, frame, now, chart_range)
+                return {instrument.symbol: payload} if payload else {}
 
             # One parallel batch keeps a cold ten-symbol overview bounded by the
             # individual timeout rather than ten sequential network timeouts.
-            # yfinance's downloader uses process-wide shared dictionaries.
-            # Separate HTTP requests must not enter it concurrently.
+            # Serialize calls into the SDK's shared Yahoo transport.
             with DOWNLOAD_LOCK:
                 frame = yf.download(
-                    tickers=symbols,
-                    period=period,
-                    interval=interval,
+                    tickers=[item.yahoo_symbol for item in instruments],
                     ignore_tz=interval == "1d",
-                    auto_adjust=True,
-                    actions=False,
-                    prepost=False,
                     progress=False,
                     threads=4,
                     group_by="ticker",
-                    timeout=6,
                     multi_level_index=True,
+                    **options,
                 )
             output = {}
             for instrument in instruments:

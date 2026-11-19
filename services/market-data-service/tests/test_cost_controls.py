@@ -276,6 +276,14 @@ class StorageCostTests(unittest.TestCase):
         self.client.batch_instance.set.assert_not_called()
         self.client.batch_instance.commit.assert_not_called()
 
+    def test_missing_history_failure_only_writes_the_failed_cache_key(self):
+        self.assertIsNone(self.cache.claim("no-price", NOW))
+        self.cache.fail("no-price", NOW, cool_provider=False)
+        updated = self.client.documents["shared_upstream_budget"]
+        self.assertNotIn("cooldown", updated)
+        self.assertIsNone(self.cache.claim("other-symbol", NOW))
+        self.assertIn("pending or cooling down", self.cache.claim("no-price", NOW))
+
     def test_accepted_search_keeps_nondefault_metrics_supported(self):
         item = Instrument("NFLX", "Netflix", yahoo_symbol="NFLX")
         provider = MagicMock()
