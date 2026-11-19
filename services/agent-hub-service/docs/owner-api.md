@@ -74,31 +74,11 @@ New Passkey ceremonies and independent recovery-kit UX remain client responsibil
 
 ## Owner connections and rollout capabilities
 
-`GET /api/v2/agent-connections` and the existing connection/grant revoke routes use an
-owner-only management service. They require the same verified Google owner and exact v2
-contract header even when Muse OAuth and the encrypted adapter are disabled. Their response
-shapes, authorization-attempt history, owner isolation and revocation semantics remain unchanged.
-Turning off new OAuth issuance does not hide existing connections or prevent their owner from
-revoking them. Storage or identity-verification failures remain real errors, not empty lists.
-
-`GET /api/v2/agent-capabilities` uses the same owner authentication and contract transport, with
-no query selectors. Its closed, no-store response contains exactly:
-
-```json
-{
-  "contractVersion": "folioview.agent-workspace.v2.0",
-  "profile": "folioview.owner-agent-capabilities.v1",
-  "ownerConnections": true,
-  "museConnectionEnabled": false
-}
-```
-
-`ownerConnections` identifies the independent management capability, not storage health.
-`museConnectionEnabled` is true only when both existing `HUB_OAUTH_ENABLED` and
-`HUB_ENCRYPTED_ADAPTER_ENABLED` equal `1` and preregistered OAuth configuration validates.
-This signal does not create storage/issuer clients, expose OAuth configuration or secrets, or
-prove actual remote Muse interoperability. OAuth/MCP/agent requests retain their original
-explicit fail-closed gates; Web consumes this profile separately from ordinary owner availability.
+Use [personal Agent credentials](agent-client.md) and the
+[persistent Owner API](persistent-api.md) to manage current connections.
+The four legacy foreground capability, connection and grant management paths
+return HTTP 404 from the deployed Hub. Historical signatures and receipts
+retain their original verification formats.
 
 ## Owner resource discovery
 

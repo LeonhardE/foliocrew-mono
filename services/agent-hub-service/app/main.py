@@ -8,7 +8,6 @@ from .agent_credential_routes import router as agent_credential_router
 from .api import internal_router, owner_router, public_router
 from .catalogue import router as catalogue_router
 from .errors import HubErrors
-from .legacy_owner_routes import owner_router as legacy_owner_router
 from .native_mcp import install_native_mcp
 from .native_transport_routes import connections_router as native_connections_router
 from .native_transport_routes import owner_router as native_transport_owner_router
@@ -67,7 +66,6 @@ app.include_router(persistent_result_owner_router)
 app.include_router(native_transport_router)
 app.include_router(native_transport_owner_router)
 app.include_router(native_connections_router)
-app.include_router(legacy_owner_router)
 app.add_middleware(HubErrors)
 install_native_mcp(app)
 
