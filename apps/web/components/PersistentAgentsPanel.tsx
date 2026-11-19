@@ -257,6 +257,7 @@ export function PersistentAgentsPanel({
     checking = model.unlocked && !ready && !readError,
     canChangeConnection = ready && !readError && !model.busy;
   const groups = providerGroups(ready ? model.views : [], ready ? model.providerStates : {}, now);
+  const helpHasConnection = Boolean(groups.find((group) => group.provider === help)?.current);
   const taskLink = (event: MouseEvent<HTMLAnchorElement>, taskId: string) => {
     if (
       event.button === 0 &&
@@ -599,7 +600,11 @@ export function PersistentAgentsPanel({
         closeLabel={t("close")}
         onClose={() => setHelp(null)}
       >
-        <p>{t("reconnectHelp", { provider: providerName(help ?? "muse") })}</p>
+        <p>
+          {t(helpHasConnection ? "reconnectHelp" : "connectHelp", {
+            provider: providerName(help ?? "muse"),
+          })}
+        </p>
         <button
           className={styles.secondary}
           disabled={!origin}

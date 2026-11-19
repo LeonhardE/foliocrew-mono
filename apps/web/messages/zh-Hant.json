@@ -1447,6 +1447,7 @@
     "confirm": "授權並連線",
     "cancel": "取消",
     "connect": "連線 {provider}",
+    "connectHelp": "請用下方地址在 {provider} 中新增 Foliocrew，再開啟它提供的授權連結。",
     "reconnectHelp": "請在 {provider} 中重新連線 Foliocrew，再開啟它提供的授權連結。首次新增時可使用下方連線地址。",
     "copyAddress": "複製連線地址",
     "copied": "已複製",

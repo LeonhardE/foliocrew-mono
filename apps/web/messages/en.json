@@ -1447,6 +1447,7 @@
     "confirm": "Authorize and connect",
     "cancel": "Cancel",
     "connect": "Connect {provider}",
+    "connectHelp": "Add Foliocrew in {provider} using the connection address below, then open the authorization link it provides.",
     "reconnectHelp": "Reconnect Foliocrew in {provider}, then open the authorization link it provides. For first-time setup, use the connection address below.",
     "copyAddress": "Copy connection address",
     "copied": "Copied",
