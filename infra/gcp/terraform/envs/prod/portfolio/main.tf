@@ -10,7 +10,7 @@ locals {
     FIRESTORE_DATABASE      = local.database_id
     PORTFOLIO_STORE_BACKEND = "firestore"
     CORS_ORIGINS            = var.deployment.web_origin
-  }, local.hub_trust_environment)
+  }, local.hub_trust_environment, local.private_authority_environment)
 }
 
 provider "google" {

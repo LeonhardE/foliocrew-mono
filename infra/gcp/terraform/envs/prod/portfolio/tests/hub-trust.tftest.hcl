@@ -183,3 +183,24 @@ run "opaque_content_and_public_proofs_are_unindexed_without_ttl" {
     error_message = "Only the eleven implemented opaque fields are exempted; no TTL or other database is configured."
   }
 }
+
+run "bind_one_owner_to_paired_user_origin" {
+  command = plan
+  variables {
+    private_authority_owner = sha256("synthetic-owner")
+    hub_trust               = { "PORTFOLIO_SERVICE_AUDIENCE" : "https://portfolio-api-111222333444.us-central1.run.app", "PORTFOLIO_DELEGATION_AUDIENCE" : "https://portfolio-api-111222333444.us-central1.run.app/internal/v2", "PORTFOLIO_DELEGATION_ISSUER" : "https://agent-hub-api-111222333444.us-central1.run.app", "PORTFOLIO_HUB_AUTHORITY_ORIGIN" : "https://agent-hub-api-111222333444.us-central1.run.app", "PORTFOLIO_TRUSTED_HUB_CALLERS" : "{\"123456789012345678901\":\"alpha-hub-runtime@demo-folio-alpha.iam.gserviceaccount.com\"}" }
+  }
+  assert {
+    condition = (
+      local.environment.PORTFOLIO_USER_AUTHORITY_OWNER == sha256("synthetic-owner") &&
+      local.environment.PORTFOLIO_USER_AUTHORITY_ORIGIN == "https://user-api-111222333444.us-central1.run.app"
+    )
+    error_message = "Use the exact User origin paired with Portfolio's trusted deployment."
+  }
+}
+
+run "private_authority_requires_reviewed_hub_trust" {
+  command = plan
+  variables { private_authority_owner = sha256("synthetic-owner") }
+  expect_failures = [var.private_authority_owner]
+}
