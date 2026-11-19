@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { boundedJson } from "@/lib/workspace-cache";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 const UNAVAILABLE = "Market data is unavailable. Please try again shortly.";
@@ -91,8 +92,26 @@ export function useCachedMarketResource<T>(path: string | null, reload = 0, refr
             if (!response.ok) {
               let message = UNAVAILABLE;
               if (response.status === 404) message = "No market data is available for this symbol.";
-              if (response.status === 429)
+              if (response.status === 429) {
+                const body: { detail?: unknown } | null = await boundedJson(
+                  response,
+                  16384,
+                  controller.signal,
+                ).catch(() => null);
                 message = "Too many requests. Please wait before retrying.";
+                if (
+                  body?.detail === "Yahoo is temporarily unavailable; cached data will be used."
+                ) {
+                  message = data
+                    ? body.detail
+                    : "Yahoo market data is temporarily unavailable. Please try again later.";
+                } else if (
+                  body?.detail === "A market refresh is already pending or cooling down."
+                ) {
+                  message =
+                    "This market snapshot is temporarily unavailable. Please try again shortly.";
+                }
+              }
               if (response.status === 503) {
                 const body: { detail?: unknown } = await response.json().catch(() => ({}));
                 if (typeof body.detail === "string") message = body.detail;

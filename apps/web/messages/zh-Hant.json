@@ -135,6 +135,8 @@
     "cacheUnavailable": "共享快取暫不可用，行情重新整理已暫停。",
     "simulated": "這是虛構的演示資料，並非真實市場價格。",
     "yahooCooldown": "Yahoo 暫不可用，將顯示快取資料。",
+    "yahooDataUnavailable": "Yahoo 行情暫不可用，所選標的或週期暫無可用快取。請稍後重試。",
+    "marketSeriesPending": "所選標的或週期的行情暫不可用，請稍後重試。",
     "dailyLimit": "已達到共享行情的每日重新整理額度。",
     "refreshLimit": "行情重新整理暫時受限，請稍後重試。",
     "refreshing": "正在顯示快取快照，並檢查新資料。",

@@ -47,11 +47,8 @@ export function useFxRates(pairs: readonly Pair[], owner: string | null, active:
     const controller = new AbortController();
     const owns = () => alive && live.current === key && !controller.signal.aborted;
     const previous = stateRef.current.key === key ? stateRef.current : null;
-    if (
-      forced.current !== key &&
-      (previous?.data || previous?.error) &&
-      Date.now() - previous.readAt < 60_000
-    )
+    const manual = forced.current === key;
+    if (!manual && (previous?.data || previous?.error) && Date.now() - previous.readAt < 60_000)
       return;
     forced.current = null;
     let data =
@@ -89,11 +86,13 @@ export function useFxRates(pairs: readonly Pair[], owner: string | null, active:
       Promise.race([fetchFxRates(pairs, cached, controller.signal), deadline]);
     void (async () => {
       try {
-        const cached = await request(true);
+        // Manual refresh already has the displayed rates and can use a single
+        // batch request. Market still serves the shared snapshot if it is fresh.
+        const snapshot = await request(!manual);
         if (!owns()) return;
-        data = keepKnown(data, cached);
-        publish(true);
-        if (cached.items.some((i) => i.status !== "available")) {
+        data = keepKnown(data, snapshot);
+        if (!manual && snapshot.items.some((i) => i.status !== "available")) {
+          publish(true);
           const refreshed = await request(false);
           if (!owns()) return;
           data = keepKnown(data, refreshed);

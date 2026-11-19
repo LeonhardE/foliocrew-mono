@@ -135,6 +135,8 @@
     "cacheUnavailable": "共享缓存暂不可用，行情刷新已暂停。",
     "simulated": "这是虚构的演示数据，并非真实市场价格。",
     "yahooCooldown": "Yahoo 暂不可用，将显示缓存数据。",
+    "yahooDataUnavailable": "Yahoo 行情暂不可用，所选标的或周期暂无可用缓存。请稍后重试。",
+    "marketSeriesPending": "所选标的或周期的行情暂不可用，请稍后重试。",
     "dailyLimit": "已达到共享行情的每日刷新额度。",
     "refreshLimit": "行情刷新暂时受限，请稍后重试。",
     "refreshing": "正在显示缓存快照，并检查新数据。",
