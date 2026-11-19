@@ -393,3 +393,40 @@ run "reject_the_protocol_origin_as_an_owner_alias" {
   }
   expect_failures = [var.browser_origin_aliases]
 }
+
+run "private_authority_uses_one_selected_owner" {
+  command = plan
+  variables {
+    deployment = {
+      project_id          = "example-project-1234"
+      region              = "europe-west3"
+      artifact_repository = "example-images"
+      runtime_account_id  = "example-hub-runtime"
+      creation_image      = "europe-west3-docker.pkg.dev/example-project-1234/example-images/agent-hub-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      web_origin          = "https://web.example.invalid"
+      hub_origin          = "https://agent-hub-api-111222333444.europe-west3.run.app"
+    }
+    private_authority_owner            = sha256("synthetic-owner")
+    agent_owned_mode_enabled           = true
+    agent_owned_allowed_owner_subjects = [sha256("synthetic-owner")]
+    connector                          = { oauth_enabled = true, muse_clients = [{ client_id = "synthetic-muse", redirect_uris = ["https://agent.example.invalid/callback"] }] }
+    agent_clients                      = [{ provider = "chatgpt", client_id = "synthetic-chatgpt", redirect_uris = ["https://other-agent.example.invalid/callback"] }]
+    sources                            = { user_origin = "https://user-api-111222333444.europe-west3.run.app", portfolio_origin = "https://portfolio-api-111222333444.europe-west3.run.app", portfolio_caller_email = "example-portfolio@example-project-1234.iam.gserviceaccount.com", trusted_portfolio_callers = { "112010400000000710080" = "example-portfolio@example-project-1234.iam.gserviceaccount.com" } }
+  }
+  assert {
+    condition = (
+      output.creation_configuration.environment.HUB_USER_PRIVATE_AUTHORITY_OWNER == sha256("synthetic-owner") &&
+      output.creation_configuration.environment.HUB_USER_VAULT_AUTHORITY_ENABLED == "1" &&
+      output.creation_configuration.environment.HUB_NATIVE_USER_VAULT_AUTHORITY_ENABLED == "1" &&
+      output.creation_configuration.environment.HUB_REPORT_SOURCE_AUTHORITY_ENABLED == "1" &&
+      output.creation_configuration.environment.HUB_PORTFOLIO_USER_AUTHORITY_TOKENS == "1"
+    )
+    error_message = "Enable the coherent private authority paths for the exact selected Owner."
+  }
+}
+
+run "private_authority_requires_exact_peers" {
+  command = plan
+  variables { private_authority_owner = sha256("synthetic-owner") }
+  expect_failures = [var.private_authority_owner]
+}
