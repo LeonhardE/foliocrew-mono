@@ -163,6 +163,117 @@ test("registry registration recovers an already applied directory without repeat
   assert.equal(calls.filter((c) => c.path.endsWith("/approvals")).length, 1);
   assert.equal(h.w.finishes, 1);
 });
+test("a selected User directory append with a lost response resumes without a legacy read or write", async () => {
+  const approval = {
+    ...packet,
+    kind: "credential",
+    registryUpdate: { expectedVersion: 1, registryBundle: { checkpoint: "SAME_SIGNED_HEAD" } },
+  };
+  const calls = [];
+  const h = harness(async (service, path, options = {}) => {
+    assert.equal(service, "agent-hub");
+    calls.push({ path, method: options.method });
+    if (path.endsWith("/approvals")) return { fingerprint: packet.fingerprint };
+    if (path.includes("/operations/")) return missing();
+    throw Error(path);
+  });
+  h.w.pending = approval;
+  const verified = { ...h.w.vault, userAuthority: { registry: { registryEpoch: 2 } } };
+  h.w.vault = verified;
+  let writes = 0;
+  let next = verified;
+  h.w.refreshVault = async () => next;
+  h.w.advanceRegistry = async (vault, update, signal) => {
+    assert.equal(vault, verified);
+    assert.equal(signal.aborted, false);
+    assert.equal(update.operationId, "directory_" + approval.operationId);
+    assert.equal(update.registryBundle, approval.registryUpdate.registryBundle);
+    writes++;
+    next = { ...verified, version: 2, registryHistory: [update.registryBundle] };
+    throw Error("lost acknowledgement");
+  };
+  await assert.rejects(h.c.send(connection, approval), /lost acknowledgement/);
+  assert.equal(calls.filter((call) => call.path.endsWith("/approvals")).length, 0);
+  assert.equal(h.w.pending, approval);
+  await h.c.resume(connection);
+  assert.equal(writes, 1);
+  assert.equal(calls.filter((call) => call.path.endsWith("/approvals")).length, 1);
+  assert.equal(h.w.finishes, 1);
+});
+test("a selected User approval stays pending if the signed readback is different", async () => {
+  const approval = {
+    ...packet,
+    kind: "credential",
+    registryUpdate: { expectedVersion: 1, registryBundle: { checkpoint: "SIGNED_HEAD" } },
+  };
+  const h = harness(async (_service, path) => {
+    if (path.includes("/operations/")) return missing();
+    throw Error(path);
+  });
+  h.w.pending = approval;
+  const verified = { ...h.w.vault, userAuthority: {} };
+  h.w.vault = verified;
+  let next = verified;
+  h.w.refreshVault = async () => next;
+  h.w.advanceRegistry = async () => {
+    next = { ...verified, version: 2, registryHistory: [{ checkpoint: "DIFFERENT_HEAD" }] };
+  };
+  await assert.rejects(h.c.send(connection, approval), /version_conflict/);
+  assert.equal(h.w.pending, approval);
+  assert.equal(h.w.finishes, 0);
+});
+test("selected holdings publications reuse the scoped synchronization and an exact snapshot", async () => {
+  const item = {
+    ref: {
+      kind: "holdings",
+      sourceService: "portfolio",
+      resourceId: "holdings_A",
+      incarnation: "incarnation_A",
+    },
+    sourceEpoch: 3,
+    revision: 2,
+    snapshotId: "snapshot_A",
+  };
+  const snapshot = { encrypted: "SIGNED_SNAPSHOT" };
+  const order = [];
+  const h = harness(async (service, path) => {
+    assert.equal(service, "portfolio");
+    assert.equal(path, "/api/v2/holdings/sources/holdings_A/snapshots/snapshot_A");
+    order.push("snapshot");
+    return snapshot;
+  });
+  h.w.vault.userAuthority = { registry: { registryEpoch: 2 } };
+  h.c.catalogue = async () => {
+    order.push("catalogue");
+    return { groups: [{ items: [item] }] };
+  };
+  h.w.synchronizeHoldingAuthority = async ({ resourceRef, sourceEpoch }, signal, vault) => {
+    assert.equal(resourceRef, item.ref);
+    assert.equal(sourceEpoch, item.sourceEpoch);
+    assert.equal(signal.aborted, false);
+    assert.equal(vault, h.w.vault);
+    order.push("scoped synchronization");
+  };
+  h.w.preparePersistentResource = async ({ source }) => {
+    assert.equal(source.snapshot, snapshot);
+    assert.equal(source.revision, 2);
+    order.push("seal");
+    return packet;
+  };
+  h.c.send = async (_connection, original) => {
+    assert.equal(original, packet);
+    order.push("publish");
+  };
+  await h.c.publishResource(connection, {}, item);
+  assert.deepEqual(order, [
+    "catalogue",
+    "scoped synchronization",
+    "snapshot",
+    "catalogue",
+    "seal",
+    "publish",
+  ]);
+});
 test("automatic synchronization uses only active continuing permissions; OAuth connection alone grants none", async () => {
   const h = harness(async () => ({}));
   h.w.pending = null;

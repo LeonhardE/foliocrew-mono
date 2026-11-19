@@ -160,20 +160,37 @@ export class PersistentExperienceController {
     }
     if (!receipt) {
       if (credential && packet.registryUpdate) {
-        await this.workspace().refreshVault(this.signal, true);
+        const verified = await this.workspace().refreshVault(this.signal, true);
         this.assert();
-        const fresh = (await this.request("/api/v2/vaults/current")).vault,
-          update = packet.registryUpdate;
+        const userCurrent = v.userAuthority || verified?.userAuthority;
+        if (userCurrent && (!verified?.userAuthority || verified.vaultId !== v.vaultId))
+          fail("verification_failed");
+        const fresh = userCurrent ? verified : (await this.request("/api/v2/vaults/current")).vault;
+        const update = packet.registryUpdate;
+        const operationId = "directory_" + packet.operationId;
         if (fresh.version === update.expectedVersion) {
-          await this.request(`/api/v2/vaults/${v.vaultId}/registry`, {
-            method: "PUT",
-            json: { contractVersion: PERSISTENT_CONTRACT, ...update },
-            headers: { "Idempotency-Key": "directory_" + packet.operationId },
-          });
-          await this.workspace().refreshVault(this.signal, true);
+          if (userCurrent) {
+            await this.workspace().advanceRegistry(fresh, { ...update, operationId }, this.signal);
+          } else {
+            await this.request(`/api/v2/vaults/${v.vaultId}/registry`, {
+              method: "PUT",
+              json: { contractVersion: PERSISTENT_CONTRACT, ...update },
+              headers: { "Idempotency-Key": operationId },
+            });
+          }
           this.assert();
-        } else if (!same(fresh.registryHistory.at(-1), update.registryBundle))
+          const confirmed = await this.workspace().refreshVault(this.signal, true);
+          this.assert();
+          if (
+            userCurrent &&
+            (!confirmed?.userAuthority ||
+              confirmed.vaultId !== v.vaultId ||
+              !same(confirmed.registryHistory.at(-1), update.registryBundle))
+          )
+            fail("version_conflict");
+        } else if (!same(fresh.registryHistory.at(-1), update.registryBundle)) {
           fail("version_conflict");
+        }
       }
       const path =
         credential && packet.providerActivation
@@ -734,19 +751,28 @@ export class PersistentExperienceController {
     let source: Json;
     if (item.ref.kind === "holdings") {
       if (!item.snapshotId) fail("source_unavailable");
-      const authority = await this.request("/api/v2/vaults/current/authority-token", {
-        method: "POST",
-        json: { contractVersion: PERSISTENT_CONTRACT },
-      });
-      await this.api(
-        "portfolio",
-        `/api/v2/holdings/sources/${item.ref.resourceId}/authority-sync`,
-        {
+      const vault = this.vault();
+      if (vault.userAuthority) {
+        await this.workspace().synchronizeHoldingAuthority(
+          { resourceRef: item.ref, sourceEpoch: item.sourceEpoch },
+          this.signal,
+          vault,
+        );
+      } else {
+        const authority = await this.request("/api/v2/vaults/current/authority-token", {
           method: "POST",
           json: { contractVersion: PERSISTENT_CONTRACT },
-          headers: { "X-FolioView-Authority-Delegation": authority.token },
-        },
-      );
+        });
+        await this.api(
+          "portfolio",
+          `/api/v2/holdings/sources/${item.ref.resourceId}/authority-sync`,
+          {
+            method: "POST",
+            json: { contractVersion: PERSISTENT_CONTRACT },
+            headers: { "X-FolioView-Authority-Delegation": authority.token },
+          },
+        );
+      }
       this.assert();
       const snapshot = await this.api(
         "portfolio",
