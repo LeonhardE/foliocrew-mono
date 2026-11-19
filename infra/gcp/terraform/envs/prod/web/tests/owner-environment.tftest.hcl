@@ -293,3 +293,44 @@ run "reject_unpaired_user_recovery" {
   }
   expect_failures = [var.owner_environment]
 }
+
+run "user_handover_and_current_reads_share_the_scoped_owner" {
+  command = plan
+  variables {
+    owner_environment = {
+      FOLIOVIEW_OWNER_FIREBASE_PROJECT_ID = "demo-web-alpha"
+      FOLIOVIEW_PORTFOLIO_OWNER_ENABLED   = "true"
+      FOLIOVIEW_PORTFOLIO_ORIGIN          = "https://portfolio-api-111222333444.us-central1.run.app"
+      FOLIOVIEW_PORTFOLIO_AUDIENCE        = "https://portfolio-api-111222333444.us-central1.run.app"
+      FOLIOVIEW_HUB_OWNER_ENABLED         = "true"
+      FOLIOVIEW_HUB_ORIGIN                = "https://agent-hub-api-111222333444.us-central1.run.app"
+      FOLIOVIEW_USER_OWNER_ENABLED        = "true"
+      FOLIOVIEW_USER_ORIGIN               = "https://user-api-111222333444.us-central1.run.app"
+      FOLIOVIEW_USER_HANDOVER_OWNER       = join("", [for index in range(64) : "a"])
+      FOLIOVIEW_USER_CURRENT_OWNER        = join("", [for index in range(64) : "a"])
+    }
+  }
+  assert {
+    condition     = local.environment == var.owner_environment
+    error_message = "Both staged settings must project the same exact owner."
+  }
+}
+
+run "reject_mismatched_user_handover_and_current_owners" {
+  command = plan
+  variables {
+    owner_environment = {
+      FOLIOVIEW_OWNER_FIREBASE_PROJECT_ID = "demo-web-alpha"
+      FOLIOVIEW_PORTFOLIO_OWNER_ENABLED   = "false"
+      FOLIOVIEW_PORTFOLIO_ORIGIN          = ""
+      FOLIOVIEW_PORTFOLIO_AUDIENCE        = ""
+      FOLIOVIEW_HUB_OWNER_ENABLED         = "true"
+      FOLIOVIEW_HUB_ORIGIN                = "https://agent-hub-api-111222333444.us-central1.run.app"
+      FOLIOVIEW_USER_OWNER_ENABLED        = "true"
+      FOLIOVIEW_USER_ORIGIN               = "https://user-api-111222333444.us-central1.run.app"
+      FOLIOVIEW_USER_HANDOVER_OWNER       = join("", [for index in range(64) : "a"])
+      FOLIOVIEW_USER_CURRENT_OWNER        = join("", [for index in range(64) : "b"])
+    }
+  }
+  expect_failures = [var.owner_environment]
+}
