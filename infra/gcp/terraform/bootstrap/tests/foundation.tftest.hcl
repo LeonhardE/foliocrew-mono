@@ -503,6 +503,32 @@ run "market_cache_provisioning_uses_the_owned_database_and_denies_clients" {
   }
 }
 
+run "user_data_is_opt_in" {
+  command = plan
+
+  assert {
+    condition     = length(module.user_data_database) == 0
+    error_message = "Preparing the User root must not implicitly provision its database."
+  }
+}
+
+run "user_data_provisions_the_exact_database" {
+  command = plan
+
+  variables {
+    user_data_database_enabled = true
+  }
+
+  assert {
+    condition = (
+      length(module.user_data_database) == 1 &&
+      module.user_data_database[0].resource_name == "projects/${var.project_id}/databases/user-data" &&
+      module.user_data_database[0].location_id == "northamerica-northeast2"
+    )
+    error_message = "Provision only the named User authority database in the selected region."
+  }
+}
+
 run "user_execution_business_roles_cannot_create_delete_or_administer_resources" {
   command = plan
 
