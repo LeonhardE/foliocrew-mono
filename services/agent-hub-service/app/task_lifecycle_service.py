@@ -36,7 +36,7 @@ class TaskLifecycleService(TaskCenterResultService):
                 row = definition_row(unit, owner, vault, task)
                 d = row["definition"]
                 cleanup = row.get("cleanup", {})
-                expired = self.now() >= d["purgeAfter"]
+                expired = status == "purged" or self.now() >= d["purgeAfter"]
                 items.append(
                     {
                         "taskId": task,
