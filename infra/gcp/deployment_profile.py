@@ -101,6 +101,7 @@ USER_RECOVERY_WEB_REFERENCE_FIELDS = {
     "firebaseProjectId",
     "userOrigin",
 }
+COMPACT_WEB_RECOVERY_REFERENCE_FIELDS = {"scopeSha256", "serviceUid", "runtimeAccountId"}
 USER_HUB_TRUST_ENVIRONMENT_FIELDS = {
     "USER_SERVICE_AUDIENCE",
     "USER_DELEGATION_AUDIENCE",
@@ -1098,10 +1099,11 @@ def validate_user_hub_trust(value, instance, hub_instance=None, web_instance=Non
             web = web_instance
             web_subject = value["ownerRecoveryWebSubject"]
             require(web_subject != subject)
-            require(value["webDeploymentSha256"] == web["deploymentSha256"])
             require(
                 {key: environment[key] for key in USER_RECOVERY_WEB_ENVIRONMENT_FIELDS}
-                == user_recovery_web_environment(instance, web, web_subject)
+                == user_recovery_web_environment(
+                    instance, web, web_subject, value["webDeploymentSha256"]
+                )
             )
             if subject is not None:
                 require(web["runtimeAccountId"] != hub["inputs"]["runtime_account_id"])
@@ -1112,38 +1114,48 @@ def validate_user_hub_trust(value, instance, hub_instance=None, web_instance=Non
     return value
 
 
+def web_recovery_scope(instance, deployment_sha256):
+    return digest(
+        [instance["instanceId"], instance["project"], instance["region"], deployment_sha256]
+    )
+
+
 def user_recovery_web_reference(web):
-    # Use only workload pins here. Cloud Build substitutions have a fixed size
-    # and the Web build also carries fields unrelated to User authentication.
+    # The identical application contract is independently checked before omitting
+    # its duplicate strings from the Cloud Build transport.
+    number, region = web["project"]["number"], web["region"]
+    require(web["build"]["_USER_API_BASE_URL"] == f"https://user-api-{number}.{region}.run.app")
+    require(web["build"]["_FIREBASE_PROJECT_ID"] == web["project"]["id"])
     return {
-        "deploymentSha256": digest(web),
-        **{key: web[key] for key in ("instanceId", "project", "region")},
+        "scopeSha256": web_recovery_scope(web, digest(web)),
         "serviceUid": web["adoption"]["serviceUid"],
         "runtimeAccountId": web["inputs"]["runtime_account_id"],
-        "firebaseProjectId": web["build"]["_FIREBASE_PROJECT_ID"],
-        "userOrigin": web["build"]["_USER_API_BASE_URL"],
     }
 
 
-def user_recovery_web_environment(instance, web, subject):
+def user_recovery_web_environment(instance, web, subject, deployment_sha256):
     matches(HUB_SUBJECT, subject)
-    fields(web, USER_RECOVERY_WEB_REFERENCE_FIELDS)
-    matches(re.compile(r"[a-f0-9]{64}\Z"), web["deploymentSha256"])
-    for key in ("instanceId", "project", "region"):
-        require(web[key] == instance[key])
-    uuid(web["serviceUid"])
-    require(web["serviceUid"] != instance["adoption"]["serviceUid"])
-    account = web["runtimeAccountId"]
-    matches(ACCOUNT, account)
-    require(account != instance["inputs"]["runtime_account_id"])
+    matches(re.compile(r"[a-f0-9]{64}\Z"), deployment_sha256)
     project, number, region = (
         instance["project"]["id"],
         instance["project"]["number"],
         instance["region"],
     )
     audience = f"https://user-api-{number}.{region}.run.app"
-    require(web["userOrigin"] == audience)
-    require(web["firebaseProjectId"] == project)
+    if "scopeSha256" in web:
+        fields(web, COMPACT_WEB_RECOVERY_REFERENCE_FIELDS)
+        require(web["scopeSha256"] == web_recovery_scope(instance, deployment_sha256))
+    else:
+        fields(web, USER_RECOVERY_WEB_REFERENCE_FIELDS)
+        require(web["deploymentSha256"] == deployment_sha256)
+        for key in ("instanceId", "project", "region"):
+            require(web[key] == instance[key])
+        require(web["userOrigin"] == audience and web["firebaseProjectId"] == project)
+    uuid(web["serviceUid"])
+    require(web["serviceUid"] != instance["adoption"]["serviceUid"])
+    account = web["runtimeAccountId"]
+    matches(ACCOUNT, account)
+    require(account != instance["inputs"]["runtime_account_id"])
     return {
         "USER_PRIVATE_OWNER_AUDIENCE": audience,
         "USER_PRIVATE_OWNER_WEB_CALLER": canonical(
@@ -1168,11 +1180,8 @@ def compile_user_hub_trust_artifacts(profile):
     trust = profile.get("userHubTrust", {"enabled": False, "hubSubject": None})
     hub = compile_target(profile, "agent-hub") if trust["enabled"] else None
     web_subject = trust.get("ownerRecoveryWebSubject")
-    web = (
-        user_recovery_web_reference(compile_target(profile, "web"))
-        if web_subject is not None
-        else None
-    )
+    web_target = compile_target(profile, "web") if web_subject is not None else None
+    web = user_recovery_web_reference(web_target) if web_target else None
     document = {
         "schemaVersion": 1,
         "instanceId": instance["instanceId"],
@@ -1198,10 +1207,11 @@ def compile_user_hub_trust_artifacts(profile):
             "USER_TRUSTED_HUB_CALLERS": canonical({trust["hubSubject"]: email}).decode("ascii"),
         }
     if web is not None:
-        document.update(
-            webDeploymentSha256=web["deploymentSha256"], ownerRecoveryWebSubject=web_subject
+        web_sha256 = digest(web_target)
+        document.update(webDeploymentSha256=web_sha256, ownerRecoveryWebSubject=web_subject)
+        document["environment"].update(
+            user_recovery_web_environment(instance, web, web_subject, web_sha256)
         )
-        document["environment"].update(user_recovery_web_environment(instance, web, web_subject))
     parse_user_hub_trust(
         canonical(document),
         instance=instance,
