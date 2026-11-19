@@ -434,11 +434,11 @@ test("data settings open a smooth dialog, preserve original pending-name recover
     recover: async (r, replay) => calls.push(["recover", r, replay]),
   };
   const model = {
-    sources: [{ resourceRef: ref }],
+    sources: [{ resourceRef: ref, sourceEpoch: 1 }],
     selectedSourceId: ref.resourceId,
     canWriteState: true,
     phase: "unlocked",
-    sourceMetadata: { state: "active" },
+    sourceMetadata: { state: "active", source: { resourceRef: ref, sourceEpoch: 1 } },
   };
   const render = () =>
     h.render(() =>
@@ -499,18 +499,27 @@ test("holdings choices hide confirmed deletion by source incarnation and retain 
     "./useTasks": {},
     "./ResourcesPanel.module.css": css,
   });
-  const data = catalogue(),
-    holdings = data.groups.find((group) => group.kind === "holdings"),
-    removed = holdings.items[0],
-    liveRef = { ...removed.ref, resourceId: "source_B", incarnation: "incarnation_B" };
+  const data = catalogue();
+  const holdings = data.groups.find((group) => group.kind === "holdings");
+  const removed = holdings.items[0];
+  const liveRef = { ...removed.ref, resourceId: "source_B", incarnation: "incarnation_B" };
   removed.state = "deleted";
-  holdings.items.push({ ...removed, ref: { ...liveRef, incarnation: "incarnation_A" } });
+  holdings.items.push(
+    { ...removed, ref: { ...liveRef, incarnation: "incarnation_A" } },
+    { ...removed, ref: liveRef, state: "active" },
+  );
   const model = {
-    sources: [{ resourceRef: removed.ref }, { resourceRef: liveRef }],
+    sources: [
+      { resourceRef: removed.ref, sourceEpoch: 1 },
+      { resourceRef: liveRef, sourceEpoch: 1 },
+    ],
     selectedSourceId: removed.ref.resourceId,
     canWriteState: true,
     phase: "unlocked",
+    sourceMutation: null,
   };
+  let read = { ...loaded(null), loading: true };
+  const reloads = [];
   const render = () =>
     h.render(() =>
       HoldingsSourceBar({
@@ -521,24 +530,35 @@ test("holdings choices hide confirmed deletion by source incarnation and retain 
           pending: () => false,
           clearError() {},
         },
-        library: { catalogue: loaded(data) },
+        library: { catalogue: read, reload: (kind) => reloads.push(kind) },
         onUpdate() {},
+        children: "PENDING_RECOVERY",
       }),
     );
   const options = (tree) => all(tree, (n) => n.type === "option").map((n) => n.props.children);
-  model.sourceMutation = { action: "delete" };
   let tree = render();
-  assert.deepEqual(options(tree), ["Removed name", "Active name"]);
-  assert.ok(button(tree, "manage.finishPending"));
-  button(tree, "lifecycle.settings").props.onClick();
-  assert.equal(all(render(), (n) => n.props.id === "holdings-source-settings")[0].props.open, true);
+  assert.deepEqual(options(tree), [], "cold registration anchors never become options");
+  assert.equal(button(tree, "lifecycle.settings"), undefined);
+  assert.ok(all(tree, (n) => n.props.label === "loading").length);
+  read = { ...loaded(data), stale: true, error: "source_unavailable" };
+  tree = render();
+  assert.deepEqual(options(tree), []);
+  assert.ok(all(tree, (n) => n.props.children === "lifecycle.sourcesUnavailable").length);
+  button(tree, "manage.refresh").props.onClick();
+  assert.deepEqual(reloads, ["catalogue"]);
+
+  read = loaded(data);
+  model.sourceMutation = { action: "delete" };
+  tree = render();
+  assert.deepEqual(options(tree), ["lifecycle.choose", "Active name"]);
+  assert.equal(button(tree, "lifecycle.settings"), undefined);
+  assert.ok(tree.props.children.includes("PENDING_RECOVERY"));
 
   model.sourceMutation = null;
   tree = render();
   assert.deepEqual(options(tree), ["lifecycle.choose", "Active name"]);
   assert.equal(all(tree, (n) => n.type === "select")[0].props.value, "");
   assert.equal(all(tree, (n) => n.props.id === "holdings-source-settings")[0].props.open, false);
-  assert.equal(button(tree, "lifecycle.settings"), undefined);
 
   model.sources.pop();
   holdings.items.length = 0;
