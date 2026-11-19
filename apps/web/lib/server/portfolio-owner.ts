@@ -6,7 +6,6 @@ import {
 } from "../holdings-view";
 import { cancellationRequest, cancellationResponse } from "./upload-cancellation";
 
-import { decodeJwt } from "jose";
 import {
   CONTRACT,
   JWT,
@@ -24,6 +23,7 @@ import {
   carrier,
   signedObject,
   createFirebaseVerifier,
+  createCloudRunIdentity,
   forwardResponse,
   proxyClock,
   timeProxyResponse,
@@ -31,8 +31,6 @@ import {
 } from "./owner-transport";
 
 const PREFIX = "/api/private/portfolio";
-const METADATA =
-  "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity";
 const ID = "[A-Za-z0-9][A-Za-z0-9_-]{0,127}";
 const OPERATION = "[A-Za-z0-9_-]{22,128}";
 const SOURCE = `/api/v2/holdings/sources/${ID}`;
@@ -241,56 +239,7 @@ export function createPortfolioProxy(options: Options = {}) {
   const now = options.now ?? Date.now;
   const edgeOrigin = createEdgeOriginVerifier(env, now);
   const verifyOwner = createFirebaseVerifier(send, now);
-  let serviceToken: { audience: string; token: string; until: number } | undefined;
-  let tokenFlight: { audience: string; promise: Promise<string> } | undefined;
-
-  async function identity(config: Config) {
-    if (serviceToken?.audience === config.audience && serviceToken.until > now())
-      return serviceToken.token;
-    if (tokenFlight?.audience === config.audience) return tokenFlight.promise;
-    const promise = (async () => {
-      const signal = AbortSignal.timeout(4000);
-      const url = `${METADATA}?audience=${encodeURIComponent(config.audience)}&format=full`;
-      const response = await until(
-        send(url, {
-          headers: { "Metadata-Flavor": "Google" },
-          redirect: "manual",
-          cache: "no-store",
-          credentials: "omit",
-          signal,
-        }),
-        signal,
-      );
-      if (response.status !== 200 || response.headers.get("metadata-flavor") !== "Google")
-        fail("authorization_unavailable");
-      const token = new TextDecoder("utf-8", { fatal: true }).decode(
-        await bytes(response.body, 16384, signal),
-      );
-      if (!JWT.test(token)) fail("authorization_unavailable");
-      const claims = decodeJwt(token);
-      if (
-        claims.aud !== config.audience ||
-        !["https://accounts.google.com", "accounts.google.com"].includes(claims.iss ?? "") ||
-        !Number.isSafeInteger(claims.exp) ||
-        claims.exp! * 1000 <= now() + 30000
-      )
-        fail("authorization_unavailable");
-      serviceToken = {
-        audience: config.audience,
-        token,
-        until: Math.min(claims.exp! * 1000 - 30000, now() + 300000),
-      };
-      return token;
-    })().catch(() => {
-      throw new Failure("authorization_unavailable");
-    });
-    tokenFlight = { audience: config.audience, promise };
-    try {
-      return await promise;
-    } finally {
-      if (tokenFlight?.promise === promise) tokenFlight = undefined;
-    }
-  }
+  const identity = createCloudRunIdentity(send, now);
 
   return async function portfolioProxy(request: Request): Promise<Response> {
     const started = proxyClock();
@@ -303,7 +252,10 @@ export function createPortfolioProxy(options: Options = {}) {
       const { path, rule } = ruleFor(request, edgeOrigin);
       const { headers, raw, token, viewExpected } = await transport(request, rule, signal);
       const uid = await verifyOwner(token, config!.project, signal);
-      headers.set("X-Serverless-Authorization", `Bearer ${await until(identity(config!), signal)}`);
+      headers.set(
+        "X-Serverless-Authorization",
+        `Bearer ${await until(identity(config!.audience), signal)}`,
+      );
       const response = await until(
         send(config!.origin + path, {
           method: request.method,

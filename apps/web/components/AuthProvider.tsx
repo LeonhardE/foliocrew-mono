@@ -1,5 +1,10 @@
 "use client";
 import { holdingsViewRequest } from "@/lib/holdings-view";
+import {
+  USER_RECOVERY_MAX_REQUEST,
+  USER_RECOVERY_PROXY,
+  userRecoveryRoute,
+} from "@/lib/user-recovery-route";
 import { taskDetailRequest } from "@/lib/task-detail-read";
 import { taskOverviewRequest } from "@/lib/task-overview-request";
 import {
@@ -934,7 +939,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let contractHeaders: Record<string, string> = {};
     let maxBodyBytes = 589824;
     let validatedJson = options.json;
-    if (service === "portfolio" || service === "agent-hub") {
+    const recoveryRead = service === "user" ? userRecoveryRoute(path) : null;
+    if (recoveryRead) {
+      if (
+        !exact(options.json, recoveryRead.keys) ||
+        options.json.profile !== recoveryRead.profile ||
+        options.json.vaultId !== recoveryRead.vault
+      )
+        throw new Error("Invalid private API request");
+      origin = USER_RECOVERY_PROXY;
+      contractHeaders = encryptedRequestHeaders(
+        { method: "POST", keys: recoveryRead.keys },
+        options,
+      );
+      maxBodyBytes = USER_RECOVERY_MAX_REQUEST;
+    } else if (service === "portfolio" || service === "agent-hub") {
       let rule = encryptedRule(service, path, method);
       if (
         service === "portfolio" &&
@@ -1107,6 +1126,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Leave room for mutations; duplicate only opted-in display GETs. Fresh
     // authority reads and read-only POST queries get unique queue entries.
     const readOnly =
+      recoveryRead !== null ||
       method === "GET" ||
       (method === "POST" &&
         service === "portfolio" &&

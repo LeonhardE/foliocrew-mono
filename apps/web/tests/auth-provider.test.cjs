@@ -1,3 +1,6 @@
+const recoveryRoutes = require("./resource-library-helpers.cjs").compile(
+  "../lib/user-recovery-route.ts",
+);
 const cacheContracts = require("./resource-library-helpers.cjs").compile(
   "../lib/workspace-cache.ts",
 );
@@ -172,6 +175,7 @@ function mountProvider({
     "@/lib/resource-library": resourceContracts,
     "@/lib/agent-link": { loadAgentLinkConfiguration: fetchLinkConfig },
     "@/lib/persistent-owner-routes": persistentRoutes,
+    "@/lib/user-recovery-route": recoveryRoutes,
     "@/lib/holdings-view": require("./holdings-view-helpers.cjs"),
     "@/lib/task-detail-read": require("./task-overview-helpers.cjs").detail,
     "@/lib/task-overview-request": require("./task-overview-helpers.cjs").request,
@@ -615,6 +619,44 @@ test("private requests use a fresh SDK token, fixed API route, and no credential
     /Invalid private API path/,
   );
   assert.equal(harness.requests.length, 2);
+});
+
+test("private User recovery reads use only the same-origin POST proxy", async () => {
+  const harness = mountProvider({
+    env: { NEXT_PUBLIC_USER_API_BASE_URL: "https://user.example.test" },
+  });
+  harness.emitUser(user("a"));
+  await settle();
+  const path = "/api/v3/private-resources/vaults/vault_A/recovery-evidence";
+  const json = {
+    contractVersion: "folioview.agent-workspace.v2.0",
+    profile: recoveryRoutes.RECOVERY_PROFILE,
+    ownerSubject: "a".repeat(64),
+    vaultId: "vault_A",
+    nonce: "a".repeat(22),
+    deviceId: "device_A",
+    deviceSigningKeyId: "a".repeat(43),
+    deviceEncryptionKeyId: "b".repeat(43),
+  };
+  for (const options of [
+    { method: "GET", json },
+    { method: "POST", json: { ...json, vaultId: "vault_B" } },
+    { method: "POST", json, headers: { "X-FolioView-Proxy-Authorization": "synthetic" } },
+  ]) {
+    await assert.rejects(harness.actions.requestPrivate("user", path, "a:1", options));
+  }
+  await assert.rejects(
+    harness.actions.requestPrivate("user", path + "?x=1", "a:1", { method: "POST", json }),
+  );
+  const response = await harness.actions.requestPrivate("user", path, "a:1", {
+    method: "POST",
+    json,
+  });
+  assert.equal(response.status, 200);
+  assert.equal(harness.requests.at(-1)[0], recoveryRoutes.USER_RECOVERY_PROXY + path);
+  assert.equal(harness.requests.at(-1)[1].headers.Authorization, "Bearer test-token-a");
+  assert.equal(harness.requests.at(-1)[1].redirect, "error");
+  assert.equal(harness.requests.at(-1)[1].cache, "no-store");
 });
 
 test("profile, watchlist and preferences use only their configured service origins", async () => {
