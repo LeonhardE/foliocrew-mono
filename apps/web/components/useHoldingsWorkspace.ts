@@ -43,6 +43,7 @@ import {
   OWNER_CURRENT_PATH,
   OWNER_CURRENT_PROFILE,
   REGISTRY_UPDATE_PROFILE,
+  USER_ARCHIVE_LIFECYCLE_PROFILE,
 } from "@/lib/user-recovery-route";
 import {
   createVaultPasskey,
@@ -861,14 +862,76 @@ export function useHoldingsWorkspace() {
     [api, auth.ownerCapabilities?.userVault, uid],
   );
 
-  const readLifecycle = useCallback(
-    async (vault: Vault, signal: AbortSignal) =>
-      (await api(
-        "agent-hub",
-        `/api/v2/vaults/${vault.vaultId}/archive`,
+  const readUserArchive = useCallback(
+    async (vault: Vault, signal: AbortSignal, operationId: string | null) => {
+      const nonce = crypto.randomUUID().replace(/-/g, "");
+      const ownerSubject = requireArchive(vault.archive).ownerSubject;
+      const value = await api(
+        "user",
+        `/api/v3/private-resources/vaults/${vault.vaultId}/archive-lifecycle/read`,
         signal,
-      )) as VaultLifecycleState,
+        {
+          method: "POST",
+          allowMissing: operationId !== null,
+          json: {
+            contractVersion: CONTRACT,
+            profile: USER_ARCHIVE_LIFECYCLE_PROFILE,
+            ownerSubject,
+            vaultId: vault.vaultId,
+            nonce,
+            operationId,
+          },
+        },
+      );
+      if (value === null && operationId !== null) return null;
+      if (
+        !record(value) ||
+        value.contractVersion !== CONTRACT ||
+        value.profile !== USER_ARCHIVE_LIFECYCLE_PROFILE ||
+        value.ownerSubject !== ownerSubject ||
+        value.vaultId !== vault.vaultId ||
+        value.rootKeyId !== vault.rootKeyId ||
+        value.nonce !== nonce
+      )
+        throw new WorkspaceError("invalid_response");
+      return value;
+    },
     [api],
+  );
+  const readLifecycle = useCallback(
+    async (vault: Vault, signal: AbortSignal): Promise<VaultLifecycleState> => {
+      if (!vault.userAuthority)
+        return (await api(
+          "agent-hub",
+          `/api/v2/vaults/${vault.vaultId}/archive`,
+          signal,
+        )) as VaultLifecycleState;
+      const value = await readUserArchive(vault, signal, null);
+      if (!value || !record(value.state) || !Array.isArray(value.originalCheckpoints))
+        throw new WorkspaceError("invalid_response");
+      return {
+        ...value.state,
+        originalCheckpoints: value.originalCheckpoints,
+      } as VaultLifecycleState;
+    },
+    [api, readUserArchive],
+  );
+  const readArchiveReceipt = useCallback(
+    async (vault: Vault, operationId: string, signal: AbortSignal, allowMissing = false) => {
+      if (!vault.userAuthority)
+        return api(
+          "agent-hub",
+          `/api/v2/vaults/${vault.vaultId}/archive-operations/${operationId}`,
+          signal,
+          { allowMissing },
+        );
+      const value = await readUserArchive(vault, signal, operationId);
+      if (value === null && allowMissing) return null;
+      if (!value || value.operationId !== operationId || !record(value.receipt))
+        throw new WorkspaceError("invalid_response");
+      return value.receipt;
+    },
+    [api, readUserArchive],
   );
 
   const liveSession = useCallback(
@@ -3838,11 +3901,7 @@ export function useHoldingsWorkspace() {
         });
         assertActive();
       }
-      await api(
-        "agent-hub",
-        `/api/v2/vaults/${vault.vaultId}/archive-operations/${packet.operationId}`,
-        signal,
-      );
+      await readArchiveReceipt(vault, packet.operationId, signal);
       assertActive();
       const saved = await readCurrent(signal);
       assertActive();
@@ -3862,7 +3921,7 @@ export function useHoldingsWorkspace() {
         keyNotice: "archive_change_saved",
       }));
     },
-    [api, owner, readCurrent, readLifecycle, terminate],
+    [api, owner, readArchiveReceipt, readCurrent, readLifecycle, terminate],
   );
 
   const reviewArchiveDeletion = useCallback(
@@ -4261,12 +4320,7 @@ export function useHoldingsWorkspace() {
         const pending = await instance.getArchiveChange(fresh.vault, lifecycle);
         assertActive();
         if (!pending) throw new WorkspaceError("invalid_operation");
-        await api(
-          "agent-hub",
-          `/api/v2/vaults/${fresh.vault.vaultId}/archive-operations/${pending.packet.operationId}`,
-          signal,
-          { allowMissing: true },
-        );
+        await readArchiveReceipt(fresh.vault, pending.packet.operationId, signal, true);
         assertActive();
         setState((previous) => ({
           ...previous,
@@ -4286,7 +4340,7 @@ export function useHoldingsWorkspace() {
             assertActive,
           );
       }),
-    [api, completeArchiveChange, liveSession, perform, readCurrent, readLifecycle],
+    [completeArchiveChange, liveSession, perform, readArchiveReceipt, readCurrent, readLifecycle],
   );
 
   const resumeArchiveWithNewPasskey = useCallback(

@@ -12,6 +12,7 @@ import {
   RECOVERY_PROFILE,
   REGISTRY_START_PROFILE,
   REGISTRY_UPDATE_PROFILE,
+  USER_ARCHIVE_LIFECYCLE_PROFILE,
   USER_RECOVERY_PROXY,
   userRecoveryRoute,
 } from "../user-recovery-route";
@@ -100,6 +101,11 @@ function validRequest(
     );
   if (rule.profile === REGISTRY_START_PROFILE) return matches(value.nonce, NONCE);
   if (rule.profile === OWNER_CURRENT_PROFILE) return matches(value.nonce, NONCE);
+  if (rule.profile === USER_ARCHIVE_LIFECYCLE_PROFILE)
+    return (
+      matches(value.nonce, NONCE) &&
+      (value.operationId === null || matches(value.operationId, NONCE))
+    );
   if (rule.profile === REGISTRY_UPDATE_PROFILE)
     return (
       matches(value.operationId, NONCE) &&
@@ -407,6 +413,33 @@ function validReply(body: unknown, input: Json, expectedDigest: string) {
       )
     );
   }
+  if (input.profile === USER_ARCHIVE_LIFECYCLE_PROFILE) {
+    const scope = ["contractVersion", "profile", "ownerSubject", "vaultId", "rootKeyId", "nonce"];
+    if (!fieldsBelongToRequest(body, input) || body.nonce !== input.nonce) return false;
+    if (input.operationId !== null)
+      return (
+        fields(body, [...scope, "operationId", "receipt"]) &&
+        body.operationId === input.operationId &&
+        record(body.receipt) &&
+        body.receipt.operationId === input.operationId &&
+        body.receipt.ownerSubject === input.ownerSubject &&
+        body.receipt.vaultId === input.vaultId &&
+        body.receipt.rootKeyId === body.rootKeyId
+      );
+    return (
+      fields(body, [...scope, "state", "originalCheckpoints"]) &&
+      record(body.state) &&
+      body.state.contractVersion === CONTRACT &&
+      body.state.profile === "folioview.vault-lifecycle.v1" &&
+      body.state.vaultId === input.vaultId &&
+      body.state.rootKeyId === body.rootKeyId &&
+      Array.isArray(body.state.history) &&
+      body.state.history.length <= 32 &&
+      Array.isArray(body.originalCheckpoints) &&
+      body.originalCheckpoints.length <= 32 &&
+      body.originalCheckpoints.every(signedObject)
+    );
+  }
   if (!fieldsBelongToRequest(body, input)) return false;
   switch (input.profile) {
     case RECOVERY_PROFILE:
@@ -473,7 +506,11 @@ export function createUserRecoveryProxy(options: Options = {}) {
       if (!validRequest(input, rule)) return fail();
       const uid = await verifyOwner(authorization.slice(7), project, signal);
       if (input.ownerSubject !== digest(uid)) fail("not_found");
-      if (rule.profile === OWNER_CURRENT_PROFILE || rule.profile === PRIVATE_DISPLAY_NAME_PROFILE) {
+      if (
+        rule.profile === OWNER_CURRENT_PROFILE ||
+        rule.profile === PRIVATE_DISPLAY_NAME_PROFILE ||
+        rule.profile === USER_ARCHIVE_LIFECYCLE_PROFILE
+      ) {
         const selected = env.FOLIOVIEW_USER_CURRENT_OWNER;
         if (!selected) fail("not_found");
         if (!matches(selected, DIGEST)) fail("authorization_unavailable");

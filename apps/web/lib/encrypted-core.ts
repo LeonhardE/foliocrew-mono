@@ -1874,6 +1874,9 @@ export class VaultCore {
       "archive",
       "pendingAuthorization",
       "history",
+      ...(vault.userAuthority && Object.hasOwn(state, "originalCheckpoints")
+        ? ["originalCheckpoints"]
+        : []),
     ]);
     bounded(state, 524288);
     if (
@@ -1891,6 +1894,47 @@ export class VaultCore {
       state.lifecycleVersion !== state.history.length
     )
       throw new VaultError("untrusted_lifecycle");
+    const original = new Map<number, Json>();
+    if (state.originalCheckpoints !== undefined) {
+      const proofs = state.originalCheckpoints;
+      if (!vault.userAuthority || !Array.isArray(proofs) || proofs.length > 32)
+        throw new VaultError("untrusted_lifecycle");
+      if (proofs.length) {
+        const move = await verified(vault.userAuthority.signedTransition, vault.rootJwk);
+        let previous: string | null = null;
+        let keyEpoch = 1;
+        let issuedAt = 0;
+        for (const [index, certificate] of proofs.entries()) {
+          const checkpoint = await verified(certificate, vault.rootJwk);
+          validate("RegistryCheckpointPayload", checkpoint);
+          if (
+            checkpoint.ownerSubject !== owner ||
+            checkpoint.vaultId !== vault.vaultId ||
+            checkpoint.rootKeyId !== vault.rootKeyId ||
+            checkpoint.rootEpoch !== 1 ||
+            checkpoint.registrySequence !== index + 1 ||
+            checkpoint.previousDigest !== previous ||
+            checkpoint.keyEpoch < keyEpoch ||
+            checkpoint.issuedAt < issuedAt ||
+            checkpoint.issuedAt > this.now()
+          )
+            throw new VaultError("untrusted_lifecycle");
+          previous = await sha(canonical(checkpoint));
+          keyEpoch = checkpoint.keyEpoch;
+          issuedAt = checkpoint.issuedAt;
+          original.set(checkpoint.registrySequence, checkpoint);
+        }
+        if (
+          !equal(move.previousHead, {
+            registryEpoch: 1,
+            registrySequence: proofs.length,
+            keyEpoch,
+            checkpointDigest: previous,
+          })
+        )
+          throw new VaultError("untrusted_lifecycle");
+      }
+    }
     const archiveStates: { digest: string; revision: number }[] = [];
     const fingerprints: string[] = [],
       operations = new Set<string>(),
@@ -1964,9 +2008,15 @@ export class VaultCore {
         digest = p.expectedArchiveDigest;
         archiveStates.push({ digest, revision });
       }
-      const checkpoint = vault.registryHistory[p.registrySequence - 1];
+      const currentIndex = vault.userAuthority
+        ? p.registrySequence - vault.userAuthority.registryStart.registrySequence
+        : p.registrySequence - 1;
+      const bundle = vault.registryHistory[currentIndex];
+      const cp =
+        original.get(p.registrySequence) ??
+        (bundle ? parsed(unb64(bundle.checkpoint.payload)) : null);
       if (
-        !checkpoint ||
+        !cp ||
         p.expectedVaultVersion < lastVault ||
         p.expectedVaultVersion > vault.version ||
         p.registrySequence < lastRegistry ||
@@ -1978,7 +2028,6 @@ export class VaultCore {
         !(p.issuedAt < p.expiresAt && p.expiresAt <= p.issuedAt + 300)
       )
         throw new VaultError("untrusted_lifecycle");
-      const cp = parsed(unb64(checkpoint.checkpoint.payload));
       if ((await sha(canonical(cp))) !== p.checkpointDigest || cp.keyEpoch !== p.keyEpoch)
         throw new VaultError("untrusted_lifecycle");
       const r = item.receipt;
