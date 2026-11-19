@@ -24,6 +24,7 @@ from folioview_shared.instruments import iso_time
 
 from .channel_follows import ChannelFollowsUnavailable, checked_pair
 from .firestore_reads import read_documents
+from .list_writes import require_list_writes
 from .resource_versions import (
     KINDS,
     MAX_REVISION,
@@ -250,6 +251,8 @@ class SQLiteUserResourceStore(UserResourceStore):
                 )
             if receipt is not None:
                 writes.append(("user_resource_initializations", key, receipt))
+            if writes:
+                require_list_writes(ResourceUnavailable)
             for table, identity, value in writes:
                 db.execute(
                     f"INSERT INTO {table}(owner, value) VALUES (?, ?) "
@@ -314,6 +317,8 @@ class FirestoreUserResourceStore(UserResourceStore):
                 prior,
                 initialization_key(uid, kind, operation_key),
             )
+            if content is not None or receipt is not None:
+                require_list_writes(ResourceUnavailable)
             if content is not None:
                 transaction.set(content_ref, content)
                 transaction.set(metadata_ref, metadata)
