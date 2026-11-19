@@ -71,7 +71,7 @@ def registry_fixture(now=1000, *, signing_keys=None):
         if signing_keys is not None:
             signing_keys[role] = key
             if role == "device_sig":
-                certificate["capabilities"] = ["control_write"]
+                certificate["capabilities"] = ["control_write", "object_write"]
         certificates[role] = certificate
         descriptions.append(
             {

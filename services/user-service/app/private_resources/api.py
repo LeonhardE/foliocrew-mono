@@ -12,7 +12,7 @@ from starlette.concurrency import run_in_threadpool
 
 from folioview_shared.auth import CurrentUser, require_google_user
 from folioview_shared.delegation import DelegationError, DelegationVerifier
-from folioview_shared.encrypted.constants import CONTRACT_VERSION
+from folioview_shared.encrypted.constants import CONTRACT_VERSION, MAX_REGISTRY_BYTES
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import strict_json_loads
 from folioview_shared.identity import owner_key
@@ -38,6 +38,7 @@ from .recovery import (
 )
 from .registry_pages import RegistryHistory, RegistryPageRequest
 from .registry_transition import MAX_TRANSITION_PACKET_BYTES
+from .registry_updates import RegistryUpdate, RegistryUpdates
 from .report_sources import ReportSourceAuthority
 from .source_invalidations import PortfolioSourceRevision, SourceInvalidations
 from .source_registrations import HoldingsRegistrations
@@ -393,6 +394,28 @@ async def register_owner_holdings(
     result = await run_in_threadpool(
         registration.register, user.uid, vault_id, source_id, value.command, value.operationId
     )
+    _uncached_private(response)
+    return result
+
+
+def owner_registry_writer() -> RegistryUpdates:
+    if os.getenv("USER_PRIVATE_REGISTRY_UPDATES") != "true":
+        raise ContractError("not_found")
+    return RegistryUpdates(get_resource_store())
+
+
+@router.post("/{vault_id}/registry/advance")
+async def advance_owner_registry(
+    vault_id: str,
+    request: Request,
+    response: Response,
+    user: Annotated[CurrentUser, Depends(require_google_user)],
+    writer: Annotated[RegistryUpdates, Depends(owner_registry_writer)],
+    _: Annotated[None, Depends(require_owner_proxy)],
+):
+    value = await body(request, RegistryUpdate, maximum=MAX_REGISTRY_BYTES + 2_048)
+    _cutover_scope(value.model_dump(), user.uid, vault_id)
+    result = await run_in_threadpool(writer.update, user.uid, value)
     _uncached_private(response)
     return result
 

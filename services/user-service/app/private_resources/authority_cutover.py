@@ -414,13 +414,21 @@ class UserAuthorityCutover:
                 values.append(row)
         return values
 
-    def _transaction(self, callback, *, writes):
+    def _transaction(self, callback, *, writes, replace=()):
         if isinstance(self.store, SQLiteUserResourceStore):
             with self.store.connection() as db:
                 db.execute("BEGIN IMMEDIATE" if writes else "BEGIN")
 
                 def create(values):
                     for (table, key), value in values.items():
+                        if (table, key) in replace:
+                            changed = db.execute(
+                                f"UPDATE {table} SET value=? WHERE owner=?",
+                                (canonical_json(value).decode(), key),
+                            )
+                            if changed.rowcount != 1:
+                                raise ContractError("version_conflict")
+                            continue
                         db.execute(
                             f"INSERT INTO {table} VALUES (?, ?)",
                             (key, canonical_json(value).decode()),
@@ -434,7 +442,8 @@ class UserAuthorityCutover:
                 for cell, ref in zip(values, self._references(values), strict=True):
                     field = _BYTES_FIELDS.get(cell[0])
                     body = values[cell]
-                    transaction.create(ref, {field: canonical_json(body)} if field else body)
+                    write = transaction.update if cell in replace else transaction.create
+                    write(ref, {field: canonical_json(body)} if field else body)
 
             return callback(lambda cells: self._read_firestore(transaction, cells), create)
 
