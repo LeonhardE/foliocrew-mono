@@ -256,12 +256,7 @@ function hubOwnerRule(path: string, method: PrivateMethod): EncryptedRule | null
     };
   } else if (method === "GET") {
     if (
-      [
-        "/api/v2/vaults/current",
-        "/api/v2/resources/catalogue",
-        "/api/v2/agent-connections",
-        "/api/v2/agent-capabilities",
-      ].includes(pathname) ||
+      ["/api/v2/vaults/current", "/api/v2/resources/catalogue"].includes(pathname) ||
       matches(`/api/v2/agent-connections/${id}/tasks/${id}/preparation-intent`) ||
       matches(`/api/v2/vaults/${id}/key-renewal-state`) ||
       matches(`/api/v2/vaults/${id}/key-renewal-operations/[A-Za-z0-9_-]{22,128}`) ||
@@ -341,11 +336,7 @@ function hubOwnerRule(path: string, method: PrivateMethod): EncryptedRule | null
       author: true,
       maxBytes: 66560,
     };
-  } else if (
-    method === "POST" &&
-    (pathname === "/api/v2/vaults/current/authority-token" ||
-      matches(`/api/v2/agent-connections/${id}/(?:revoke|grants/${id}/revoke)`))
-  ) {
+  } else if (method === "POST" && pathname === "/api/v2/vaults/current/authority-token") {
     rule = { method, keys: ["contractVersion"], maxBytes: 1024 };
   } else if (method === "POST" && matches(`/api/v2/tasks/${id}/operation-cancellations`)) {
     rule = {

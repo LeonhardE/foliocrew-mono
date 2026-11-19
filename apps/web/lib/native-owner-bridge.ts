@@ -1,7 +1,11 @@
 /** A fresh Google credential goes only to the original cookie-bound first-party Hub window. */
-import { exact, identifier, ConnectionError } from "./agent-connections";
-const PROFILE = "folioview.native-account-bridge.v1",
-  CONTRACT = "folioview.agent-workspace.v2.0";
+import {
+  CONNECTION_CONTRACT as CONTRACT,
+  exact,
+  identifier,
+  ConnectionError,
+} from "./agent-connections";
+const PROFILE = "folioview.native-account-bridge.v1";
 const NONCE = /^[A-Za-z0-9_-]{43}$/;
 const brands = new WeakSet<object>();
 export type NativeOperation = "pending" | "approve";

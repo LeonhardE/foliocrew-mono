@@ -1148,7 +1148,6 @@ test("encrypted requests use only explicit services, fixed version, closed metho
   await settle();
   const entries = [
     ["agent-hub", "/api/v2/vaults/current", {}],
-    ["agent-hub", "/api/v2/agent-capabilities", {}],
     ["agent-hub", "/api/v2/vaults/vault_A/archive-operations/" + "_".repeat(22), {}],
     ["agent-hub", "/api/v2/vaults/vault_A/archive-operations/" + "-".repeat(22), {}],
     [
@@ -1682,7 +1681,7 @@ test("Hub capability is independent and production never falls back to its legac
   h.unmount();
 });
 
-test("Hub owner catalogue, tasks, connections and preparation use only closed same-origin routes", async () => {
+test("Hub owner catalogue, tasks and preparation use only closed same-origin routes", async () => {
   const h = mountProvider({
     fetchOwnerConfig: async () => configResponse(true, true),
     env: encryptedEnv,
@@ -1702,7 +1701,6 @@ test("Hub owner catalogue, tasks, connections and preparation use only closed sa
     ["/api/v2/tasks?" + new URLSearchParams({ limit: "50", cursor }), {}],
     ["/api/v2/tasks/task_A", {}],
     ["/api/v2/tasks/task_A/versions/50", {}],
-    ["/api/v2/agent-connections", {}],
     ["/api/v2/agent-connections/connection_A/tasks/task_A/preparation-intent", {}],
     [
       "/api/v2/tasks",
@@ -1712,14 +1710,6 @@ test("Hub owner catalogue, tasks, connections and preparation use only closed sa
     [
       "/api/v2/tasks/task_A/transitions",
       { method: "POST", json: { ...versioned, transitionIntent: {} }, headers: signedHeaders },
-    ],
-    [
-      "/api/v2/agent-connections/connection_A/revoke",
-      { method: "POST", json: { contractVersion: version } },
-    ],
-    [
-      "/api/v2/agent-connections/connection_A/grants/grant_A/revoke",
-      { method: "POST", json: { contractVersion: version } },
     ],
     [
       "/api/v2/agent-connections/connection_A/tasks/task_A/preparation/objects/object_A",
@@ -1750,6 +1740,27 @@ test("Hub owner catalogue, tasks, connections and preparation use only closed sa
     assert.equal(sent.redirect, "error");
     if (options.json) assert.equal(sent.body, JSON.stringify(options.json));
   }
+  h.unmount();
+});
+
+test("the client rejects retired foreground connection reads and revocations before using a token", async () => {
+  const h = mountProvider({ fetchOwnerConfig: async () => configResponse(true, true) });
+  h.emitUser(user("a"));
+  await settle();
+  const before = h.requests.length;
+  const revoke = { method: "POST", json: { contractVersion: version } };
+  for (const [route, options] of [
+    ["/api/v2/agent-capabilities", {}],
+    ["/api/v2/agent-connections", {}],
+    ["/api/v2/agent-connections/connection_A/revoke", revoke],
+    ["/api/v2/agent-connections/connection_A/grants/grant_A/revoke", revoke],
+  ]) {
+    await assert.rejects(
+      h.actions.requestPrivate("agent-hub", route, "a:1", options),
+      /Invalid private API path/,
+    );
+  }
+  assert.equal(h.requests.length, before);
   h.unmount();
 });
 
