@@ -3518,10 +3518,10 @@ export class VaultCore {
     ]);
     exact(proof.archive, ["state", "version", "digest"]);
     if (
-      proof.archive.state !== "active" ||
+      proof.archive.state !== (vault.archive === null ? "deleted" : "active") ||
       !Number.isSafeInteger(proof.archive.version) ||
       proof.archive.version < 1 ||
-      (await sha(canonical(requireArchive(vault.archive)))) !== proof.archive.digest
+      (await sha(canonical(vault.archive))) !== proof.archive.digest
     )
       throw new VaultError("untrusted_vault");
     validate("Digest", proof.sourcesDigest);
