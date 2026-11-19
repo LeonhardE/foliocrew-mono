@@ -466,6 +466,7 @@ run "market_cache_is_scoped_to_only_the_default_database" {
   assert {
     condition = (
       length(module.market_database_scope.grants) == 0 &&
+      length(google_firebaserules_release.market_cache) == 0 &&
       module.market_database_scope.database_resource_name == "projects/${var.project_id}/databases/(default)" &&
       google_project_iam_member.market_cache.project == var.project_id &&
       google_project_iam_member.market_cache.role == "roles/datastore.user" &&
@@ -479,7 +480,7 @@ run "market_cache_is_scoped_to_only_the_default_database" {
   }
 }
 
-run "market_cache_provisioning_creates_only_the_owned_database_boundary" {
+run "market_cache_provisioning_uses_the_owned_database_and_denies_clients" {
   command = plan
 
   variables {
@@ -491,9 +492,11 @@ run "market_cache_provisioning_creates_only_the_owned_database_boundary" {
       length(module.market_cache_database) == 1 &&
       module.market_cache_database[0].resource_name == "projects/${var.project_id}/databases/market-cache" &&
       module.market_cache_database[0].location_id == "northamerica-northeast2" &&
+      google_firebaserules_release.market_cache[0].name == "cloud.firestore/market-cache" &&
+      strcontains(one(google_firebaserules_ruleset.market_cache[0].source).files[0].content, "allow read, write: if false;") &&
       module.market_database_scope.database_resource_name == "projects/${var.project_id}/databases/(default)"
     )
-    error_message = "Prepare the Toronto Market cache while the runtime stays on its existing database."
+    error_message = "Prepare the protected Toronto cache and deny client access while Market uses its existing database."
   }
 }
 
