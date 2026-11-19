@@ -433,6 +433,94 @@ test("an offline original device verifies the missing old pages before advancing
   });
 });
 
+test("an offline Owner bridge crosses the 32-checkpoint legacy limit before pinning User epoch 2", async () => {
+  await browser.withDatabase(async (db) => {
+    const { session, uid, h, material, vault, storage } = await initialize(db);
+    const owner = vault.archive.ownerSubject;
+    const pinKey = owner + ":pin";
+    const before = await storage.get(pinKey);
+    const local = await storage.get(owner + ":device:" + vault.vaultId);
+    const original = { ...vault, registryHistory: [...vault.registryHistory] };
+    const root = new h.core.VaultCore(uid, () => 1000);
+    await root.unlock(vault, material(), { pin: before, device: local.device });
+    const { FlattenedSign } = await import("jose");
+    for (let sequence = 2; sequence <= 32; sequence++) {
+      const previous = original.registryHistory.at(-1);
+      const body = {
+        ...decoded(previous.checkpoint),
+        registrySequence: sequence,
+        previousDigest: await h.core.sha(h.core.canonical(decoded(previous.checkpoint))),
+        issuedAt: 1000,
+      };
+      const checkpoint = await new FlattenedSign(new TextEncoder().encode(h.core.canonical(body)))
+        .setProtectedHeader({
+          alg: "ES256",
+          kid: vault.rootKeyId,
+          typ: "fv-control+jws",
+          cty: "application/json",
+        })
+        .sign(root.root);
+      original.registryHistory.push({ ...previous, checkpoint });
+    }
+    original.version = 32;
+    const signer = new h.core.VaultCore(uid, () => 1000);
+    await signer.unlock(original, material(), { pin: before, device: local.device });
+    const lifecycle = await lifecycleState(h, { vault: original });
+    await signer.verifyLifecycle(original, lifecycle);
+    const packet = await signer.signUserRegistryTransition(
+      await signer.reviewUserRegistryTransition(lifecycle),
+      material(),
+    );
+    const { nextHead, previousHead, archive } = decoded(packet.signedTransition);
+    assert.equal(previousHead.registrySequence, 32);
+    assert.equal(nextHead.registrySequence, 33);
+    assert.equal(nextHead.registryEpoch, 2);
+    const fresh = {
+      ...vault,
+      version: 33,
+      registryHistory: [packet.firstBundle],
+      userAuthority: {
+        signedTransition: packet.signedTransition,
+        registryStart: nextHead,
+        registry: nextHead,
+        archive,
+        sourcesDigest: await h.core.sha(h.core.canonical([])),
+        sources: [],
+      },
+    };
+    session.lock();
+
+    const pages = [];
+    const packets = [];
+    const bridge = db.client(uid, storage, {
+      async readOriginalRegistryPage(request, signal) {
+        assert.equal(signal.aborted, false);
+        assert.deepEqual(request.target, previousHead);
+        assert.deepEqual(await storage.get(pinKey), before);
+        const position = request.base.registrySequence;
+        const bundles = original.registryHistory.slice(position, position + 4);
+        const response = { ...request, rootKeyId: vault.rootKeyId, bundles };
+        pages.push(position);
+        packets.push(Buffer.byteLength(JSON.stringify(response)));
+        return response;
+      },
+    });
+    assert.equal((await bridge.unlock(fresh, material())).needsDeviceRegistration, false);
+    assert.deepEqual(pages, [1, 5, 9, 13, 17, 21, 25, 29]);
+    assert.ok(Math.max(...packets) < 131_072);
+    await bridge.acceptVault(fresh);
+    assert.equal((await storage.get(pinKey)).registrySequence, 33);
+    assert.equal(pages.length, 8);
+    bridge.lock();
+
+    const cold = db.client(uid, storage, { readOriginalRegistryPage: noPage });
+    assert.equal((await cold.unlock(fresh, material())).needsDeviceRegistration, false);
+    cold.lock();
+    const stale = db.client(uid, storage, { readOriginalRegistryPage: noPage });
+    await assert.rejects(stale.unlock(original, material()), /rollback_detected/);
+  });
+});
+
 test("the current Worker verifies original archive lifecycle controls against the signed prior chain", async () => {
   await browser.withDatabase(async (db) => {
     const { uid, h, material, vault, state, storage } = await initialize(db);
