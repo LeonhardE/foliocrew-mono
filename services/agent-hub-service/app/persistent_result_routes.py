@@ -7,12 +7,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request
 from starlette.concurrency import run_in_threadpool
 
+from folioview_shared.encrypted.constants import CONTRACT_VERSION
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.http import PrivateRoute
 
 from .agent_transport import recovery_transport
-from .api import Owner, _invoke, body
-from .inbox import _number, _protocol
+from .api import Owner, _invoke, body, transport
 from .persistent_execution_routes import get_execution
 from .persistent_results import PersistentOwnerResultService, PersistentResultService
 from .store import get_store
@@ -22,6 +22,35 @@ agent_router = APIRouter(
     route_class=PrivateRoute,
 )
 owner_router = APIRouter(prefix="/api/v2/persistent-results", route_class=PrivateRoute)
+
+
+def _protocol(request, *, write=False, allowed=frozenset()):
+    if request.headers.getlist("x-folioview-delegation") or request.headers.getlist(
+        "x-serverless-authorization"
+    ):
+        raise ContractError("insufficient_scope")
+    if write:
+        transport(request, operation=True, author=True)
+    else:
+        if request.headers.getlist("x-folioview-contract") != [CONTRACT_VERSION]:
+            raise ContractError("unsupported_contract")
+        if set(request.query_params) - allowed or any(
+            len(request.query_params.getlist(key)) != 1 for key in request.query_params
+        ):
+            raise ContractError("unsupported_query")
+
+
+def _number(value, *, maximum=50, query=False):
+    if (
+        type(value) is not str
+        or not value.isascii()
+        or not value.isdecimal()
+        or len(value) > len(str(maximum))
+        or str(int(value)) != value
+        or not 1 <= int(value) <= maximum
+    ):
+        raise ContractError("unsupported_query" if query else "malformed_request")
+    return int(value)
 
 
 def get_result_writer():

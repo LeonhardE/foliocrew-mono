@@ -8,7 +8,6 @@ from app.api import internal_router, owner_router, public_router
 from app.catalogue import router as catalogue
 from app.errors import HubErrors
 from app.helper_assets import router as helper
-from app.inbox import router as inbox
 from app.mcp_transport import install_mcp
 from app.oauth_routes import agent_router as agent
 from app.oauth_routes import owner_router as consent
@@ -47,7 +46,6 @@ for router in (
     agent_preparation,
     runs,
     results,
-    inbox,
     helper,
 ):
     app.include_router(router)

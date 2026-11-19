@@ -4,7 +4,6 @@ import copy
 import unittest
 from unittest.mock import patch
 
-import test_inbox as foreground_fixture
 import test_persistent_results as persistent_fixture
 import test_task_packet_batches as task_fixture
 import test_task_routes as route_fixture
@@ -38,14 +37,6 @@ class TaskOverviewTests(unittest.TestCase):
             receipt = case.submit()
             cls.persistent_template = case.fx.store.transact(
                 lambda unit: unit.get(result_path(case.f.owner, case.f.vault, receipt["resultId"]))
-            )
-        finally:
-            case.doCleanups()
-        case = foreground_fixture.InboxTests()
-        case.setUp()
-        try:
-            cls.foreground_template = case.base.store.transact(
-                lambda unit: unit.get(foreground_path(case.base.fix.owner, case.result_id))
             )
         finally:
             case.doCleanups()
@@ -111,25 +102,13 @@ class TaskOverviewTests(unittest.TestCase):
         else:
             self.rpc.documents.pop(self.name(self.persistent_index), None)
         for n in range(foreground_count):
-            row = copy.deepcopy(self.foreground_template)
-            result, run = f"synthetic_foreground_{n:04d}", f"synthetic_foreground_run_{n:04d}"
-            row.update(
-                ownerSubject=self.owner,
-                ownerUid=UID,
-                vaultId=self.vault,
-                resultId=result,
-                runId=run,
-            )
-            row["metadata"].update(
-                resultId=result,
-                runId=run,
-                taskId=self.ids[n % len(self.ids)],
-                connectionId="synthetic_native_muse",
-                archived=n % 2 == 1,
-                read=n % 3 == 0,
-            )
-            row["provenance"]["connectionId"] = "synthetic_native_muse"
-            self.rpc.documents[self.name(foreground_path(self.owner, result))] = row
+            result = f"synthetic_foreground_{n:04d}"
+            self.rpc.documents[self.name(foreground_path(self.owner, result))] = {
+                "ownerSubject": self.owner,
+                "resultId": result,
+                "vaultId": self.vault,
+                "metadata": {"taskId": self.ids[n % len(self.ids)], "archived": n % 2 == 1},
+            }
             self.foreground_ids.append(result)
         self.rpc.documents[self.name(document_path("hub_result_indexes", self.owner))] = {
             "resultIds": list(self.foreground_ids)
