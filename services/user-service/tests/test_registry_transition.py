@@ -4,15 +4,24 @@ import hashlib
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
+from fastapi.testclient import TestClient
 from jwcrypto import jwk
 from test_private_recovery import OWNER, UID, VAULT, registry_fixture
 
+from app.main import app
+from app.private_resources.api import HANDOVER_CHECK_PROFILE, HANDOVER_PROFILE, owner_cutover
+from app.private_resources.authority_cutover import HANDOVERS, WITNESSES, UserAuthorityCutover
 from app.private_resources.legacy_baselines import LegacyVaultBaselines, verified_baseline
+from app.private_resources.original_operations import original_operation_baseline
 from app.private_resources.recovery import RecoveryHeads
 from app.private_resources.registry_pages import COLLECTION, RegistryHistory
 from app.private_resources.registry_transition import UserRegistryTransition
+from app.private_resources.report_sources import HOLDINGS_FENCES, holdings_fence_key
+from app.private_resources.source_invalidations import SourceInvalidations
 from app.resources import SQLiteUserResourceStore
+from folioview_shared.auth import CurrentUser, require_google_user
 from folioview_shared.encrypted.authority import verify_registry
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
 from folioview_shared.encrypted.crypto import jwk_thumbprint, sign_jws, verify_jws
@@ -92,6 +101,7 @@ class RegistryTransitionTests(unittest.TestCase):
             "operationCount": 1,
             "sources": [],
         }
+        self.vault = vault
         prepared = verified_baseline(OWNER, vault, None, now=1000)
         self.digest = hashlib.sha256(prepared).hexdigest()
         LegacyVaultBaselines(self.store).stage(
@@ -155,3 +165,219 @@ class RegistryTransitionTests(unittest.TestCase):
             db.execute(f"DELETE FROM {COLLECTION}")
         with self.assertRaisesRegex(ContractError, "authorization_unavailable"):
             self.service.verify_candidate(UID, VAULT, self.digest, self.packet, now=1000)
+
+    def stage_frozen_scope(self, *, extra_operations=None, **changes):
+        key = digest([OWNER, "bootstrap", "synthetic_original_bootstrap_001"])
+        fields = {
+            "ownerSubject": {"stringValue": OWNER},
+            "kind": {"stringValue": "bootstrap"},
+            "fingerprint": {"stringValue": "0" * 64},
+        }
+        operations = {"hub_operations/" + key: fields, **(extra_operations or {})}
+        body = original_operation_baseline(OWNER, self.vault, operations)
+        receipt_digest = hashlib.sha256(body).hexdigest()
+        LegacyVaultBaselines(self.store).stage_original_operations(
+            OWNER, self.vault, operations, expected_digest=receipt_digest
+        )
+        witness = {
+            **self.scope,
+            "writerEpoch": 2,
+            "freezeId": "synthetic_hub_writer_freeze_001",
+            "baselineDigest": self.digest,
+            "operationsDigest": receipt_digest,
+            "tombstonesDigest": digest([]),
+            "activeLegacyAgents": 0,
+            "unsettledLegacyOperations": 0,
+            **changes,
+        }
+        with self.store.connection() as db:
+            db.execute(
+                f"INSERT OR REPLACE INTO {WITNESSES} VALUES (?, ?)",
+                (OWNER, canonical_json(witness).decode()),
+            )
+        return witness
+
+    def test_atomic_install_requires_frozen_account_and_keeps_original_receipt(self):
+        cutover = UserAuthorityCutover(self.store)
+        with self.assertRaisesRegex(ContractError, "source_unavailable"):
+            cutover.install(UID, VAULT, self.packet, now=1000)
+        self.stage_frozen_scope(activeLegacyAgents=1)
+        with self.assertRaisesRegex(ContractError, "source_unavailable"):
+            cutover.install(UID, VAULT, self.packet, now=1000)
+        self.assertIsNone(self.heads.read(OWNER))
+        self.stage_frozen_scope()
+
+        accepted = cutover.install(UID, VAULT, self.packet, now=1000)
+        self.assertEqual(accepted["registryStart"], self.transition["nextHead"])
+        self.assertEqual(accepted["writerEpoch"], 2)
+        head = self.heads.read(OWNER)
+        self.assertEqual(head["registry"], accepted["registryStart"])
+        self.assertEqual(head["registryStart"], accepted["registryStart"])
+        self.assertEqual(head["sourcesDigest"], digest([]))
+        self.assertEqual(head["handover"]["operationId"], accepted["operationId"])
+        sequence = accepted["registryStart"]["registrySequence"]
+        stored = RegistryHistory(self.heads)._read(head, 2, [sequence])
+        self.assertEqual(stored[0]["bundle"], self.packet["firstBundle"])
+        nonce = "synthetic_browser_cold_nonce_001"
+        start = cutover.read_start(UID, VAULT, nonce, now=1001)
+        self.assertEqual(start["nonce"], nonce)
+        self.assertEqual(start["registry"], accepted["registryStart"])
+        self.assertEqual(start["signedTransition"], self.packet["signedTransition"])
+        self.assertEqual(start["firstBundle"], self.packet["firstBundle"])
+        with self.assertRaisesRegex(ContractError, "not_found"):
+            cutover.read_start("another-account", VAULT, nonce, now=1001)
+
+        self.assertEqual(cutover.install(UID, VAULT, self.packet, now=9000), accepted)
+        with self.assertRaisesRegex(ContractError, "idempotency_conflict"):
+            cutover.install(
+                UID,
+                VAULT,
+                {**self.packet, "operationId": "synthetic_changed_operation_001"},
+                now=1000,
+            )
+
+    def test_conflict_or_receipt_failure_leaves_every_authority_record_unpublished(self):
+        cutover = UserAuthorityCutover(self.store)
+        self.stage_frozen_scope(tombstonesDigest="f" * 64)
+        with self.assertRaisesRegex(ContractError, "version_conflict"):
+            cutover.install(UID, VAULT, self.packet, now=1000)
+        self.stage_frozen_scope()
+        with self.store.connection() as db:
+            db.execute(
+                f"CREATE TRIGGER fail_handover BEFORE INSERT ON {HANDOVERS} "
+                "BEGIN SELECT RAISE(ABORT, 'synthetic transaction failure'); END"
+            )
+        with self.assertRaisesRegex(ContractError, "authorization_unavailable"):
+            cutover.install(UID, VAULT, self.packet, now=1000)
+        self.assertIsNone(self.heads.read(OWNER))
+        with self.store.connection() as db:
+            self.assertEqual(db.execute(f"SELECT COUNT(*) FROM {HANDOVERS}").fetchone(), (0,))
+            self.assertEqual(db.execute(f"SELECT COUNT(*) FROM {COLLECTION}").fetchone(), (1,))
+
+    def test_original_terminal_ack_is_installed_for_exact_portfolio_retry(self):
+        cutover = UserAuthorityCutover(self.store)
+        ref = {
+            "kind": "holdings",
+            "sourceService": "portfolio",
+            "resourceId": "retired_holding_fixture",
+            "incarnation": "retired_fixture_incarnation",
+        }
+        self.vault.update(
+            version=2, operationCount=2, sources=[{"resourceRef": ref, "sourceEpoch": 1}]
+        )
+        prepared = verified_baseline(OWNER, self.vault, None, now=1000)
+        self.digest = hashlib.sha256(prepared).hexdigest()
+        LegacyVaultBaselines(self.store).stage(
+            OWNER, self.vault, None, expected_digest=self.digest, now=1000
+        )
+        packet = {
+            **self.packet,
+            "signedTransition": self.sign(
+                {**self.transition, "previousVaultVersion": 2, "nextVaultVersion": 3}
+            ),
+        }
+        old = {
+            "contractVersion": CONTRACT_VERSION,
+            "ownerSubject": OWNER,
+            "mutationId": "synthetic_old_delete_operation_01",
+            "ref": ref,
+            "expectedSourceEpoch": 1,
+            "newSourceEpoch": 2,
+            "reason": "deleted",
+        }
+        ack = {
+            "contractVersion": CONTRACT_VERSION,
+            "mutationId": old["mutationId"],
+            "ref": ref,
+            "acknowledgedSourceEpoch": 2,
+            "acknowledgedAt": "1970-01-01T00:08:20Z",
+        }
+        fence = {
+            "ownerSubject": OWNER,
+            "vaultId": VAULT,
+            "binding": {"ref": ref, "sourceEpoch": 2},
+            "state": "deleted",
+            "currentRevision": 0,
+        }
+
+        def field(value):
+            if type(value) is int:
+                return {"integerValue": str(value)}
+            if type(value) is dict:
+                return {"mapValue": {"fields": {k: field(v) for k, v in value.items()}}}
+            return {"stringValue": value}
+
+        operation_key = digest([OWNER, "portfolio", old["mutationId"]])
+        self.stage_frozen_scope(
+            extra_operations={
+                "hub_fence_mutations/" + operation_key: {
+                    k: field(v)
+                    for k, v in {"request": old, "fingerprint": digest(old), "ack": ack}.items()
+                }
+            },
+            tombstonesDigest=digest([fence]),
+        )
+        key = holdings_fence_key(OWNER, VAULT, ref["resourceId"])
+        with self.store.connection() as db:
+            db.execute(
+                f"INSERT INTO {HOLDINGS_FENCES} VALUES (?, ?)",
+                (key, canonical_json(fence).decode()),
+            )
+        self.assertEqual(cutover.install(UID, VAULT, packet, now=1000)["nextVaultVersion"], 3)
+        writer = SourceInvalidations(self.store)
+        self.assertEqual(writer.invalidate(old), ack)
+        with self.assertRaisesRegex(ContractError, "idempotency_conflict"):
+            writer.invalidate({**old, "reason": "disconnected"})
+
+    def test_owner_routes_bind_both_authorities_and_keep_review_read_only(self):
+        cutover = UserAuthorityCutover(self.store)
+        self.stage_frozen_scope()
+        path = f"/api/v3/private-resources/vaults/{VAULT}/handover"
+        scope = {"contractVersion": CONTRACT_VERSION, "ownerSubject": OWNER, "vaultId": VAULT}
+        header = {
+            "X-FolioView-Contract": CONTRACT_VERSION,
+            "X-FolioView-Proxy-Authorization": "Bearer synthetic_workload",
+        }
+        verifier = Mock()
+        with (
+            TestClient(app) as client,
+            patch.dict(
+                app.dependency_overrides,
+                {
+                    require_google_user: lambda: CurrentUser(
+                        uid=UID, email=None, displayName=None, photoURL=None
+                    )
+                },
+            ),
+            patch("app.private_resources.api.configured_owner_proxy", return_value=verifier),
+            patch("app.private_resources.api.time.time", return_value=1000),
+        ):
+            ready = {**scope, "profile": HANDOVER_CHECK_PROFILE}
+            with patch.dict("os.environ", {"USER_PRIVATE_HANDOVER": "false"}):
+                self.assertEqual(
+                    client.post(path + "/check", headers=header, json=ready).status_code, 404
+                )
+            with patch.dict(app.dependency_overrides, {owner_cutover: lambda: cutover}):
+                missing = client.post(
+                    path + "/check", json=ready, headers={"X-FolioView-Contract": CONTRACT_VERSION}
+                )
+                self.assertEqual(missing.status_code, 401, missing.text)
+                other = client.post(
+                    path + "/check", headers=header, json={**ready, "ownerSubject": "a" * 64}
+                )
+                self.assertEqual(other.status_code, 404, other.text)
+                checked = client.post(path + "/check", headers=header, json=ready)
+                self.assertEqual(checked.status_code, 200, checked.text)
+                self.assertEqual(checked.json()["status"], "ready")
+                self.assertIsNone(self.heads.read(OWNER))
+                request = {**scope, "profile": HANDOVER_PROFILE, **self.packet}
+                closed = client.post(path, headers=header, json={**request, "prf": "forbidden"})
+                self.assertEqual(closed.status_code, 400, closed.text)
+                self.assertIsNone(self.heads.read(OWNER))
+                receipt = client.post(path, headers=header, json=request)
+                self.assertEqual(receipt.status_code, 200, receipt.text)
+                self.assertEqual(receipt.headers["cache-control"], "no-store")
+                self.assertEqual(receipt.json()["operationId"], self.packet["operationId"])
+                confirmed = client.post(path + "/check", headers=header, json=ready)
+                self.assertEqual(confirmed.status_code, 200, confirmed.text)
+                self.assertEqual(confirmed.json()["status"], "installed")

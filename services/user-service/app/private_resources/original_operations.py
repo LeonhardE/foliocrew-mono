@@ -5,7 +5,7 @@ from datetime import datetime
 from folioview_shared.encrypted.constants import CONTRACT_VERSION, MAX_SAFE_INTEGER
 from folioview_shared.encrypted.crypto import jwk_thumbprint, verify_jws
 from folioview_shared.encrypted.errors import ContractError
-from folioview_shared.encrypted.jsonutil import canonical_json
+from folioview_shared.encrypted.jsonutil import canonical_json, strict_json_loads
 from folioview_shared.encrypted.legacy_archive import verify_legacy_archive_command
 from folioview_shared.encrypted.schema import validate_schema
 
@@ -165,3 +165,34 @@ def original_operation_baseline(owner, vault, records):
     if len(encoded) > MAX_BASELINE_BYTES:
         raise ContractError("payload_too_large")
     return encoded
+
+
+def original_fence_receipts(baseline, data):
+    """Restore verified ACKs to their original operation keys for authoritative replay."""
+    try:
+        value = strict_json_loads(data, max_bytes=MAX_BASELINE_BYTES)
+        scope = {key: baseline[key] for key in ("ownerSubject", "vaultId", "rootKeyId")}
+        if (
+            value.keys() != {*scope, "profile", "originalOperations"}
+            or value["profile"] != PROFILE
+            or any(value[key] != expected for key, expected in scope.items())
+        ):
+            raise ValueError
+        records = value["originalOperations"]
+        if type(records) is not dict or not 1 <= len(records) <= MAX_BATCH:
+            raise ValueError
+        result = {}
+        for path, fields in records.items():
+            collection, _, key = path.partition("/")
+            if collection != "hub_fence_mutations":
+                continue
+            record = _fields(fields)
+            _fence(baseline, key, record)
+            result[key] = {
+                "ownerSubject": scope["ownerSubject"],
+                "vaultId": scope["vaultId"],
+                **record,
+            }
+        return result
+    except (AttributeError, ContractError, TypeError, KeyError, ValueError, RecursionError):
+        raise ContractError("authorization_unavailable") from None
