@@ -27,6 +27,14 @@
       "type": ["string", "null"],
       "pattern": "^[1-9][0-9]{0,127}$"
     },
+    "ownerRecoveryWebSubject": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]{0,127}$"
+    },
+    "webDeploymentSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
     "environment": {
       "type": "object",
       "properties": {
@@ -41,6 +49,12 @@
         },
         "USER_TRUSTED_HUB_CALLERS": {
           "type": "string"
+        },
+        "USER_PRIVATE_OWNER_AUDIENCE": {
+          "type": "string"
+        },
+        "USER_PRIVATE_OWNER_WEB_CALLER": {
+          "type": "string"
         }
       },
       "required": [
@@ -49,6 +63,10 @@
         "USER_DELEGATION_ISSUER",
         "USER_TRUSTED_HUB_CALLERS"
       ],
+      "dependentRequired": {
+        "USER_PRIVATE_OWNER_AUDIENCE": ["USER_PRIVATE_OWNER_WEB_CALLER"],
+        "USER_PRIVATE_OWNER_WEB_CALLER": ["USER_PRIVATE_OWNER_AUDIENCE"]
+      },
       "additionalProperties": false
     }
   },
@@ -61,6 +79,10 @@
     "hubSubject",
     "environment"
   ],
+  "dependentRequired": {
+    "ownerRecoveryWebSubject": ["webDeploymentSha256"],
+    "webDeploymentSha256": ["ownerRecoveryWebSubject"]
+  },
   "additionalProperties": false,
   "allOf": [
     {
