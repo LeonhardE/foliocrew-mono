@@ -4108,6 +4108,34 @@ test("fresh writable holdings view uses only current plus one view and publishes
     h.unmount();
   }
 });
+test("selecting another holdings source uses one exact combined Portfolio view", async () => {
+  const h = harness({ viewMode: "complete" });
+  try {
+    await unlocked(h);
+    const second = {
+      ...source,
+      resourceRef: { ...source.resourceRef, resourceId: "holdings_b", incarnation: "inc_b" },
+    };
+    h.sources().push(second);
+    await h.render().refreshVault(new AbortController().signal);
+    const start = h.requests.length;
+    await h.render().selectHoldingsSource("holdings_b");
+    const reads = h.requests.slice(start);
+    assert.deepEqual(
+      reads.map((request) => [request.service, request.route]),
+      [
+        ["agent-hub", "/api/v2/vaults/current"],
+        ["portfolio", "/api/v3/holdings/sources/holdings_b/view/query"],
+      ],
+    );
+    assert.equal(reads[1].options.json.expected.resourceRef.incarnation, "inc_b");
+    assert.equal(h.render().sourceMetadata.source.resourceRef.resourceId, "holdings_b");
+    assert.equal(h.render().error, "");
+  } finally {
+    h.unmount();
+  }
+});
+
 test("combined holdings hints are only transport hints and preserve the original metadata-first five-step chain", async () => {
   for (const viewMode of ["sync_required", "separate"]) {
     const h = harness({ viewMode });

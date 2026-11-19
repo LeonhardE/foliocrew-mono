@@ -2482,7 +2482,7 @@ export function useHoldingsWorkspace() {
         await instance.acceptVault(fresh.vault);
         assertActive();
         setState((previous) => ({ ...previous, vault: fresh.vault, sources: fresh.sources }));
-        await readSaved(source, signal, assertActive, true);
+        await readSaved(source, signal, assertActive, true, fresh.vault);
       });
     },
     [owner, liveSession, perform, readCurrent, readSaved],
