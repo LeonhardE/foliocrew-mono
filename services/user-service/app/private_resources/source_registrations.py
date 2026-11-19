@@ -56,6 +56,7 @@ def current_registry(cutover, uid, vault, now):
         now=now,
     )
     registry = start.registry
+    bundles = [evidence["firstBundle"]]
     current = start.head()
     if target["registryEpoch"] != start.registry_epoch or not (
         0 <= target["registrySequence"] - current["registrySequence"] <= _MAX_REGISTRY_EXTENSION
@@ -79,9 +80,10 @@ def current_registry(cutover, uid, vault, now):
             )
             if registry.registry_sequence != sequence:
                 raise ContractError("registry_conflict")
+            bundles.append(entry["bundle"])
     if PrivateRegistryCursor(registry, start.registry_epoch).head() != target:
         raise ContractError("registry_conflict")
-    return evidence, registry
+    return evidence, registry, bundles
 
 
 def _matches_current(head, sample):
@@ -154,7 +156,7 @@ class HoldingsRegistrations:
             if saved is not None:
                 return _replay(saved, *stamp)
             now = int(self.clock())
-            sample, registry = current_registry(self.authority, uid, vault, now)
+            sample, registry, _ = current_registry(self.authority, uid, vault, now)
             verify_control_command(
                 signed,
                 registry=registry,

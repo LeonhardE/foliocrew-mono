@@ -26,6 +26,7 @@ from folioview_shared.service_identity import (
 from ..resource_api import ResourceRoute, body, configured_verifier, require_v2
 from ..resources import FirestoreUserResourceStore, get_resource_store
 from .authority_cutover import UserAuthorityCutover
+from .authority_views import PrivateAuthorityViews
 from .recovery import (
     ClosedModel,
     Digest,
@@ -375,3 +376,82 @@ async def register_owner_holdings(
     )
     _uncached_private(response)
     return result
+
+
+HUB_AUTHORITY_PATH = "/internal/v2/private-resources/hub-authority/read"
+PORTFOLIO_AUTHORITY_PATH = "/internal/v2/private-resources/portfolio-authority/read"
+
+
+def live_authority_views() -> PrivateAuthorityViews:
+    if os.getenv("USER_PRIVATE_AUTHORITY_READS") != "true":
+        raise ContractError("not_found")
+    return PrivateAuthorityViews(get_resource_store())
+
+
+async def _authority_result(request, response, service, consumer, path, caller_env):
+    require_v2(request)
+    if request.url.query:
+        raise ContractError("unsupported_query")
+    authorization = request.headers.getlist("authorization")
+    delegation = request.headers.getlist("x-folioview-delegation")
+    if len(authorization) != 1 or len(delegation) != 1:
+        raise ContractError("invalid_token")
+    scheme, _, workload = authorization[0].partition(" ")
+    if scheme.lower() != "bearer" or not workload or not delegation[0]:
+        raise ContractError("invalid_token")
+    audience = os.getenv("USER_SERVICE_AUDIENCE", "")
+    verifier = configured_verifier(
+        (
+            audience,
+            audience + path,
+            os.getenv("USER_DELEGATION_ISSUER", ""),
+            os.getenv(caller_env, ""),
+        ),
+        path,
+    )
+    value = (await body(request, RootModel[dict[str, object]], maximum=4096)).root
+    try:
+        uid = await run_in_threadpool(
+            verifier.verify_private_authority_read,
+            workload,
+            delegation[0],
+            request=value,
+            consumer=consumer,
+        )
+    except DelegationError as error:
+        code = {
+            "invalid_credentials": "invalid_token",
+            "permission_denied": "insufficient_scope",
+            "verification_unavailable": "authorization_unavailable",
+        }[error.code]
+        raise ContractError(code) from None
+    result = await run_in_threadpool(service.lookup, uid, value, now=int(time.time()))
+    _uncached_private(response)
+    return result
+
+
+@internal.post(HUB_AUTHORITY_PATH)
+async def read_hub_authority(
+    request: Request,
+    response: Response,
+    service: Annotated[PrivateAuthorityViews, Depends(live_authority_views)],
+):
+    return await _authority_result(
+        request, response, service, "hub", HUB_AUTHORITY_PATH, "USER_TRUSTED_HUB_CALLERS"
+    )
+
+
+@internal.post(PORTFOLIO_AUTHORITY_PATH)
+async def read_portfolio_authority(
+    request: Request,
+    response: Response,
+    service: Annotated[PrivateAuthorityViews, Depends(live_authority_views)],
+):
+    return await _authority_result(
+        request,
+        response,
+        service,
+        "portfolio",
+        PORTFOLIO_AUTHORITY_PATH,
+        "USER_PRIVATE_PORTFOLIO_CALLER",
+    )
