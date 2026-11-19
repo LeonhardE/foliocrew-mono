@@ -182,7 +182,7 @@ class TaskOverviewTests(unittest.TestCase):
                     [row["packet"] for row in value["packets"]["items"]], self.expected[:count]
                 )
                 self.assertEqual(verify.call_count, 1)
-                self.assertEqual([len(group) for group in self.reads()], [5, 3 + count, 2 + count])
+                self.assertEqual([len(group) for group in self.reads()], [6, 3 + count, 2 + count])
                 self.assertEqual(sum(kind == "begin" for kind, _ in self.rpc.calls), 1)
                 self.assertFalse(self.assert_no_business_writes())
 
@@ -229,7 +229,7 @@ class TaskOverviewTests(unittest.TestCase):
     def test_only_persistent_paging_reads_metadata_even_with_older_foreground_rows(self):
         self.seed_reports(21, 42)
         value = self.query()
-        self.assertEqual([len(group) for group in self.reads()], [5, 7, 24])
+        self.assertEqual([len(group) for group in self.reads()], [6, 7, 24])
         self.assertEqual(set(value["feeds"]), {"persistent"})
         self.assertEqual(len(value["feeds"]["persistent"]["items"]), 20)
         self.assertIsNotNone(value["feeds"]["persistent"]["nextCursor"])
