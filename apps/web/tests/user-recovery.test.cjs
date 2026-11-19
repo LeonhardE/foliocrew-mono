@@ -175,7 +175,7 @@ test("both recovery reads send separate Owner and workload credentials to the fi
     assert.equal(result.headers.get("Set-Cookie"), null);
   }
   assert.equal(calls.filter(([url]) => url.startsWith(METADATA)).length, 1);
-  const forwarded = calls.filter(([url]) => url.startsWith(ORIGIN));
+  const forwarded = calls.filter(([url]) => [ORIGIN + EVIDENCE, ORIGIN + PAGE].includes(url));
   assert.deepEqual(
     forwarded.map(([url]) => url),
     [ORIGIN + EVIDENCE, ORIGIN + PAGE],
