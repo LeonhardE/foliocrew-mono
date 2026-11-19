@@ -44,10 +44,7 @@ export default function FxRatesPanel({ active }: { active: boolean }) {
           className={styles.refresh}
           aria-label={t("refresh")}
           disabled={!active || !follows.pairs.length || rates.loading || rates.refreshing}
-          onClick={() => {
-            follows.retry();
-            rates.refresh();
-          }}
+          onClick={rates.refresh}
         >
           ↻
         </button>

@@ -14,6 +14,9 @@ const messageKeys: Record<string, string> = {
   "Market refreshes are paused because the shared cache is unavailable.": "cacheUnavailable",
   "Fictional demonstration data; not real market prices.": "simulated",
   "Yahoo is temporarily unavailable; cached data will be used.": "yahooCooldown",
+  "Yahoo market data is temporarily unavailable. Please try again later.": "yahooDataUnavailable",
+  "This market snapshot is temporarily unavailable. Please try again shortly.":
+    "marketSeriesPending",
   "The shared daily market refresh limit has been reached.": "dailyLimit",
   "Market refreshes are temporarily limited. Please try again shortly.": "refreshLimit",
   "Cached snapshot; checking for newer data.": "refreshing",

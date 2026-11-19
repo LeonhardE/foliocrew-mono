@@ -4,6 +4,8 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 const { transformSync } = require("next/dist/build/swc");
+const { compile } = require("./resource-library-helpers.cjs");
+const { boundedJson } = compile("../lib/workspace-cache.ts", {}, { TextDecoder });
 const source = path.join(__dirname, "../components/useCachedMarketResource.ts");
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 const candlePath = (symbol, range = "1m") => `/api/stocks/${symbol}/candles?range=${range}`;
@@ -69,8 +71,9 @@ function mount() {
     module,
     exports: module.exports,
     require: (name) => {
-      assert.equal(name, "react");
-      return react;
+      if (name === "react") return react;
+      assert.equal(name, "@/lib/workspace-cache");
+      return { boundedJson };
     },
     process: { env: {} },
     AbortController,
@@ -337,4 +340,40 @@ test("retry during a refresh preserves its snapshot and ignores the prior genera
   assert.equal(state.error, "");
   assert.equal(state.refreshError, "");
   assert.equal(app.requests.length, 4);
+});
+
+test("a Yahoo cooldown is not reported as too many user requests", async () => {
+  const app = mount();
+  const path = candlePath("AAPL", "1d");
+  app.render(path);
+  app.requests[0].result.resolve(response(null, 204));
+  await settle();
+  app.requests[1].result.resolve(
+    Response.json(
+      { detail: "Yahoo is temporarily unavailable; cached data will be used." },
+      { status: 429 },
+    ),
+  );
+  await settle();
+  assert.equal(
+    app.render(path).error,
+    "Yahoo market data is temporarily unavailable. Please try again later.",
+  );
+  assert.equal(app.requests.length, 2);
+});
+
+test("a genuine admission limit keeps the rate limit message", async () => {
+  const app = mount();
+  const path = candlePath("AAPL", "1d");
+  app.render(path);
+  app.requests[0].result.resolve(response(null, 204));
+  await settle();
+  app.requests[1].result.resolve(
+    Response.json(
+      { detail: "Market requests are temporarily limited. Try again shortly." },
+      { status: 429 },
+    ),
+  );
+  await settle();
+  assert.equal(app.render(path).error, "Too many requests. Please wait before retrying.");
 });

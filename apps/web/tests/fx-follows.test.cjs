@@ -299,6 +299,27 @@ test("fresh public FX cache is one request; chart rerenders/revisits do not trig
   assert.equal(v.data, null);
   app.close();
 });
+test("manual FX refresh makes one batched request even if Market returns stale rates", async () => {
+  const app = mountRates(async (_pairs, cached) => {
+    const result = rates();
+    if (!cached) result.items[0].status = "stale";
+    return result;
+  });
+  app.render();
+  await tick();
+  app.render().refresh();
+  app.render();
+  await tick();
+  assert.deepEqual(
+    app.calls.map((call) => call[1]),
+    [true, false],
+  );
+  const view = app.render();
+  assert.equal(view.data.items[0].rate, "1.36");
+  assert.equal(view.data.items[0].status, "stale");
+  assert.equal(view.refreshing, false);
+  app.close();
+});
 test("missing cached FX refreshes once, failed refresh retains dated stale values and never starts a polling loop", async () => {
   let count = 0;
   const old = rates();
@@ -365,13 +386,19 @@ test("the rates panel keeps checking, empty, stale and mutation states distinct 
       canChange: true,
       add: (p) => actions.push(["add", p]),
       remove: (p) => actions.push(["remove", p]),
-      retry() {},
-      currencyRetry() {},
+      retry: () => actions.push(["reloadFollows"]),
+      currencyRetry: () => actions.push(["reloadCurrency"]),
       signIn() {
         actions.push(["signIn"]);
       },
     },
-    rateState = { data: rates(), loading: false, refreshing: false, error: false, refresh() {} };
+    rateState = {
+      data: rates(),
+      loading: false,
+      refreshing: false,
+      error: false,
+      refresh: () => actions.push(["refreshRates"]),
+    };
   const t = (key, v = {}) => key + Object.values(v).join(":"),
     panel = compile("../components/FxRatesPanel.tsx", {
       react: h.react,
@@ -398,6 +425,8 @@ test("the rates panel keeps checking, empty, stale and mutation states distinct 
     (n) => n.type === "button" && n.props["aria-label"] === "removeUSD/CAD",
   )[0].props.onClick();
   assert.equal(actions[1][0], "remove");
+  all(tree, (n) => n.type === "button" && n.props["aria-label"] === "refresh")[0].props.onClick();
+  assert.deepEqual(actions.slice(2), [["refreshRates"]]);
   follows.authenticated = false;
   follows.checking = true;
   tree = render();

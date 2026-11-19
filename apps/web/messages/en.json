@@ -135,6 +135,8 @@
     "cacheUnavailable": "Market refreshes are paused because the shared cache is unavailable.",
     "simulated": "Fictional demonstration data; not real market prices.",
     "yahooCooldown": "Yahoo is temporarily unavailable; cached data will be used.",
+    "yahooDataUnavailable": "Yahoo market data is temporarily unavailable. Please try again later.",
+    "marketSeriesPending": "This market snapshot is temporarily unavailable. Please try again shortly.",
     "dailyLimit": "The shared daily market refresh limit has been reached.",
     "refreshLimit": "Market refreshes are temporarily limited. Please try again shortly.",
     "refreshing": "Cached snapshot; checking for newer data.",
