@@ -509,6 +509,7 @@ def get_market_service() -> MarketService:
             ("MARKET_CACHE_BACKEND", ""),
             ("MARKET_CACHE_PATH", ""),
             ("MARKET_FIRESTORE_DATABASE", ""),
+            ("MARKET_CACHE_WRITES_PAUSED", "false"),
             ("FIREBASE_PROJECT_ID", ""),
             ("GOOGLE_CLOUD_PROJECT", ""),
             ("K_SERVICE", ""),

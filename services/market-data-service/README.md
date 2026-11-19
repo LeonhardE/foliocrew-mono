@@ -164,3 +164,11 @@ covers bounded native quote batches with explicit MIC/currency checks and cache-
 Canonical holdings-entry search returns explicit US/Canadian market and currency candidates
 without changing the existing US browsing search.
 Existing stock and chart routes keep their original contracts.
+
+## Cache-only migration window
+
+`MARKET_CACHE_WRITES_PAUSED=true` serves retained snapshots during the database
+handoff. The Market cache blocks new refresh reservations, upstream work based
+on those reservations, and shared writes. Drain earlier writable revisions
+before the final copy. The destination keeps the copied budgets and cache
+entries when normal refresh is restored.
