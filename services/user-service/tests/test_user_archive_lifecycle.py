@@ -81,7 +81,7 @@ class UserArchiveLifecycleTests(unittest.TestCase):
         sample.transition["archive"]["version"] = 3
         sample.packet["signedTransition"] = sample.sign(sample.transition)
         sample.stage_frozen_scope(baselineDigest=recorded)
-        cutover.install(UID, VAULT, sample.packet, now=1000)
+        sample.stage_transferred_authority()
         result = reader.read(UID, VAULT, nonce, None)
         self.assertEqual(result["nonce"], nonce)
         self.assertEqual(result["state"]["history"], history["history"])
@@ -103,9 +103,8 @@ class UserArchiveLifecycleTests(unittest.TestCase):
         sample = fixture.RegistryTransitionTests()
         sample.setUp()
         self.addCleanup(sample.doCleanups)
-        cutover = UserAuthorityCutover(sample.store)
         sample.stage_frozen_scope()
-        cutover.install(UID, VAULT, sample.packet, now=1000)
+        sample.stage_transferred_authority()
         return sample, PrivateArchiveLifecycle(sample.store, clock=lambda: 1000)
 
     @staticmethod

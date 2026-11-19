@@ -1,59 +1,21 @@
-"""Verify an Owner-signed start against the original User migration baseline."""
-
-from dataclasses import dataclass
+"""Verify the original registry and archive for a transferred User vault."""
 
 from folioview_shared.encrypted.authority import RegistryCertificateMemo, verify_registry
-from folioview_shared.encrypted.constants import MAX_REGISTRY_BYTES
-from folioview_shared.encrypted.crypto import signing_input_fingerprint, verify_jws
 from folioview_shared.encrypted.errors import ContractError
-from folioview_shared.encrypted.jsonutil import canonical_json, strict_json_loads
 from folioview_shared.encrypted.legacy_archive import verify_legacy_archive_history
-from folioview_shared.encrypted.private_resources import (
-    PrivateRegistryCursor,
-    verify_private_registry_transition,
-)
-from folioview_shared.encrypted.schema import validate_schema
-from folioview_shared.identity import owner_key
+from folioview_shared.encrypted.private_resources import PrivateRegistryCursor
 
 from .legacy_baselines import LegacyVaultBaselines
 from .recovery import RecoveryHeads
 from .registry_pages import MAX_PAGE_ENTRIES, RegistryHistory
 
-MAX_TRANSITION_PACKET_BYTES = MAX_REGISTRY_BYTES + 16_384
-
-
-def transition_packet(packet):
-    if type(packet) is not dict or packet.keys() != {
-        "operationId",
-        "signedTransition",
-        "firstBundle",
-    }:
-        raise ContractError("malformed_request")
-    raw = canonical_json(packet)
-    if len(raw) > MAX_TRANSITION_PACKET_BYTES:
-        raise ContractError("payload_too_large")
-    packet = strict_json_loads(raw, max_bytes=MAX_TRANSITION_PACKET_BYTES)
-    validate_schema("OperationIdentifier", packet["operationId"])
-    return packet
-
-
-@dataclass(frozen=True)
-class VerifiedTransition:
-    receipt: dict
-    original: dict
-    start: PrivateRegistryCursor
-
 
 class UserRegistryTransition:
-    """Validate the candidate. The cutover transaction must also check the Hub writer drain."""
+    """Read bounded signed history and verify its original archive anchor."""
 
     def __init__(self, store):
         self.baselines = LegacyVaultBaselines(store)
         self.history = RegistryHistory(RecoveryHeads(store))
-
-    def _previous(self, baseline, now):
-        cursor, _, _ = self.original_history(baseline, now)
-        return cursor
 
     def original_history(self, baseline, now):
         scope = {key: baseline[key] for key in ("ownerSubject", "vaultId", "rootKeyId")}
@@ -99,51 +61,3 @@ class UserRegistryTransition:
         ):
             raise ContractError("key_authorization_required")
         return cursor, state, bundles
-
-    def verify_candidate(self, uid, vault, baseline_digest, packet, *, now):
-        return self.prepare(uid, vault, baseline_digest, transition_packet(packet), now=now).receipt
-
-    def prepare(self, uid, vault, baseline_digest, packet, *, now):
-        owner = owner_key(uid)
-        base = self.baselines.read(owner, vault, baseline_digest)
-        if base is None:
-            raise ContractError("not_found")
-        baseline = strict_json_loads(base)
-        if "archiveLifecycle" not in baseline or "registry" not in baseline:
-            raise ContractError("not_found")
-        signed = packet["signedTransition"]
-        change = verify_jws(
-            signed,
-            baseline["rootJwk"],
-            typ="fv-control+jws",
-            expected_kid=baseline["rootKeyId"],
-        )
-        if (
-            change.get("operationId") != packet["operationId"]
-            or change.get("previousVaultVersion") != baseline["version"]
-            or change.get("previousHead") != baseline["registry"]
-            or change.get("archive") != baseline["archiveBoundary"]
-        ):
-            raise ContractError("version_conflict")
-        previous = self._previous(baseline, now)
-        start = verify_private_registry_transition(
-            signed,
-            first_bundle=packet["firstBundle"],
-            root_jwk=baseline["rootJwk"],
-            owner_subject=owner,
-            vault_id=vault,
-            pinned_root_key_id=baseline["rootKeyId"],
-            authenticated_start=change.get("nextHead"),
-            previous=previous,
-            now=now,
-        )
-        receipt = {
-            "ownerSubject": owner,
-            "vaultId": vault,
-            "baselineDigest": baseline_digest,
-            "operationId": packet["operationId"],
-            "transitionFingerprint": signing_input_fingerprint(signed),
-            "nextVaultVersion": change["nextVaultVersion"],
-            "registryStart": start.head(),
-        }
-        return VerifiedTransition(receipt, baseline, start)

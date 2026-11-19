@@ -35,7 +35,7 @@ class AuthorityViewTests(unittest.TestCase):
         self.store = self.sample.store
         self.cutover = UserAuthorityCutover(self.store)
         self.sample.stage_frozen_scope()
-        self.cutover.install(fixture.UID, fixture.VAULT, self.sample.packet, now=1000)
+        self.sample.stage_transferred_authority()
         self.viewer = PrivateAuthorityViews(self.store)
         self.request = {
             "contractVersion": CONTRACT_VERSION,

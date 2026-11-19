@@ -24,7 +24,7 @@ class RegistryUpdateTests(unittest.TestCase):
         self.addCleanup(self.fixture.doCleanups)
         self.cutover = UserAuthorityCutover(self.fixture.store)
         self.fixture.stage_frozen_scope()
-        installed = self.cutover.install(fixture.UID, fixture.VAULT, self.fixture.packet, now=1000)
+        installed = self.fixture.stage_transferred_authority()
         first = self.fixture.packet["firstBundle"]
         checkpoint = verify_jws(
             first["checkpoint"], self.fixture.vault["rootJwk"], typ="fv-control+jws"

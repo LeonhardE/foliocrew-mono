@@ -30,7 +30,7 @@ class UserDisplayNameTests(unittest.TestCase):
         self.addCleanup(sample.doCleanups)
         self.cutover = UserAuthorityCutover(sample.store)
         sample.stage_frozen_scope()
-        self.cutover.install(UID, VAULT, sample.packet, now=1000)
+        sample.stage_transferred_authority()
         self.store = sample.store
         self.signer = sample.signing_keys["device_sig"]
         self.owner_fields = {
