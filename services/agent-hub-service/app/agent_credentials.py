@@ -21,16 +21,22 @@ from folioview_shared.encrypted.persistent_agents import (
 from folioview_shared.encrypted.schema import safe_https_url, validate_schema
 from folioview_shared.identity import owner_key
 
-from .native_transport import SCOPE, NativePrincipal
+from .native_transport import (
+    SCOPE,
+    USER_AUTHORITY_TRANSITION,
+    NativePrincipal,
+    configured_native_vaults,
+)
 from .persistent_agents import (
     PersistentAgentService,
     identity_history_path,
     identity_path,
+    linked_connection,
     snapshot,
     stored_identity,
 )
 from .store import StoreUnavailable, document_path, require_legacy_private_writer
-from .vaults import identifier
+from .vaults import _current, identifier
 
 SETUP_SECONDS = 600
 MAX_SETUPS_MINUTE = 5
@@ -62,15 +68,44 @@ def validate_packet(offer):
 
 
 class AgentCredentialService(PersistentAgentService):
-    def __init__(self, *args, audience, **kwargs):
+    def __init__(self, *args, audience, user_vaults=None, **kwargs):
         super().__init__(*args, **kwargs)
         from urllib.parse import urlsplit
 
         if not safe_https_url(audience) or urlsplit(audience).query or urlsplit(audience).fragment:
             raise ContractError("authorization_unavailable")
         self.audience = audience
+        self.user_vaults = user_vaults or configured_native_vaults(self.store)
 
-    def _native(self, unit, principal):
+    def _authority_registry(self, unit, owner, vault, user_scope):
+        if user_scope is None:
+            return _current(unit, owner, self.now(), vault)
+        user_scope.require_current(unit, self.now())
+        return user_scope.authority, user_scope.cursor.registry
+
+    def _credential_context(self, unit, uid, vault, connection, user_scope, *, active=False):
+        owner = owner_key(uid)
+        authority, registry = self._authority_registry(unit, owner, vault, user_scope)
+        conn = linked_connection(unit, owner, vault, connection, active=active)
+        if (
+            user_scope is not None
+            and conn.get(USER_AUTHORITY_TRANSITION)
+            != user_scope.writer_fence["transitionFingerprint"]
+        ):
+            raise ContractError("key_authorization_required")
+        return owner, authority, registry, conn
+
+    @staticmethod
+    def _require_credential_writer(unit, owner, user_scope):
+        if user_scope is None:
+            require_legacy_private_writer(unit, owner)
+
+    def _native_user_scope(self, principal):
+        if not isinstance(principal, NativePrincipal) or principal.expires_at <= self.now():
+            raise ContractError("key_authorization_required")
+        return self.user_vaults.read(principal.owner_uid, principal.vault_id)
+
+    def _native(self, unit, principal, user_scope=None):
         if not isinstance(principal, NativePrincipal) or principal.expires_at <= self.now():
             raise ContractError("key_authorization_required")
         if owner_key(principal.owner_uid) != principal.owner_subject:
@@ -78,8 +113,13 @@ class AgentCredentialService(PersistentAgentService):
         from .agent_rollout import require_owner_allowed
 
         require_owner_allowed(principal.owner_subject)
-        owner, vault, registry, conn = self._context(
-            unit, principal.owner_uid, principal.vault_id, principal.connection_id, active=True
+        owner, vault, registry, conn = self._credential_context(
+            unit,
+            principal.owner_uid,
+            principal.vault_id,
+            principal.connection_id,
+            user_scope,
+            active=True,
         )
         if (
             principal.client_id not in self.client_ids
@@ -137,10 +177,11 @@ class AgentCredentialService(PersistentAgentService):
     def begin_setup(self, principal):
         """Called only with a verified Native bootstrap principal, never JSON claims."""
         intent = "setup_" + secrets.token_hex(16)
+        user_scope = self._native_user_scope(principal)
 
         def write(unit):
-            owner, _, _, conn = self._native(unit, principal)
-            require_legacy_private_writer(unit, owner)
+            owner, _, _, conn = self._native(unit, principal, user_scope)
+            self._require_credential_writer(unit, owner, user_scope)
             current = stored_identity(unit, owner, principal.vault_id, principal.connection_id)
             if current is None and conn.get("credentialMode") == "agent_owned":
                 # A missing current record is not an unused slot.
@@ -196,16 +237,17 @@ class AgentCredentialService(PersistentAgentService):
 
     def put_offer(self, principal, intent, offer):
         validate_packet(offer)
+        user_scope = self._native_user_scope(principal)
 
         def write(unit):
-            owner, _, _, conn = self._native(unit, principal)
+            owner, _, _, conn = self._native(unit, principal, user_scope)
             row = self._setup(
                 unit, intent, owner, principal.vault_id, principal.connection_id, conn
             )
             if row["offer"] is not None and row["offer"] != offer:
                 raise ContractError("version_conflict")
             if row["offer"] is None:
-                require_legacy_private_writer(unit, owner)
+                self._require_credential_writer(unit, owner, user_scope)
                 row["offer"] = snapshot(offer)
                 unit.put(setup_path(intent), row)
             return snapshot(row)
@@ -213,8 +255,10 @@ class AgentCredentialService(PersistentAgentService):
         return self.store.transact(write)
 
     def owner_setup(self, uid, vault, connection, intent):
+        user_scope = self.user_vaults.read(uid, vault)
+
         def read(unit):
-            owner, _, _, conn = self._context(unit, uid, vault, connection)
+            owner, _, _, conn = self._credential_context(unit, uid, vault, connection, user_scope)
             previous_id = conn.get("predecessorConnectionId")
             if previous_id is not None and stored_identity(unit, owner, vault, previous_id) is None:
                 previous_id = None
@@ -230,9 +274,10 @@ class AgentCredentialService(PersistentAgentService):
     def state(self, uid, vault, connection):
         for value in (vault, connection):
             identifier(value)
+        user_scope = self.user_vaults.read(uid, vault)
 
         def read(unit):
-            owner, _, _, conn = self._context(unit, uid, vault, connection)
+            owner, _, _, conn = self._credential_context(unit, uid, vault, connection, user_scope)
             return self._credential_state(unit, owner, vault, connection, conn)
 
         return self.store.transact(read)
@@ -340,9 +385,10 @@ class AgentCredentialService(PersistentAgentService):
 
     def receipt(self, uid, vault, connection, operation):
         validate_schema("OperationIdentifier", operation)
+        owner = owner_key(uid)
 
         def read(unit):
-            owner, _, _, _ = self._context(unit, uid, vault, connection)
+            linked_connection(unit, owner, vault, connection)
             saved = unit.get(operation_path(owner, vault, operation))
             if saved is None or saved.get("connectionId") != connection:
                 raise ContractError("not_found")
@@ -350,10 +396,11 @@ class AgentCredentialService(PersistentAgentService):
 
         return self.store.transact(read)
 
-    def command(self, uid, vault, connection, command, operation, *, _unit=None):
+    def command(self, uid, vault, connection, command, operation, *, _unit=None, _user_scope=None):
         from .agent_rollout import require_owner_allowed
 
-        require_owner_allowed(owner_key(uid))
+        owner = owner_key(uid)
+        require_owner_allowed(owner)
         for value in (vault, connection):
             identifier(value)
         validate_schema("OperationIdentifier", operation)
@@ -372,16 +419,28 @@ class AgentCredentialService(PersistentAgentService):
         if payload["stableOperationId"] != operation:
             raise ContractError("recipient_binding_mismatch")
         fingerprint = signing_input_fingerprint(command["approval"])
+        path = operation_path(owner, vault, operation)
+
+        def replay(saved):
+            if saved.get("command") != command or saved.get("connectionId") != connection:
+                raise ContractError("idempotency_conflict")
+            return self._receipt(saved, owner, vault, connection, operation)
+
+        user_scope = _user_scope
+        if _unit is None and owner == self.user_vaults.owner:
+            saved = self.store.transact(lambda unit: unit.get(path))
+            if saved is not None:
+                return replay(saved)
+            user_scope = self.user_vaults.read(uid, vault)
 
         def write(unit):
-            owner, _, registry, conn = self._context(unit, uid, vault, connection)
-            path = operation_path(owner, vault, operation)
             saved = unit.get(path)
             if saved is not None:
-                if saved.get("command") != command or saved.get("connectionId") != connection:
-                    raise ContractError("idempotency_conflict")
-                return self._receipt(saved, owner, vault, connection, operation)
-            require_legacy_private_writer(unit, owner)
+                return replay(saved)
+            owner, _, registry, conn = self._credential_context(
+                unit, uid, vault, connection, user_scope
+            )
+            self._require_credential_writer(unit, owner, user_scope)
             if _unit is None:
                 from .provider_connections import slot_path
 
