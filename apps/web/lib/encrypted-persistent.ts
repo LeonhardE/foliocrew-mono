@@ -52,6 +52,7 @@ type Context = {
   deviceSigningKeyId: string;
   now: () => number;
   reader: (ids: string[]) => Promise<CryptoKey>;
+  userRegistry?: (successors: RegistryBundle[], at: number) => Promise<Registry>;
 };
 export class PersistentOwner {
   constructor(private readonly ctx: Context) {}
@@ -59,10 +60,12 @@ export class PersistentOwner {
     bundles: RegistryBundle[] = this.ctx.vault.registryHistory,
     at = this.ctx.now(),
   ) {
-    const v = this.ctx.vault,
-      last = parsed(bytes(bundles.at(-1)!.checkpoint.payload), true);
-    if (bundles.length < 1 || bundles.length > 32 || last.registrySequence !== bundles.length)
-      fail();
+    if (!bundles.length) fail();
+    const v = this.ctx.vault;
+    if (this.ctx.userRegistry && same(bundles[0], v.registryHistory[0]))
+      return this.ctx.userRegistry(bundles.slice(1), at);
+    const last = parsed(bytes(bundles.at(-1)!.checkpoint.payload), true);
+    if (bundles.length > 32 || last.registrySequence !== bundles.length) fail();
     return new Registry({
       rootJwk: v.rootJwk,
       rootKeyId: v.rootKeyId,
@@ -72,6 +75,17 @@ export class PersistentOwner {
       registrySequence: last.registrySequence,
       checkpointDigest: await digest(last),
     }).load(bundles, at);
+  }
+  private through(sequence: number) {
+    const vault = this.ctx.vault;
+    const start = vault.userAuthority?.registryStart.registrySequence ?? 1;
+    if (
+      !Number.isSafeInteger(sequence) ||
+      sequence < start ||
+      sequence >= start + vault.registryHistory.length
+    )
+      fail();
+    return vault.registryHistory.slice(0, sequence - start + 1);
   }
   private async actor(identity: Json, binding: Json, registry: Registry, at = this.ctx.now()) {
     validate("PersistentAgentIdentity", identity);
@@ -713,10 +727,7 @@ export class PersistentOwner {
     validate("PersistentAgentIdentity", state.identity);
     const payload = parsed(bytes(state.approval.payload), true);
     validate("AgentCredentialApproval", payload);
-    const registry = await this.registry(
-      this.ctx.vault.registryHistory.slice(0, payload.registrySequence),
-      payload.issuedAt,
-    );
+    const registry = await this.registry(this.through(payload.registrySequence), payload.issuedAt);
     const identity = { ...state.identity, identityEpoch: 1, status: "active", revokedAt: null };
     await this.actor(identity, state.binding, registry, payload.issuedAt);
     const author = registry.cert(payload.deviceSigningKeyId, "device_sig", null, payload.issuedAt);
@@ -942,7 +953,7 @@ export class PersistentOwner {
     // Verify the original at its authenticated historical directory, including
     // bindings and Root signature. Never reinterpret it under replacement keys.
     const historical = await this.registry(
-      this.ctx.vault.registryHistory.slice(0, context.registrySequence),
+      this.through(context.registrySequence),
       context.issuedAt,
     );
     await verifyEnvelope(packet.body.envelope, {
@@ -1173,10 +1184,7 @@ export class PersistentOwner {
   async historicalPolicy(state: Json, resourceState: Json, receipts: Json[]) {
     const p = parsed(bytes(state.binding.payload), true);
     const registry = await this.registry();
-    const historical = await this.registry(
-      this.ctx.vault.registryHistory.slice(0, p.registrySequence),
-      p.issuedAt,
-    );
+    const historical = await this.registry(this.through(p.registrySequence), p.issuedAt);
     const identity = { ...state.identity, identityEpoch: 1, status: "active", revokedAt: null };
     await this.actor(identity, state.binding, historical, p.issuedAt);
     if (
@@ -1839,10 +1847,7 @@ export class PersistentOwner {
         c.registrySequence > this.ctx.vault.registryHistory.length
       )
         fail();
-      const registry = await this.registry(
-        this.ctx.vault.registryHistory.slice(0, c.registrySequence),
-        c.issuedAt,
-      );
+      const registry = await this.registry(this.through(c.registrySequence), c.issuedAt);
       const verified = await verifyEnvelope(receipt.envelope, {
         registry,
         identity: packet.identity,
@@ -2052,10 +2057,7 @@ export class PersistentOwner {
         e.registrySequence > this.ctx.vault.registryHistory.length
       )
         fail("invalid_plan_observation");
-      const registry = await this.registry(
-        this.ctx.vault.registryHistory.slice(0, e.registrySequence),
-        r.receivedAt,
-      );
+      const registry = await this.registry(this.through(e.registrySequence), r.receivedAt);
       if (registry.current.digest !== e.checkpointDigest) fail();
       validate("PersistentAgentIdentity", e.identity);
       if (
@@ -2194,19 +2196,13 @@ export class PersistentOwner {
     )
       fail();
     // Select an issuance snapshot from the already verified owner's current Root chain.
+    const prefix = this.through(c.registrySequence);
     if (
-      c.registrySequence > v.registryHistory.length ||
       !Array.isArray(record.registryHistory) ||
-      !same(
-        record.registryHistory.slice(0, c.registrySequence),
-        v.registryHistory.slice(0, c.registrySequence),
-      )
+      !same(record.registryHistory.slice(0, prefix.length), prefix)
     )
       fail();
-    const registry = await this.registry(
-      v.registryHistory.slice(0, c.registrySequence),
-      receipt.receivedAt,
-    );
+    const registry = await this.registry(prefix, receipt.receivedAt);
     await registry.binding(record.binding, record.identity, record.identity, c.issuedAt);
     matchBinding(c, record.identity);
     matchBinding(m, record.identity);

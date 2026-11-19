@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const { createBrowserFixture } = require("./vault-browser-fixture.cjs");
-const { createOwner, decoded } = require("./full-flow-crypto-fixture.cjs");
+const { createOwner, createTask, keyProofs, decoded } = require("./full-flow-crypto-fixture.cjs");
 const { lifecycleState, renewalAccepted } = require("./vault-key-renewal-fixture.cjs");
 
 let browser;
@@ -363,6 +363,47 @@ test("the original Passkey opens a transferred vault and upgrades the stored reg
     await assert.rejects(reload.unlock(vault, material()), /rollback_detected/);
     const verified = db.client(uid, storage);
     assert.equal((await verified.unlock(current, material())).needsDeviceRegistration, false);
+
+    const { content, task } = await createTask(
+      h,
+      { vault: current, session: verified, now: () => 1000 },
+      { template: "custom", bindings: [] },
+    );
+    assert.deepEqual(await verified.openTask(task), content);
+    await assert.rejects(verified.openTask({ ...task, keyProofs: keyProofs({ vault }) }));
+    const control = await verified.prepareTaskCenterControl({
+      state: {
+        contractVersion: h.core.CONTRACT,
+        profile: "folioview.task-center.v1",
+        taskId: task.metadata.taskId,
+        taskVersion: task.metadata.taskVersion,
+        executionEpoch: task.metadata.executionEpoch,
+        rules: null,
+        assignments: [],
+        dispatchSupported: false,
+        nativeScheduleAttested: false,
+      },
+      action: "set_rules",
+      value: null,
+    });
+    const command = decoded(control.body.command);
+    assert.equal(command.registrySequence, nextHead.registrySequence);
+    assert.equal(command.checkpointDigest, nextHead.checkpointDigest);
+
+    const sourceId = "holdings_migrated_test";
+    const source = await verified.prepareSourceCreation(sourceId);
+    assert.equal(decoded(source.command).registrySequence, nextHead.registrySequence);
+    assert.deepEqual(await verified.loadSourceCreation(), source);
+    await verified.finishSourceCreation(source, {
+      sourceEpoch: 1,
+      resourceRef: {
+        kind: "holdings",
+        sourceService: "portfolio",
+        resourceId: sourceId,
+        incarnation: "inc_" + (await h.core.signingFingerprint(source.command)).slice(0, 32),
+      },
+    });
+    assert.equal(await verified.loadSourceCreation(), null);
   });
 });
 
