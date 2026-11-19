@@ -16,7 +16,7 @@ from app.private_resources.authority_cutover import HANDOVERS, WITNESSES, UserAu
 from app.private_resources.legacy_baselines import LegacyVaultBaselines, verified_baseline
 from app.private_resources.original_operations import original_operation_baseline
 from app.private_resources.recovery import RecoveryHeads
-from app.private_resources.registry_pages import COLLECTION, RegistryHistory
+from app.private_resources.registry_pages import COLLECTION, RegistryHistory, RegistryPageRequest
 from app.private_resources.registry_transition import UserRegistryTransition
 from app.private_resources.report_sources import HOLDINGS_FENCES, holdings_fence_key
 from app.private_resources.source_invalidations import SOURCE_INDEX, SourceInvalidations
@@ -237,6 +237,35 @@ class RegistryTransitionTests(unittest.TestCase):
                 {**self.packet, "operationId": "synthetic_changed_operation_001"},
                 now=1000,
             )
+
+    def test_offline_owner_can_page_only_the_signed_original_target(self):
+        cutover = UserAuthorityCutover(self.store)
+        self.stage_frozen_scope()
+        cutover.install(UID, VAULT, self.packet, now=1000)
+        history = RegistryHistory(self.heads)
+        target = self.transition["previousHead"]
+        request = {
+            "contractVersion": CONTRACT_VERSION,
+            "profile": "folioview.owner-registry-page.v1",
+            "ownerSubject": OWNER,
+            "vaultId": VAULT,
+            "base": None,
+            "target": target,
+        }
+        page = history.page(UID, VAULT, RegistryPageRequest.model_validate(request))
+        self.assertEqual(page["target"], target)
+        self.assertEqual(page["bundles"], self.vault["registryHistory"])
+        self.assertEqual(self.heads.read(OWNER)["registry"], self.transition["nextHead"])
+        for mismatch in (
+            {**target, "checkpointDigest": "1" * 64},
+            {**target, "registrySequence": target["registrySequence"] + 1},
+        ):
+            with self.assertRaisesRegex(ContractError, "registry_conflict"):
+                history.page(
+                    UID, VAULT, RegistryPageRequest.model_validate({**request, "target": mismatch})
+                )
+        with self.assertRaisesRegex(ContractError, "not_found"):
+            history.page("unrelated-owner", VAULT, RegistryPageRequest.model_validate(request))
 
     def test_conflict_or_receipt_failure_leaves_every_authority_record_unpublished(self):
         cutover = UserAuthorityCutover(self.store)
