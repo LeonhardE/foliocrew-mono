@@ -899,7 +899,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (
         !exact(options.json, recoveryRead.keys) ||
         options.json.profile !== recoveryRead.profile ||
-        options.json.vaultId !== recoveryRead.vault
+        options.json.vaultId !== recoveryRead.vault ||
+        (recoveryRead.source !== null && options.json.sourceId !== recoveryRead.source)
       )
         throw new Error("Invalid private API request");
       origin = USER_RECOVERY_PROXY;
