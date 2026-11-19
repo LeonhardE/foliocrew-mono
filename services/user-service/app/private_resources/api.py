@@ -55,6 +55,16 @@ OWNER_PROXY_HEADER = "x-folioview-proxy-authorization"
 _USER_ORIGIN = re.compile(r"https://user-api-[0-9]{1,20}\.[a-z]+(?:-[a-z0-9]+)+[0-9]\.run\.app\Z")
 
 
+def require_selected_private_owner(subject: str) -> None:
+    selected = os.getenv("USER_PRIVATE_SELECTED_OWNER")
+    if selected is None and "K_SERVICE" not in os.environ:
+        return
+    if selected is None or re.fullmatch(r"[a-f0-9]{64}", selected) is None:
+        raise ContractError("authorization_unavailable")
+    if subject != selected:
+        raise ContractError("not_found")
+
+
 @lru_cache(maxsize=4)
 def configured_owner_proxy(audience, encoded_callers):
     try:
@@ -117,6 +127,7 @@ async def invalidate_portfolio_source(
 ):
     require_portfolio_workload(request)
     value = (await body(request, RootModel[dict[str, object]])).root
+    require_selected_private_owner(value.get("ownerSubject"))
     result = await run_in_threadpool(authority.invalidate, value)
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-FolioView-Contract"] = CONTRACT_VERSION
@@ -142,6 +153,7 @@ async def acknowledge_portfolio_source_revision(
 ):
     require_portfolio_workload(request)
     value = await body(request, PortfolioSourceRevision, maximum=4096)
+    require_selected_private_owner(value.ownerSubject)
     result = await run_in_threadpool(authority.acknowledge_revision, value)
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-FolioView-Contract"] = CONTRACT_VERSION
@@ -201,6 +213,7 @@ async def report_source_decision(
             "verification_unavailable": "authorization_unavailable",
         }[error.code]
         raise ContractError(code) from None
+    require_selected_private_owner(owner_key(uid))
     result = await run_in_threadpool(authority.decide, uid, value)
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-FolioView-Contract"] = CONTRACT_VERSION
@@ -228,6 +241,7 @@ async def recovery_evidence(
     _: Annotated[None, Depends(require_owner_proxy)],
 ):
     value = await body(request, RecoveryRequest)
+    require_selected_private_owner(owner_key(user.uid))
     result = await run_in_threadpool(
         current_recovery_evidence, store, user.uid, vault_id, value.model_dump(), int(time.time())
     )
@@ -246,6 +260,7 @@ async def registry_page(
     _: Annotated[None, Depends(require_owner_proxy)],
 ):
     value = await body(request, RegistryPageRequest)
+    require_selected_private_owner(owner_key(user.uid))
     result = await run_in_threadpool(RegistryHistory(store).page, user.uid, vault_id, value)
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-FolioView-Contract"] = CONTRACT_VERSION
@@ -278,7 +293,9 @@ class PrivateResourceDirectoryRequest(CutoverScope):
 
 
 def _cutover_scope(value, uid, vault):
-    if value["ownerSubject"] != owner_key(uid) or value["vaultId"] != vault:
+    subject = owner_key(uid)
+    require_selected_private_owner(subject)
+    if value["ownerSubject"] != subject or value["vaultId"] != vault:
         raise ContractError("not_found")
 
 
@@ -337,7 +354,9 @@ async def read_owner_current_vault(
     _: Annotated[None, Depends(require_owner_proxy)],
 ):
     value = await body(request, OwnerCurrentVaultRequest, maximum=4096)
-    if value.ownerSubject != owner_key(user.uid):
+    subject = owner_key(user.uid)
+    require_selected_private_owner(subject)
+    if value.ownerSubject != subject:
         raise ContractError("not_found")
     result = await run_in_threadpool(
         view.owner_current, user.uid, value.nonce, now=int(time.time())
@@ -526,6 +545,7 @@ async def _authority_result(request, response, service, consumer, path, caller_e
             "verification_unavailable": "authorization_unavailable",
         }[error.code]
         raise ContractError(code) from None
+    require_selected_private_owner(owner_key(uid))
     result = await run_in_threadpool(service.lookup, uid, value, now=int(time.time()))
     _uncached_private(response)
     return result

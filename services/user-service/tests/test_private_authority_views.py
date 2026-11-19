@@ -142,6 +142,36 @@ class AuthorityViewTests(unittest.TestCase):
         self.assertEqual(after["holdings"], [])
         self.assertEqual(after["sourcesDigest"], source_index_digest([]))
 
+    def test_production_authority_read_confines_authenticated_owner(self):
+        verifier = Mock()
+        verifier.verify_private_authority_read.return_value = fixture.UID
+        headers = {
+            "Authorization": "Bearer synthetic_workload",
+            "X-FolioView-Delegation": "synthetic_delegation",
+            "X-FolioView-Contract": CONTRACT_VERSION,
+        }
+        expected_owner = self.request["ownerSubject"]
+        with (
+            TestClient(app) as client,
+            patch("app.private_resources.api.time.time", return_value=1000),
+            patch("app.private_resources.api.configured_verifier", return_value=verifier),
+            patch.object(self.viewer.cutover, "_named_store"),
+            patch.dict(app.dependency_overrides, {live_authority_views: lambda: self.viewer}),
+        ):
+            for configured, status in (
+                (None, 503),
+                ("*", 503),
+                ("0" * 64, 404),
+                (expected_owner, 200),
+            ):
+                environment = {"K_SERVICE": "synthetic-user"}
+                if configured is not None:
+                    environment["USER_PRIVATE_SELECTED_OWNER"] = configured
+                with self.subTest(status=status), patch.dict("os.environ", environment, clear=True):
+                    response = client.post(HUB_AUTHORITY_PATH, headers=headers, json=self.request)
+                    self.assertEqual(response.status_code, status, response.text)
+                    self.assertEqual(response.headers["cache-control"], "no-store")
+
     def test_each_route_limits_delegation_to_its_fixed_consumer_and_audience(self):
         verifier = Mock()
         verifier.verify_private_authority_read.return_value = fixture.UID
