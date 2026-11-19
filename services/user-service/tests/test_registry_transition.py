@@ -26,6 +26,8 @@ from app.private_resources.recovery import COLLECTION as HEADS
 from app.private_resources.recovery import RecoveryHeads, build_recovery_head
 from app.private_resources.registry_pages import (
     COLLECTION,
+    ORIGINAL_HEAD_PROFILE,
+    OriginalRegistryHeadRequest,
     RegistryHistory,
     RegistryPageRequest,
     _index,
@@ -318,6 +320,39 @@ class RegistryTransitionTests(unittest.TestCase):
                 )
         with self.assertRaisesRegex(ContractError, "not_found"):
             history.page("unrelated-owner", VAULT, RegistryPageRequest.model_validate(request))
+
+    def test_original_head_read_returns_only_the_root_anchored_terminal_bundle(self):
+        self.stage_frozen_scope()
+        self.stage_transferred_authority()
+        history = RegistryHistory(self.heads)
+        target = self.transition["previousHead"]
+        request = OriginalRegistryHeadRequest(
+            contractVersion=CONTRACT_VERSION,
+            profile=ORIGINAL_HEAD_PROFILE,
+            ownerSubject=OWNER,
+            vaultId=VAULT,
+            target=target,
+        )
+        with patch.object(history, "_read", wraps=history._read) as read:
+            proof = history.original_head(UID, VAULT, request)
+            self.assertEqual(proof["target"], target)
+            self.assertEqual(proof["bundle"], self.vault["registryHistory"][-1])
+            self.assertEqual(read.call_args.args[1:], (1, [target["registrySequence"]]))
+        with self.assertRaisesRegex(ContractError, "not_found"):
+            history.original_head("unrelated-owner", VAULT, request)
+        with self.assertRaisesRegex(ContractError, "registry_conflict"):
+            history.original_head(
+                UID,
+                VAULT,
+                request.model_copy(
+                    update={
+                        "target": request.target.model_copy(update={"checkpointDigest": "a" * 64})
+                    }
+                ),
+            )
+        route = f"/api/v3/private-resources/vaults/{VAULT}/original-registry-head/read"
+        with TestClient(app) as client:
+            self.assertEqual(client.post(route, json=request.model_dump()).status_code, 401)
 
     def test_original_terminal_ack_serves_exact_portfolio_retry(self):
         ref = {

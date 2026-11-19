@@ -49,7 +49,7 @@ from .recovery import (
     RecoveryRequest,
     current_recovery_evidence,
 )
-from .registry_pages import RegistryHistory, RegistryPageRequest
+from .registry_pages import OriginalRegistryHeadRequest, RegistryHistory, RegistryPageRequest
 from .registry_updates import RegistryUpdate, RegistryUpdates
 from .report_sources import ReportSourceAuthority
 from .source_invalidations import PortfolioSourceRevision, SourceInvalidations
@@ -275,6 +275,24 @@ async def registry_page(
     result = await run_in_threadpool(RegistryHistory(store).page, user.uid, vault_id, value)
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-FolioView-Contract"] = CONTRACT_VERSION
+    return result
+
+
+@router.post("/{vault_id}/original-registry-head/read")
+async def original_registry_head(
+    vault_id: str,
+    request: Request,
+    response: Response,
+    user: Annotated[CurrentUser, Depends(require_google_user)],
+    store: Annotated[RecoveryHeads, Depends(owner_recovery_store)],
+    _: Annotated[None, Depends(require_owner_proxy)],
+):
+    value = await body(request, OriginalRegistryHeadRequest)
+    require_selected_private_owner(owner_key(user.uid))
+    result = await run_in_threadpool(
+        RegistryHistory(store).original_head, user.uid, vault_id, value
+    )
+    _uncached_private(response)
     return result
 
 
