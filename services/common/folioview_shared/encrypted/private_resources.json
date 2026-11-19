@@ -1,0 +1,562 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://folioview.app/contracts/private-resources/v1/schemas.json",
+  "title": "Private resource authority and Owner recovery contracts",
+  "$defs": {
+    "PrivateResourceVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "PrivateResourceTime": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "ReportSourceRequest": {
+      "type": "object",
+      "properties": {
+        "contractVersion": {
+          "const": "folioview.agent-workspace.v2.0"
+        },
+        "profile": {
+          "const": "folioview.report-source-authorization.v1"
+        },
+        "ownerSubject": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "vaultId": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "purpose": {
+          "const": "report_submit"
+        },
+        "connectionId": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "runId": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "operationId": {
+          "$ref": "#/$defs/OperationIdentifier"
+        },
+        "attemptId": {
+          "$ref": "#/$defs/OperationIdentifier"
+        },
+        "manifestFingerprint": {
+          "$ref": "#/$defs/Digest"
+        },
+        "reportFingerprint": {
+          "$ref": "#/$defs/Digest"
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReportSourceBinding"
+          },
+          "minItems": 0,
+          "maxItems": 10,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "contractVersion",
+        "profile",
+        "ownerSubject",
+        "vaultId",
+        "purpose",
+        "connectionId",
+        "runId",
+        "operationId",
+        "attemptId",
+        "manifestFingerprint",
+        "reportFingerprint",
+        "resources"
+      ],
+      "additionalProperties": false
+    },
+    "ReportSourceDecision": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "contractVersion": {
+              "const": "folioview.agent-workspace.v2.0"
+            },
+            "profile": {
+              "const": "folioview.report-source-authorization.v1"
+            },
+            "outcome": {
+              "const": "allowed"
+            },
+            "requestDigest": {
+              "$ref": "#/$defs/Digest"
+            },
+            "decidedAt": {
+              "$ref": "#/$defs/PrivateResourceTime"
+            },
+            "expiresAt": {
+              "$ref": "#/$defs/PrivateResourceVersion"
+            }
+          },
+          "required": [
+            "contractVersion",
+            "profile",
+            "outcome",
+            "requestDigest",
+            "decidedAt",
+            "expiresAt"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "contractVersion": {
+              "const": "folioview.agent-workspace.v2.0"
+            },
+            "profile": {
+              "const": "folioview.report-source-authorization.v1"
+            },
+            "outcome": {
+              "const": "denied"
+            },
+            "requestDigest": {
+              "$ref": "#/$defs/Digest"
+            },
+            "decidedAt": {
+              "$ref": "#/$defs/PrivateResourceTime"
+            }
+          },
+          "required": ["contractVersion", "profile", "outcome", "requestDigest", "decidedAt"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ReportSourceState": {
+      "type": "object",
+      "properties": {
+        "binding": {
+          "$ref": "#/$defs/ResourceBinding"
+        },
+        "state": {
+          "enum": ["eligible", "revoking", "disconnected", "deleted", "missing"]
+        },
+        "currentRevision": {
+          "$ref": "#/$defs/PrivateResourceTime"
+        }
+      },
+      "required": ["binding", "state", "currentRevision"],
+      "additionalProperties": false
+    },
+    "PrivateRegistryHead": {
+      "type": "object",
+      "properties": {
+        "registryEpoch": {
+          "$ref": "#/$defs/PrivateResourceVersion"
+        },
+        "registrySequence": {
+          "$ref": "#/$defs/PrivateResourceVersion"
+        },
+        "checkpointDigest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "keyEpoch": {
+          "$ref": "#/$defs/PrivateResourceVersion"
+        }
+      },
+      "required": ["registryEpoch", "registrySequence", "checkpointDigest", "keyEpoch"],
+      "additionalProperties": false
+    },
+    "PrivateArchiveBoundary": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "enum": ["active", "revoking", "deleted"]
+        },
+        "version": {
+          "$ref": "#/$defs/PrivateResourceVersion"
+        },
+        "digest": {
+          "$ref": "#/$defs/Digest"
+        }
+      },
+      "required": ["state", "version", "digest"],
+      "additionalProperties": false
+    },
+    "PrivateRecoveryRequest": {
+      "type": "object",
+      "properties": {
+        "contractVersion": {
+          "const": "folioview.agent-workspace.v2.0"
+        },
+        "profile": {
+          "const": "folioview.owner-recovery-evidence.v1"
+        },
+        "ownerSubject": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "vaultId": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "nonce": {
+          "$ref": "#/$defs/OperationIdentifier"
+        },
+        "deviceId": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "deviceSigningKeyId": {
+          "$ref": "#/$defs/KeyId"
+        },
+        "deviceEncryptionKeyId": {
+          "$ref": "#/$defs/KeyId"
+        }
+      },
+      "required": [
+        "contractVersion",
+        "profile",
+        "ownerSubject",
+        "vaultId",
+        "nonce",
+        "deviceId",
+        "deviceSigningKeyId",
+        "deviceEncryptionKeyId"
+      ],
+      "additionalProperties": false
+    },
+    "PrivateRecoveryEvidence": {
+      "type": "object",
+      "properties": {
+        "contractVersion": {
+          "const": "folioview.agent-workspace.v2.0"
+        },
+        "profile": {
+          "const": "folioview.owner-recovery-evidence.v1"
+        },
+        "ownerSubject": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "vaultId": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "rootKeyId": {
+          "$ref": "#/$defs/KeyId"
+        },
+        "requestDigest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "vaultVersion": {
+          "$ref": "#/$defs/PrivateResourceVersion"
+        },
+        "registry": {
+          "$ref": "#/$defs/PrivateRegistryHead"
+        },
+        "archive": {
+          "$ref": "#/$defs/PrivateArchiveBoundary"
+        },
+        "device": {
+          "enum": ["active", "inactive"]
+        },
+        "sourcesDigest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "verifiedAt": {
+          "$ref": "#/$defs/PrivateResourceTime"
+        },
+        "expiresAt": {
+          "$ref": "#/$defs/PrivateResourceVersion"
+        },
+        "registryStart": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PrivateRegistryHead"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "contractVersion",
+        "profile",
+        "ownerSubject",
+        "vaultId",
+        "rootKeyId",
+        "requestDigest",
+        "vaultVersion",
+        "registry",
+        "archive",
+        "device",
+        "sourcesDigest",
+        "verifiedAt",
+        "expiresAt",
+        "registryStart"
+      ],
+      "additionalProperties": false
+    },
+    "PrivateSourceIndexEntry": {
+      "type": "object",
+      "properties": {
+        "binding": {
+          "$ref": "#/$defs/ResourceBinding"
+        },
+        "state": {
+          "enum": ["active", "disconnected", "revoking"]
+        }
+      },
+      "required": ["binding", "state"],
+      "additionalProperties": false
+    },
+    "PrivateRegistryPage": {
+      "type": "object",
+      "properties": {
+        "contractVersion": {
+          "const": "folioview.agent-workspace.v2.0"
+        },
+        "profile": {
+          "const": "folioview.owner-registry-page.v1"
+        },
+        "ownerSubject": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "vaultId": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "rootKeyId": {
+          "$ref": "#/$defs/KeyId"
+        },
+        "base": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PrivateRegistryHead"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "target": {
+          "$ref": "#/$defs/PrivateRegistryHead"
+        },
+        "bundles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RegistryBundle"
+          },
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "contractVersion",
+        "profile",
+        "ownerSubject",
+        "vaultId",
+        "rootKeyId",
+        "base",
+        "target",
+        "bundles"
+      ],
+      "additionalProperties": false
+    },
+    "PrivateRegistryTransition": {
+      "type": "object",
+      "properties": {
+        "contractVersion": {
+          "const": "folioview.agent-workspace.v2.0"
+        },
+        "profile": {
+          "const": "folioview.owner-registry-transition.v1"
+        },
+        "ownerSubject": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "vaultId": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "rootKeyId": {
+          "$ref": "#/$defs/KeyId"
+        },
+        "operationId": {
+          "$ref": "#/$defs/OperationIdentifier"
+        },
+        "previousVaultVersion": {
+          "$ref": "#/$defs/PrivateResourceVersion"
+        },
+        "nextVaultVersion": {
+          "$ref": "#/$defs/PrivateResourceVersion"
+        },
+        "previousHead": {
+          "$ref": "#/$defs/PrivateRegistryHead"
+        },
+        "nextHead": {
+          "$ref": "#/$defs/PrivateRegistryHead"
+        },
+        "ownerKeyIds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/KeyId"
+          },
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true
+        },
+        "archive": {
+          "$ref": "#/$defs/PrivateArchiveBoundary"
+        },
+        "issuedAt": {
+          "$ref": "#/$defs/PrivateResourceTime"
+        }
+      },
+      "required": [
+        "contractVersion",
+        "profile",
+        "ownerSubject",
+        "vaultId",
+        "rootKeyId",
+        "operationId",
+        "previousVaultVersion",
+        "nextVaultVersion",
+        "previousHead",
+        "nextHead",
+        "ownerKeyIds",
+        "archive",
+        "issuedAt"
+      ],
+      "additionalProperties": false
+    },
+    "PrivateHistoryReference": {
+      "type": "object",
+      "properties": {
+        "contractVersion": {
+          "const": "folioview.agent-workspace.v2.0"
+        },
+        "profile": {
+          "const": "folioview.private-history-reference.v1"
+        },
+        "ownerSubject": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "vaultId": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "rootKeyId": {
+          "$ref": "#/$defs/KeyId"
+        },
+        "holderId": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "referenceId": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "purpose": {
+          "enum": [
+            "frozen_run",
+            "report",
+            "receipt",
+            "revocation",
+            "pending_write",
+            "recovery",
+            "offline_device",
+            "rollback",
+            "backup"
+          ]
+        },
+        "firstSequence": {
+          "$ref": "#/$defs/PrivateResourceVersion"
+        },
+        "lastSequence": {
+          "$ref": "#/$defs/PrivateResourceVersion"
+        },
+        "registryEpoch": {
+          "$ref": "#/$defs/PrivateResourceVersion"
+        }
+      },
+      "required": [
+        "contractVersion",
+        "profile",
+        "ownerSubject",
+        "vaultId",
+        "rootKeyId",
+        "holderId",
+        "referenceId",
+        "purpose",
+        "firstSequence",
+        "lastSequence",
+        "registryEpoch"
+      ],
+      "additionalProperties": false
+    },
+    "ReportSourceSnapshot": {
+      "type": "object",
+      "properties": {
+        "ownerSubject": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "vaultId": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReportSourceState"
+          },
+          "maxItems": 10,
+          "uniqueItems": true
+        }
+      },
+      "required": ["ownerSubject", "vaultId", "resources"],
+      "additionalProperties": false
+    },
+    "PrivateHistoryWatermark": {
+      "type": "object",
+      "properties": {
+        "ownerSubject": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "vaultId": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "rootKeyId": {
+          "$ref": "#/$defs/KeyId"
+        },
+        "registryEpoch": {
+          "$ref": "#/$defs/PrivateResourceVersion"
+        },
+        "generation": {
+          "$ref": "#/$defs/PrivateResourceVersion"
+        },
+        "committedThroughSequence": {
+          "$ref": "#/$defs/PrivateResourceTime"
+        }
+      },
+      "required": [
+        "ownerSubject",
+        "vaultId",
+        "rootKeyId",
+        "registryEpoch",
+        "generation",
+        "committedThroughSequence"
+      ],
+      "additionalProperties": false
+    },
+    "ReportSourceBinding": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/ResourceRef"
+        },
+        "sourceEpoch": {
+          "$ref": "#/$defs/PrivateResourceVersion"
+        },
+        "sourceRevision": {
+          "$ref": "#/$defs/PrivateResourceVersion"
+        }
+      },
+      "required": ["ref", "sourceEpoch", "sourceRevision"],
+      "additionalProperties": false
+    }
+  }
+}

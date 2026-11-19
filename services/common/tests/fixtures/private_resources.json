@@ -1,0 +1,138 @@
+{
+  "request": {
+    "contractVersion": "folioview.agent-workspace.v2.0",
+    "ownerSubject": "owner_A",
+    "vaultId": "vault_A",
+    "profile": "folioview.report-source-authorization.v1",
+    "purpose": "report_submit",
+    "connectionId": "connection_A",
+    "runId": "run_A",
+    "operationId": "synthetic_report_operation_0001",
+    "attemptId": "synthetic_report_attempt_0001",
+    "manifestFingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "reportFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "resources": [
+      {
+        "ref": {
+          "kind": "holdings",
+          "sourceService": "portfolio",
+          "resourceId": "holdings_A",
+          "incarnation": "incarnation_A"
+        },
+        "sourceEpoch": 3,
+        "sourceRevision": 2
+      },
+      {
+        "ref": {
+          "kind": "channel_follows",
+          "sourceService": "user",
+          "resourceId": "channels_A",
+          "incarnation": "incarnation_A"
+        },
+        "sourceEpoch": 1,
+        "sourceRevision": 1
+      }
+    ]
+  },
+  "snapshot": {
+    "ownerSubject": "owner_A",
+    "vaultId": "vault_A",
+    "resources": [
+      {
+        "binding": {
+          "ref": {
+            "kind": "holdings",
+            "sourceService": "portfolio",
+            "resourceId": "holdings_A",
+            "incarnation": "incarnation_A"
+          },
+          "sourceEpoch": 3
+        },
+        "state": "eligible",
+        "currentRevision": 3
+      },
+      {
+        "binding": {
+          "ref": {
+            "kind": "channel_follows",
+            "sourceService": "user",
+            "resourceId": "channels_A",
+            "incarnation": "incarnation_A"
+          },
+          "sourceEpoch": 1
+        },
+        "state": "eligible",
+        "currentRevision": 3
+      }
+    ]
+  },
+  "decision": {
+    "contractVersion": "folioview.agent-workspace.v2.0",
+    "profile": "folioview.report-source-authorization.v1",
+    "outcome": "allowed",
+    "requestDigest": "fca142bc57e1756bafb5b4d5956fe59c6ba59e03eed3fd1e5259f8f41bc7b7c2",
+    "decidedAt": 1000,
+    "expiresAt": 1030
+  },
+  "recovery": {
+    "contractVersion": "folioview.agent-workspace.v2.0",
+    "ownerSubject": "owner_A",
+    "vaultId": "vault_A",
+    "profile": "folioview.owner-recovery-evidence.v1",
+    "nonce": "synthetic_recovery_nonce_0001",
+    "deviceId": "device_A",
+    "deviceSigningKeyId": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+    "deviceEncryptionKeyId": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  },
+  "evidence": {
+    "contractVersion": "folioview.agent-workspace.v2.0",
+    "ownerSubject": "owner_A",
+    "vaultId": "vault_A",
+    "profile": "folioview.owner-recovery-evidence.v1",
+    "rootKeyId": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+    "requestDigest": "a5882c7b10a3eaed5585c3835871bc09b1a42aa24fb09349d36adb802bc077a3",
+    "vaultVersion": 30,
+    "registry": {
+      "registryEpoch": 1,
+      "registrySequence": 27,
+      "checkpointDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "keyEpoch": 4
+    },
+    "registryStart": null,
+    "archive": {
+      "state": "active",
+      "version": 3,
+      "digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    "device": "active",
+    "sourcesDigest": "74440d5804d8c263be33b254565b7be5a638e65259edb3568e05bf8e1aa69372",
+    "verifiedAt": 1000,
+    "expiresAt": 1060
+  },
+  "index": [
+    {
+      "binding": {
+        "ref": {
+          "kind": "holdings",
+          "sourceService": "portfolio",
+          "resourceId": "holdings_A",
+          "incarnation": "incarnation_A"
+        },
+        "sourceEpoch": 3
+      },
+      "state": "active"
+    },
+    {
+      "binding": {
+        "ref": {
+          "kind": "channel_follows",
+          "sourceService": "user",
+          "resourceId": "channels_A",
+          "incarnation": "incarnation_A"
+        },
+        "sourceEpoch": 1
+      },
+      "state": "active"
+    }
+  ]
+}
