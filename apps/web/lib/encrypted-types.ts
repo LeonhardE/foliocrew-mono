@@ -446,6 +446,7 @@ export type VaultLifecycleState = {
   archive: Archive | null;
   pendingAuthorization: Json | null;
   history: { command: Signed; receipt: Json }[];
+  originalCheckpoints?: Signed[];
 };
 export type VaultLifecyclePin = {
   ownerSubject: string;

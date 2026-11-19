@@ -433,6 +433,98 @@ test("an offline original device verifies the missing old pages before advancing
   });
 });
 
+test("the current Worker verifies original archive lifecycle controls against the signed prior chain", async () => {
+  await browser.withDatabase(async (db) => {
+    const { uid, h, material, vault, state, storage } = await initialize(db);
+    const owner = vault.archive.ownerSubject;
+    const core = new h.core.VaultCore(uid, () => 1000);
+    const record = await storage.get(owner + ":device:" + vault.vaultId);
+    await core.unlock(vault, material(), { device: record.device });
+    const { FlattenedSign } = await import("jose");
+    const history = [];
+    for (const [index, action] of ["recovery_authorize", "recovery_revoke"].entries()) {
+      const issuedAt = 900 + index;
+      const stableOperationId = "synthetic_old_archive_history_0" + index;
+      const payload = {
+        contractVersion: state.contractVersion,
+        profile: state.profile,
+        ownerSubject: owner,
+        vaultId: vault.vaultId,
+        rootKeyId: vault.rootKeyId,
+        action,
+        stableOperationId,
+        expectedVaultVersion: vault.version,
+        expectedLifecycleVersion: index,
+        expectedArchiveRevision: 0,
+        expectedArchiveDigest: state.archiveDigest,
+        registrySequence: state.registrySequence,
+        checkpointDigest: state.checkpointDigest,
+        keyEpoch: state.keyEpoch,
+        issuedAt,
+        expiresAt: 950 + index,
+        authorizationId: "synthetic_recovery_authorization",
+        ...(index === 0 ? { newArchiveDigest: "b".repeat(64) } : {}),
+      };
+      const command = await new FlattenedSign(new TextEncoder().encode(h.core.canonical(payload)))
+        .setProtectedHeader({
+          alg: "ES256",
+          kid: vault.rootKeyId,
+          typ: "fv-control+jws",
+          cty: "application/json",
+        })
+        .sign(core.root);
+      history.push({
+        command,
+        receipt: {
+          profile: state.profile,
+          ownerSubject: owner,
+          vaultId: vault.vaultId,
+          rootKeyId: vault.rootKeyId,
+          operationId: stableOperationId,
+          action,
+          lifecycleVersion: index + 1,
+          archiveRevision: 0,
+          archiveDigest: state.archiveDigest,
+          commandFingerprint: await h.core.signingFingerprint(command),
+          acceptedAt: issuedAt,
+        },
+      });
+    }
+    const previous = { ...state, history, lifecycleVersion: 2 };
+    await core.verifyLifecycle(vault, previous);
+    const review = await core.reviewUserRegistryTransition(previous);
+    const packet = await core.signUserRegistryTransition(review, material());
+    const { nextHead, archive } = decoded(packet.signedTransition);
+    const current = {
+      ...vault,
+      version: vault.version + 1,
+      registryHistory: [packet.firstBundle],
+      userAuthority: {
+        signedTransition: packet.signedTransition,
+        registryStart: nextHead,
+        registry: nextHead,
+        archive,
+        sourcesDigest: await h.core.sha(h.core.canonical([])),
+        sources: [],
+      },
+    };
+    const result = {
+      ...previous,
+      vaultVersion: current.version,
+      registrySequence: nextHead.registrySequence,
+      checkpointDigest: nextHead.checkpointDigest,
+      originalCheckpoints: [vault.registryHistory[0].checkpoint],
+    };
+    const reader = new h.core.VaultCore(uid, () => 1000);
+    await reader.unlockForResults(current, material());
+    assert.equal((await reader.verifyLifecycle(current, result)).lifecycleVersion, 2);
+    await assert.rejects(
+      reader.verifyLifecycle(current, { ...result, originalCheckpoints: [] }),
+      /untrusted_lifecycle/,
+    );
+  });
+});
+
 test("an uncertain handover resumes the original signed packet after lock", async () => {
   await browser.withDatabase(async (db) => {
     const { session, storage, state, uid, vault, material, h } = await initialize(db);

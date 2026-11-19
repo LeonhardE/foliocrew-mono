@@ -10,6 +10,7 @@ export const REGISTRY_UPDATE_PROFILE = "folioview.owner-registry-update.v1";
 export const HOLDINGS_REGISTRATION_PROFILE = "folioview.owner-holdings-registration.v1";
 export const OWNER_CURRENT_PROFILE = "folioview.owner-current-user-vault.v1";
 export const PRIVATE_DISPLAY_NAME_PROFILE = "folioview.private-display-name.v1";
+export const USER_ARCHIVE_LIFECYCLE_PROFILE = "folioview.owner-user-archive-lifecycle.v1";
 export const OWNER_CURRENT_PATH = "/api/v3/private-resources/vaults/current/read";
 
 const SCOPE = ["contractVersion", "profile", "ownerSubject", "vaultId"];
@@ -31,6 +32,10 @@ const RULES = {
     keys: [...SCOPE, "operationId", "signedTransition", "firstBundle"],
   },
   "registry-start/read": { profile: REGISTRY_START_PROFILE, keys: [...SCOPE, "nonce"] },
+  "archive-lifecycle/read": {
+    profile: USER_ARCHIVE_LIFECYCLE_PROFILE,
+    keys: [...SCOPE, "nonce", "operationId"],
+  },
   "registry/advance": {
     profile: REGISTRY_UPDATE_PROFILE,
     keys: [...SCOPE, "operationId", "expectedVaultVersion", "registryBundle"],
@@ -46,7 +51,7 @@ const RULES = {
 } as const;
 
 const ROUTE =
-  /^\/api\/v3\/private-resources\/vaults\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})\/(recovery-evidence|registry-pages\/read|handover\/check|handover|registry-start\/read|registry\/advance|display-names\/(?:read|write))$/;
+  /^\/api\/v3\/private-resources\/vaults\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})\/(recovery-evidence|registry-pages\/read|handover\/check|handover|registry-start\/read|registry\/advance|display-names\/(?:read|write)|archive-lifecycle\/read)$/;
 const HOLDINGS_ROUTE =
   /^\/api\/v3\/private-resources\/vaults\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})\/holdings-sources\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})$/;
 
