@@ -76,7 +76,7 @@ run "exact_pinned_hub_trust" {
   command = plan
   variables { hub_trust = { "USER_SERVICE_AUDIENCE" : "https://user-api-111222333444.us-central1.run.app", "USER_DELEGATION_AUDIENCE" : "https://user-api-111222333444.us-central1.run.app/internal/v2", "USER_DELEGATION_ISSUER" : "https://agent-hub-api-111222333444.us-central1.run.app", "USER_TRUSTED_HUB_CALLERS" : "{\"123456789012345678901\":\"alpha-hub-runtime@demo-user-alpha.iam.gserviceaccount.com\"}" } }
   assert {
-    condition     = local.hub_trust_environment == var.hub_trust && local.environment.USER_SERVICE_AUDIENCE == var.hub_trust.USER_SERVICE_AUDIENCE && local.environment.FIRESTORE_DATABASE == "(default)" && output.adoption_boundary.invoker_iam_disabled && output.adoption_boundary.service_max_instances == 1
+    condition     = local.hub_trust_environment == var.hub_trust && local.environment.USER_SERVICE_AUDIENCE == var.hub_trust.USER_SERVICE_AUDIENCE && local.environment.FIRESTORE_DATABASE == "user-data" && output.adoption_boundary.invoker_iam_disabled && output.adoption_boundary.service_max_instances == 1
     error_message = "User trust settings and adoption boundaries must match the explicit reviewed contract."
   }
 }

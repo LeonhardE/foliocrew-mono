@@ -9,7 +9,7 @@ locals {
   environment = merge({
     FIREBASE_PROJECT_ID     = local.project_id
     CORS_ORIGINS            = local.browser_cors_origins
-    FIRESTORE_DATABASE      = "(default)"
+    FIRESTORE_DATABASE      = "user-data"
     USER_STORE_BACKEND      = "firestore"
     USER_LIST_WRITES_PAUSED = "true"
     MARKET_API_BASE_URL     = var.deployment.market_origin

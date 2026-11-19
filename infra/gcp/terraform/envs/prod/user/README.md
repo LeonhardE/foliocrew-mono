@@ -89,11 +89,10 @@ named client-deny rules and scoped migration access before copying existing
 lists, resource versions or initialization receipts. The User runtime selects
 its current database until its separate write and rollback handoff.
 
-During final replication, the first User service plan adds
-`USER_LIST_WRITES_PAUSED=true` while still reading `(default)`. Verify current
-reads and receipt replay, and drain the previous request window before final
-reconciliation. Switching databases and restoring writes each use their own
-reviewed plan.
+The named database configuration uses `user-data` for existing list reads
+while the temporary write pause remains active. Apply after final
+reconciliation and verify existing authenticated reads before the separate
+plan resumes writes.
 
 ## Offline verification
 
