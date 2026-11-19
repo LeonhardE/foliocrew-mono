@@ -303,6 +303,9 @@ run "selected_owner_active" {
     condition = (
       local.environment.USER_PRIVATE_SELECTED_OWNER == var.private_rollout.owner_subject &&
       local.environment.USER_PRIVATE_OWNER_CURRENT == "true" &&
+      local.environment.USER_PRIVATE_ARCHIVE_WRITES == "true" &&
+      local.environment.USER_PRIVATE_KEY_RENEWALS == "true" &&
+      local.environment.USER_PRIVATE_ARCHIVE_REMOVALS == "true" &&
       local.environment.USER_PRIVATE_RESOURCE_DIRECTORY == "true" &&
       local.environment.USER_PRIVATE_SOURCE_INVALIDATIONS == "true" &&
       local.environment.USER_REPORT_SOURCE_DECISIONS == "true" &&
