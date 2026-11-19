@@ -11,11 +11,45 @@ from pathlib import Path
 
 import test_deployment_profile as profiles
 import test_web_owner_configuration as web
+from test_browser_origin_configuration import with_aliases
 
 profile, pipeline = profiles.profile, profiles.pipeline
 
 
 class ManagedWebOwnerTests(unittest.TestCase):
+    def test_server_only_user_stages_require_one_exact_account(self):
+        rollout = with_aliases()
+        rollout["webOwnerApis"] = {"portfolio": False, "agentHub": False, "userRecovery": True}
+        artifacts = profile.compile_web_owner_deployment_artifacts(rollout)
+        original = artifacts["deployment-config.candidate.json"]
+        for scope in (
+            {"FOLIOVIEW_USER_HANDOVER_OWNER": "a" * 64},
+            {"FOLIOVIEW_USER_CURRENT_OWNER": "a" * 64},
+            {"FOLIOVIEW_USER_HANDOVER_OWNER": "a" * 64, "FOLIOVIEW_USER_CURRENT_OWNER": "a" * 64},
+        ):
+            candidate = copy.deepcopy(original)
+            attachment = candidate["webOwner"]
+            attachment["server"]["environment"].update(scope)
+            attachment["public"]["serverConfigurationSha256"] = profile.digest(attachment["server"])
+            inputs = profile.terraform_inputs(candidate)
+            self.assertEqual({name: inputs["owner_environment"][name] for name in scope}, scope)
+            self.assertFalse(set(scope) & attachment["public"]["flags"].keys())
+        for extra in (
+            {"FOLIOVIEW_USER_HANDOVER_OWNER": "*"},
+            {"FOLIOVIEW_USER_HANDOVER_OWNER": "a" * 64, "FOLIOVIEW_USER_CURRENT_OWNER": "b" * 64},
+            {
+                "FOLIOVIEW_USER_HANDOVER_OWNER": "a" * 64,
+                "FOLIOVIEW_USER_OWNER_ENABLED": "false",
+                "FOLIOVIEW_USER_ORIGIN": "",
+            },
+        ):
+            candidate = copy.deepcopy(original)
+            attachment = candidate["webOwner"]
+            attachment["server"]["environment"].update(extra)
+            attachment["public"]["serverConfigurationSha256"] = profile.digest(attachment["server"])
+            with self.assertRaises(profile.ProfileError):
+                profile.terraform_inputs(candidate)
+
     def test_independent_flags_reuse_sidecars_and_existing_nine_build_fields(self):
         for portfolio, hub in [(False, False), (True, False), (False, True), (True, True)]:
             value = web.owner_profile(portfolio=portfolio, hub=hub)
