@@ -8,6 +8,7 @@ from .constants import CONTRACT_VERSION, MAX_CONTROL_BYTES, MAX_SAFE_INTEGER
 from .crypto import jwk_thumbprint, signing_input_fingerprint, verify_jws
 from .errors import ContractError
 from .jsonutil import b64url_decode, canonical_json, strict_json_loads
+from .private_resources import PrivateRegistryCursor
 from .schema import validate_schema
 
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
@@ -286,13 +287,25 @@ def legacy_archive_receipt(vault, payload, state, command, accepted_at):
 
 def verify_legacy_archive_history(vault, registry, row):
     """Verify legacy archive receipts against the original, independently verified registry head."""
+    return _checked_history(vault, registry, row, maximum_checkpoints=32)
+
+
+def verify_transferred_archive_history(vault, cursor, row):
+    """Verify original and current receipts against an independently verified User registry."""
+    if not isinstance(cursor, PrivateRegistryCursor) or cursor.registry_epoch != 2:
+        raise ContractError("authorization_unavailable")
+    # A transferred vault can retain 32 original entries and 129 current ones.
+    return _checked_history(vault, cursor.registry, row, maximum_checkpoints=161)
+
+
+def _checked_history(vault, registry, row, *, maximum_checkpoints):
     try:
-        return _verify_history(vault, registry, row)
+        return _verify_history(vault, registry, row, maximum_checkpoints)
     except (ContractError, KeyError, TypeError, ValueError, AttributeError, RecursionError):
         raise ContractError("authorization_unavailable") from None
 
 
-def _verify_history(vault, registry, row):
+def _verify_history(vault, registry, row, maximum_checkpoints):
     if not isinstance(registry, VerifiedRegistry) or (
         vault["ownerSubject"] != registry.owner_subject
         or vault["vaultId"] != registry.vault_id
@@ -343,7 +356,7 @@ def _verify_history(vault, registry, row):
     ):
         raise ContractError("authorization_unavailable")
     _digest(initial)
-    checkpoints = _verified_checkpoints(vault["registryHistory"], registry)
+    checkpoints = _verified_checkpoints(vault["registryHistory"], registry, maximum_checkpoints)
     for item in row["history"]:
         if type(item) is not dict or set(item) != {"command", "receipt"}:
             raise ContractError("authorization_unavailable")
@@ -384,10 +397,13 @@ def _digest_value(value):
     return hashlib.sha256(canonical_json(value)).hexdigest()
 
 
-def _verified_checkpoints(history, registry):
+def _verified_checkpoints(history, registry, maximum_checkpoints):
     # The verified current digest anchors all preceding canonical checkpoints.
     # It never elevates these archived certificate generations into live authority.
-    if type(history) is not list or not 1 <= len(history) == registry.registry_sequence <= 32:
+    if (
+        type(history) is not list
+        or not 1 <= len(history) == registry.registry_sequence <= maximum_checkpoints
+    ):
         raise ContractError("authorization_unavailable")
     expected_digest = registry.checkpoint_digest
     checkpoints = {}
