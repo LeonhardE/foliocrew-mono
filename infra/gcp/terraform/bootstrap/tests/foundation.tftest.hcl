@@ -501,6 +501,28 @@ run "user_data_provisions_the_exact_database" {
   }
 }
 
+run "user_private_payloads_are_exempt_from_indexes_without_retention_changes" {
+  command = plan
+
+  variables {
+    user_data_database_enabled = true
+  }
+
+  assert {
+    condition = (
+      toset(keys(google_firestore_field.user_private_opaque)) == toset(["recovery_view", "registry_entry"]) &&
+      google_firestore_field.user_private_opaque["recovery_view"].collection == "user_private_recovery_heads" &&
+      google_firestore_field.user_private_opaque["recovery_view"].field == "view" &&
+      google_firestore_field.user_private_opaque["registry_entry"].collection == "user_private_registry_history" &&
+      google_firestore_field.user_private_opaque["registry_entry"].field == "entry" &&
+      alltrue([for entry in google_firestore_field.user_private_opaque : (
+        entry.database == "user-data" && length(entry.index_config) == 1 && length(entry.ttl_config) == 0
+      )])
+    )
+    error_message = "Exclude the exact opaque recovery fields from indexing and preserve their retention."
+  }
+}
+
 run "user_execution_business_roles_cannot_create_delete_or_administer_resources" {
   command = plan
 
