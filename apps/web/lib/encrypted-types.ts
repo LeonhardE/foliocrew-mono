@@ -32,7 +32,7 @@ export type UserVaultProof = {
   registry: import("./encrypted-user-recovery").PrivateRegistryHead;
   registryStart: import("./encrypted-user-recovery").PrivateRegistryHead;
   signedTransition: Signed;
-  archive: { state: "active"; version: number; digest: string };
+  archive: { state: "active" | "deleted"; version: number; digest: string };
   archiveLifecycle?: { state: VaultLifecycleState; originalCheckpoints: Signed[] };
   sourcesDigest: string;
   sources: {

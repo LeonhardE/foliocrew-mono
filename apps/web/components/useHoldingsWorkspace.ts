@@ -79,6 +79,8 @@ import type {
   DeviceChangePacket,
   VaultLifecycleState,
   ArchiveChangePacket,
+  ArchiveWithdrawalPacket,
+  ArchiveDeletionPacket,
   KeyRenewalSummary,
   KeyRenewalPacket,
   SourceMutationAction,
@@ -386,6 +388,13 @@ function mutationReceipt(
     throw new WorkspaceError("invalid_response");
   return value as SourceMutationReceipt;
 }
+async function userArchiveOwner(uid: string | null | undefined, vault?: Vault) {
+  if (vault?.archive) return vault.archive.ownerSubject;
+  if (!uid) throw new WorkspaceError("unlock_required");
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(uid));
+  return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 function aggregate(value: unknown): { vault: Vault | null; sources: Source[] } {
   if (
     !record(value) ||
@@ -824,10 +833,7 @@ export function useHoldingsWorkspace() {
   const readCurrent = useCallback(
     async (signal: AbortSignal) => {
       if (uid && auth.ownerCapabilities?.userVault) {
-        const ownerSubject = Array.from(
-          new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(uid))),
-          (byte) => byte.toString(16).padStart(2, "0"),
-        ).join("");
+        const ownerSubject = await userArchiveOwner(uid);
         const nonce = crypto.randomUUID().replace(/-/g, "");
         const current = await api("user", OWNER_CURRENT_PATH, signal, {
           method: "POST",
@@ -866,7 +872,7 @@ export function useHoldingsWorkspace() {
   const readUserArchive = useCallback(
     async (vault: Vault, signal: AbortSignal, operationId: string | null) => {
       const nonce = crypto.randomUUID().replace(/-/g, "");
-      const ownerSubject = requireArchive(vault.archive).ownerSubject;
+      const ownerSubject = await userArchiveOwner(uid, vault);
       const value = await api(
         "user",
         `/api/v3/private-resources/vaults/${vault.vaultId}/archive-lifecycle/read`,
@@ -897,7 +903,7 @@ export function useHoldingsWorkspace() {
         throw new WorkspaceError("invalid_response");
       return value;
     },
-    [api],
+    [api, uid],
   );
   const readLifecycle = useCallback(
     async (vault: Vault, signal: AbortSignal): Promise<VaultLifecycleState> => {
@@ -956,7 +962,6 @@ export function useHoldingsWorkspace() {
         });
         return;
       }
-      if (!vault.archive) throw new WorkspaceError("invalid_response");
       await api(
         "user",
         `/api/v3/private-resources/vaults/${vault.vaultId}/archive-lifecycle/advance`,
@@ -966,7 +971,7 @@ export function useHoldingsWorkspace() {
           json: {
             contractVersion: CONTRACT,
             profile: USER_ARCHIVE_LIFECYCLE_PROFILE,
-            ownerSubject: vault.archive.ownerSubject,
+            ownerSubject: await userArchiveOwner(uid, vault),
             vaultId: vault.vaultId,
             nonce: crypto.randomUUID().replace(/-/g, ""),
             operationId,
@@ -976,7 +981,7 @@ export function useHoldingsWorkspace() {
         },
       );
     },
-    [api],
+    [api, uid],
   );
 
   const liveSession = useCallback(
@@ -1542,6 +1547,62 @@ export function useHoldingsWorkspace() {
     [api, liveSession, sync],
   );
 
+  const archiveRemovalRequest = useCallback(
+    async (
+      vault: Vault,
+      action: "check" | "delete" | "withdraw",
+      packet: ArchiveDeletionPacket | ArchiveWithdrawalPacket,
+      signal: AbortSignal,
+    ) => {
+      if (!vault.userAuthority) {
+        const route = {
+          check: "archive-deletion-checks",
+          delete: "archive-deletions",
+          withdraw: "archive-deletion-withdrawals",
+        }[action];
+        return api("agent-hub", `/api/v2/vaults/${vault.vaultId}/${route}`, signal, {
+          method: "POST",
+          json: packet.body,
+          ...(action === "check" ? {} : { headers: { "Idempotency-Key": packet.operationId } }),
+        });
+      }
+      const ownerSubject = await userArchiveOwner(uid, vault),
+        nonce = crypto.randomUUID().replace(/-/g, "");
+      const scoped = await api(
+        "user",
+        `/api/v3/private-resources/vaults/${vault.vaultId}/archive-lifecycle/removal`,
+        signal,
+        {
+          method: "POST",
+          json: {
+            contractVersion: CONTRACT,
+            profile: USER_ARCHIVE_LIFECYCLE_PROFILE,
+            ownerSubject,
+            vaultId: vault.vaultId,
+            nonce,
+            operationId: packet.operationId,
+            action,
+            command: packet.body.command,
+            deletionCommand: "deletionCommand" in packet.body ? packet.body.deletionCommand : null,
+          },
+        },
+      );
+      if (
+        !record(scoped) ||
+        scoped.contractVersion !== CONTRACT ||
+        scoped.profile !== USER_ARCHIVE_LIFECYCLE_PROFILE ||
+        scoped.ownerSubject !== ownerSubject ||
+        scoped.vaultId !== vault.vaultId ||
+        scoped.nonce !== nonce ||
+        scoped.operationId !== packet.operationId ||
+        !record(scoped.result)
+      )
+        throw new WorkspaceError("invalid_response");
+      return scoped.result;
+    },
+    [api, uid],
+  );
+
   const reconcileArchiveDeletion = useCallback(
     async (
       initial: { vault: Vault | null; sources: Source[] },
@@ -1623,11 +1684,11 @@ export function useHoldingsWorkspace() {
             withdrawalPending: Boolean(pending.withdrawal),
           },
         }));
-        const checked = await api(
-          "agent-hub",
-          `/api/v2/vaults/${snapshot.vault.vaultId}/archive-deletion-checks`,
+        const checked = await archiveRemovalRequest(
+          snapshot.vault,
+          "check",
+          pending.packet,
           signal,
-          { method: "POST", json: pending.packet.body },
         );
         assertActive();
         if (
@@ -1660,7 +1721,7 @@ export function useHoldingsWorkspace() {
       }
       throw new WorkspaceError("archive_deletion_unknown");
     },
-    [api, owner, uid, readCurrent, readLifecycle, terminate],
+    [archiveRemovalRequest, owner, uid, readCurrent, readLifecycle, terminate],
   );
 
   const unlock = useCallback(
@@ -4052,16 +4113,7 @@ export function useHoldingsWorkspace() {
         }));
         let failure: unknown;
         try {
-          await api(
-            "agent-hub",
-            `/api/v2/vaults/${fresh.vault.vaultId}/archive-deletions`,
-            signal,
-            {
-              method: "POST",
-              json: packet.body,
-              headers: { "Idempotency-Key": packet.operationId },
-            },
-          );
+          await archiveRemovalRequest(fresh.vault, "delete", packet, signal);
         } catch (error) {
           failure = error;
         }
@@ -4084,7 +4136,7 @@ export function useHoldingsWorkspace() {
       managementGeneration,
       readCurrent,
       readLifecycle,
-      api,
+      archiveRemovalRequest,
       reconcileArchiveDeletion,
     ],
   );
@@ -4127,15 +4179,11 @@ export function useHoldingsWorkspace() {
         if (found.outcome === "unresolved") {
           const packet = found.withdrawal ?? found.packet;
           try {
-            await api(
-              "agent-hub",
-              `/api/v2/vaults/${fresh.vault.vaultId}/${found.withdrawal ? "archive-deletion-withdrawals" : "archive-deletions"}`,
+            await archiveRemovalRequest(
+              fresh.vault,
+              found.withdrawal ? "withdraw" : "delete",
+              packet,
               signal,
-              {
-                method: "POST",
-                json: packet.body,
-                headers: { "Idempotency-Key": packet.operationId },
-              },
             );
           } catch (error) {
             failure = error;
@@ -4152,7 +4200,16 @@ export function useHoldingsWorkspace() {
         if (outcome === "unresolved")
           throw failure ?? new WorkspaceError("archive_deletion_unknown");
       }),
-    [perform, uid, owner, terminate, readCurrent, readLifecycle, api, reconcileArchiveDeletion],
+    [
+      perform,
+      uid,
+      owner,
+      terminate,
+      readCurrent,
+      readLifecycle,
+      archiveRemovalRequest,
+      reconcileArchiveDeletion,
+    ],
   );
 
   const withdrawArchiveDeletion = useCallback(
@@ -4194,16 +4251,7 @@ export function useHoldingsWorkspace() {
           assertActive();
           let failure: unknown;
           try {
-            await api(
-              "agent-hub",
-              `/api/v2/vaults/${latest.vault.vaultId}/archive-deletion-withdrawals`,
-              signal,
-              {
-                method: "POST",
-                json: packet.body,
-                headers: { "Idempotency-Key": packet.operationId },
-              },
-            );
+            await archiveRemovalRequest(latest.vault, "withdraw", packet, signal);
           } catch (error) {
             failure = error;
           }
@@ -4221,7 +4269,16 @@ export function useHoldingsWorkspace() {
           if (material.secret.byteLength) new Uint8Array(material.secret).fill(0);
         }
       }),
-    [perform, uid, owner, terminate, readCurrent, readLifecycle, api, reconcileArchiveDeletion],
+    [
+      perform,
+      uid,
+      owner,
+      terminate,
+      readCurrent,
+      readLifecycle,
+      archiveRemovalRequest,
+      reconcileArchiveDeletion,
+    ],
   );
 
   const changePasskey = useCallback(

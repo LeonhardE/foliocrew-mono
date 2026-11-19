@@ -616,6 +616,87 @@ test("a cold User vault verifies a new Passkey against its signed archive contin
   });
 });
 
+test("a transferred vault shows deletion only after its exact signed removal and supports recovery", async () => {
+  await browser.withDatabase(async (db) => {
+    const { session, uid, h, material, vault, state } = await initialize(db);
+    await session.verifyLifecycle(vault, state);
+    const review = await session.reviewUserRegistryTransition(state);
+    const handover = await session.stageUserHandover(vault, review, material());
+    const { nextHead, archive } = decoded(handover.signedTransition);
+    const original = {
+      ...vault,
+      version: vault.version + 1,
+      registryHistory: [handover.firstBundle],
+      userAuthority: {
+        signedTransition: handover.signedTransition,
+        registryStart: nextHead,
+        registry: nextHead,
+        archive,
+        sources: [],
+        sourcesDigest: await h.core.sha(h.core.canonical([])),
+      },
+    };
+    const stateAfterHandover = await lifecycleState(h, { vault: original });
+    const rootOwner = new h.core.VaultCore(uid, () => 1000);
+    await rootOwner.unlock(original, material());
+    const kit = await rootOwner.createRecoveryKit(original, stateAfterHandover);
+    const { packet, record } = await rootOwner.prepareArchiveDeletion(original, stateAfterHandover);
+    const command = packet.body.command;
+    const digest = await h.core.sha(h.core.canonical(null));
+    const receipt = {
+      profile: stateAfterHandover.profile,
+      ownerSubject: original.archive.ownerSubject,
+      vaultId: original.vaultId,
+      rootKeyId: original.rootKeyId,
+      operationId: packet.operationId,
+      action: "archive_delete",
+      lifecycleVersion: 1,
+      archiveRevision: 1,
+      archiveDigest: digest,
+      commandFingerprint: await h.core.signingFingerprint(command),
+      acceptedAt: 1000,
+    };
+    const deletedState = {
+      ...stateAfterHandover,
+      archive: null,
+      archiveDigest: digest,
+      lifecycleVersion: 1,
+      archiveRevision: 1,
+      history: [{ command, receipt }],
+    };
+    const deleted = {
+      ...original,
+      archive: null,
+      userAuthority: {
+        ...original.userAuthority,
+        archive: { state: "deleted", version: 2, digest },
+        archiveLifecycle: { state: deletedState, originalCheckpoints: [] },
+      },
+    };
+    const fresh = new h.core.VaultCore(uid, () => 1000);
+    await assert.rejects(fresh.unlock(deleted, material()), /archive_deleted/);
+    assert.equal(
+      (await fresh.inspectArchiveDeletion(deleted, deletedState, record)).outcome,
+      "deleted",
+    );
+    await fresh.importRecoveryKit(deleted, deletedState, kit.file, kit.code);
+
+    const incomplete = structuredClone(deleted);
+    delete incomplete.userAuthority.archiveLifecycle;
+    await assert.rejects(
+      new h.core.VaultCore(uid, () => 1000).verifyLifecycle(incomplete, deletedState),
+      /registry_conflict/,
+    );
+    const foreign = structuredClone(deleted);
+    foreign.userAuthority.archiveLifecycle.state.history[0].receipt.operationId =
+      "foreign_synthetic_operation";
+    await assert.rejects(
+      new h.core.VaultCore(uid, () => 1000).verifyLifecycle(foreign, deletedState),
+      /untrusted_lifecycle/,
+    );
+  });
+});
+
 test("an uncertain handover resumes the original signed packet after lock", async () => {
   await browser.withDatabase(async (db) => {
     const { session, storage, state, uid, vault, material, h } = await initialize(db);

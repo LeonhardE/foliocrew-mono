@@ -116,6 +116,15 @@ function validRequest(
   }
   if (rule.profile === USER_ARCHIVE_LIFECYCLE_PROFILE) {
     if (!matches(value.nonce, NONCE)) return false;
+    if (rule.keys.includes("action"))
+      return (
+        matches(value.operationId, NONCE) &&
+        ["check", "delete", "withdraw"].includes(String(value.action)) &&
+        signedObject(value.command) &&
+        (value.action === "withdraw"
+          ? signedObject(value.deletionCommand)
+          : value.deletionCommand === null)
+      );
     if (rule.keys.includes("command"))
       return (
         matches(value.operationId, NONCE) &&
@@ -181,7 +190,7 @@ function validEvidence(value: unknown, expectedDigest: string) {
     integer(value.vaultVersion, 1) &&
     head(value.registry) &&
     (value.registryStart === null || head(value.registryStart)) &&
-    activeArchive(value.archive) &&
+    archiveBoundary(value.archive) &&
     value.device === "active" &&
     matches(value.sourcesDigest, DIGEST) &&
     integer(value.verifiedAt, 0) &&
@@ -191,10 +200,10 @@ function validEvidence(value: unknown, expectedDigest: string) {
   );
 }
 
-function activeArchive(value: unknown) {
+function archiveBoundary(value: unknown, state: "active" | "deleted" = "active") {
   return (
     fields(value, ["state", "version", "digest"]) &&
-    value.state === "active" &&
+    value.state === state &&
     integer(value.version, 1) &&
     matches(value.digest, DIGEST)
   );
@@ -293,7 +302,7 @@ function validRegistryStart(value: Json, input: Json) {
     ]) &&
     value.nonce === input.nonce &&
     integer(value.vaultVersion, 2) &&
-    activeArchive(value.archive) &&
+    archiveBoundary(value.archive) &&
     head(value.registry) &&
     head(value.registryStart) &&
     value.registryStart.registryEpoch === 2 &&
@@ -433,8 +442,9 @@ function validReply(body: unknown, input: Json, expectedDigest: string) {
       body.vault.registryHistory.length < 1 ||
       body.vault.registryHistory.length > 129 ||
       !body.vault.registryHistory.every(registryBundle) ||
-      !archiveEnvelope(body.vault.archive, input.ownerSubject, body.vault.vaultId) ||
-      body.vault.archive.rootKeyId !== body.vault.rootKeyId ||
+      (body.vault.archive !== null &&
+        (!archiveEnvelope(body.vault.archive, input.ownerSubject, body.vault.vaultId) ||
+          body.vault.archive.rootKeyId !== body.vault.rootKeyId)) ||
       !record(body.proof) ||
       !fields(body.proof, [
         "registry",
@@ -455,7 +465,6 @@ function validReply(body: unknown, input: Json, expectedDigest: string) {
         !fields(body.proof.archive, ["state", "version", "digest"]) ||
         Number(continuation.state.lifecycleVersion) + 1 !== body.proof.archive.version ||
         continuation.state.archiveDigest !== body.proof.archive.digest ||
-        !record(continuation.state.archive) ||
         canonicalize(continuation.state.archive) !== canonicalize(body.vault.archive)
       )
         return false;
@@ -465,7 +474,10 @@ function validReply(body: unknown, input: Json, expectedDigest: string) {
       head(body.proof.registryStart) &&
       body.proof.registryStart.registryEpoch === 2 &&
       body.proof.registry.registryEpoch === 2 &&
-      activeArchive(body.proof.archive) &&
+      (body.vault.archive === null
+        ? Object.hasOwn(body.proof, "archiveLifecycle") &&
+          archiveBoundary(body.proof.archive, "deleted")
+        : archiveBoundary(body.proof.archive)) &&
       signedObject(body.proof.signedTransition) &&
       matches(body.proof.sourcesDigest, DIGEST) &&
       Array.isArray(body.proof.sources) &&
@@ -522,6 +534,48 @@ function validReply(body: unknown, input: Json, expectedDigest: string) {
         (item) =>
           record(item) && record(item.state) && item.state.ownerSubject === input.ownerSubject,
       )
+    );
+  }
+  if (input.profile === USER_ARCHIVE_LIFECYCLE_PROFILE && Object.hasOwn(input, "action")) {
+    if (
+      !fields(body, [
+        "contractVersion",
+        "profile",
+        "ownerSubject",
+        "vaultId",
+        "nonce",
+        "operationId",
+        "result",
+      ]) ||
+      body.contractVersion !== CONTRACT ||
+      body.profile !== input.profile ||
+      body.ownerSubject !== input.ownerSubject ||
+      body.vaultId !== input.vaultId ||
+      body.nonce !== input.nonce ||
+      body.operationId !== input.operationId ||
+      !record(body.result) ||
+      body.result.contractVersion !== CONTRACT ||
+      body.result.profile !== "folioview.vault-lifecycle.v1" ||
+      !record(input.command)
+    )
+      return false;
+    const fingerprint = digest(input.command.protected + "." + input.command.payload);
+    if (input.action === "check")
+      return (
+        body.result.vaultId === input.vaultId &&
+        body.result.operationId === input.operationId &&
+        body.result.commandFingerprint === fingerprint &&
+        ["unresolved", "deleted", "withdrawn", "superseded"].includes(String(body.result.outcome))
+      );
+    return (
+      fields(body.result, ["contractVersion", "profile", "receipt"]) &&
+      record(body.result.receipt) &&
+      body.result.receipt.ownerSubject === input.ownerSubject &&
+      body.result.receipt.vaultId === input.vaultId &&
+      body.result.receipt.operationId === input.operationId &&
+      body.result.receipt.commandFingerprint === fingerprint &&
+      body.result.receipt.action ===
+        (input.action === "delete" ? "archive_delete" : "archive_delete_withdraw")
     );
   }
   if (input.profile === USER_ARCHIVE_LIFECYCLE_PROFILE) {
