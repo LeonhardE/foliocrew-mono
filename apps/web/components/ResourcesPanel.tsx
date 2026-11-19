@@ -154,7 +154,8 @@ export function SourceManagement({ model }: { model: HoldingsWorkspace }) {
     Boolean(model.hasPending || model.sourceMutation || model.sourceCreationId) ||
     !model.canWriteState;
   const selected = model.selectedSourceId ?? sources.at(-1)?.resourceRef.resourceId ?? "";
-  if (!sources.length && !model.newSource && !model.sourceCreationId) return null;
+  if (!sources.length && !model.newSource && !model.sourceCreationId && !model.sourceMutation)
+    return null;
   return (
     <section className={styles.sourceManagement} aria-labelledby="holdings-management-title">
       <h3 id="holdings-management-title">{t("lifecycle.title")}</h3>

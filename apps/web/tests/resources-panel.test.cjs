@@ -375,8 +375,9 @@ test("loaded source captions use actual manual or imported content and keep sele
       render({ ...managed, content: manual }, locale).includes(messages.editing.manualSource),
     );
     assert.match(render({ ...managed, content }, locale), /<p class="note">Wealthsimple/);
+    assert.ok(render({ ...managed, content }, locale).includes(messages.lifecycle.settings));
     assert.ok(
-      render({ ...managed, sourceMetadata: null }, locale).includes(messages.lifecycle.settings),
+      !render({ ...managed, sourceMetadata: null }, locale).includes(messages.lifecycle.settings),
     );
   }
 });

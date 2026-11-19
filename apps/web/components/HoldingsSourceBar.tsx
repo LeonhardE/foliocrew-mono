@@ -4,7 +4,7 @@ import { useLocale, useTranslations } from "next-intl";
 import type { HoldingsWorkspace } from "./useHoldingsWorkspace";
 import type { DisplayNamesModel } from "./useDisplayNames";
 import type { ResourceLibraryModel } from "./useResourceLibrary";
-import type { ResourceSelection } from "@/lib/resource-library";
+import type { ResourceRef, ResourceSelection } from "@/lib/resource-library";
 import { useTasks } from "./useTasks";
 import { ReportDialog } from "./ReportDialog";
 import { InlineError, LoadingIndicator } from "./WorkspaceFeedback";
@@ -96,27 +96,57 @@ export function HoldingsSourceBar({
     [draft, setDraft] = useState(""),
     [discardName, setDiscardName] = useState(false);
   const sources = model.sources ?? [];
-  const items = library.catalogue.data?.groups.find((group) => group.kind === "holdings")?.items;
+  const catalogue = library.catalogue;
+  const group = catalogue.data?.groups.find((item) => item.kind === "holdings");
+  const items = !catalogue.stale && !catalogue.error ? group?.items : undefined;
   const requested =
-    sources.find((s) => s.resourceRef.resourceId === model.selectedSourceId) ??
+    sources.find((source) => source.resourceRef.resourceId === model.selectedSourceId) ??
     (!model.newSource ? sources.at(-1) : undefined);
-  const deleted =
-    model.sourceMetadata?.state === "deleted"
-      ? model.sourceMetadata.source?.resourceRef
-      : undefined;
-  const rows = sources.filter((source) => {
-    if (source === requested && model.sourceMutation?.action === "delete") return true;
-    const { resourceId, incarnation } = source.resourceRef;
-    return (
-      !(deleted?.resourceId === resourceId && deleted.incarnation === incarnation) &&
-      !items?.some(
-        (item) =>
-          item.state === "deleted" &&
-          item.ref?.resourceId === resourceId &&
-          item.ref.incarnation === incarnation,
-      )
-    );
+  const metadata = model.sourceMetadata;
+  const sameIncarnation = (left: ResourceRef | undefined | null, right: ResourceRef) =>
+    left?.kind === right.kind &&
+    left.sourceService === right.sourceService &&
+    left.resourceId === right.resourceId &&
+    left.incarnation === right.incarnation;
+  const states = sources.map((source) => {
+    const receipt = group?.items.find((entry) => sameIncarnation(entry.ref, source.resourceRef));
+    const item = items ? receipt : undefined;
+    const direct = sameIncarnation(metadata?.source?.resourceRef, source.resourceRef)
+      ? metadata
+      : null;
+    if (
+      receipt?.state === "deleted" ||
+      direct?.state === "deleted" ||
+      (source === requested && model.sourceMutation?.action === "delete")
+    )
+      return { source, state: "deleted" };
+    // The vault stores registration anchors, including deleted ones. An
+    // anchor is never enough to offer a selectable source on a cold load.
+    if (item?.sourceEpoch != null && item.sourceEpoch >= source.sourceEpoch)
+      return { source, state: item.state };
+    if (direct && direct.source.sourceEpoch >= source.sourceEpoch)
+      return { source, state: direct.state };
+    return { source, state: null };
   });
+  const rows = states
+    .filter(
+      ({ state }) =>
+        state !== null &&
+        ["active", "ready", "empty", "revoking", "disconnected", "pending"].includes(state),
+    )
+    .map(({ source }) => source);
+  const unchecked = states.some(({ state }) => state === null || state === "unavailable");
+  const checking =
+    unchecked && !library.offline && !catalogue.error && (catalogue.loading || !catalogue.data);
+  const unavailable =
+    unchecked &&
+    !checking &&
+    (library.offline ||
+      catalogue.stale ||
+      Boolean(catalogue.error) ||
+      group?.status === "partial" ||
+      group?.status === "unavailable" ||
+      states.some(({ state }) => state === "unavailable"));
   const selected = requested && rows.includes(requested) ? requested : undefined;
   const selectedRef = selected?.resourceRef;
   const selectedKey = selectedRef
@@ -127,11 +157,7 @@ export function HoldingsSourceBar({
     ? (names.name(selectedRef) ?? t("lifecycle.source", { number: sources.indexOf(selected!) + 1 }))
     : t("lifecycle.new");
   const sourceItem = selectedRef
-    ? items?.find(
-        (item) =>
-          item.ref?.resourceId === selectedRef.resourceId &&
-          item.ref.incarnation === selectedRef.incarnation,
-      )
+    ? items?.find((item) => sameIncarnation(item.ref, selectedRef))
     : undefined;
   const operationBlocked = Boolean((model.busy && model.busy !== "reading") || names.busy);
   const blocked = operationBlocked || Boolean(model.preview);
@@ -170,6 +196,12 @@ export function HoldingsSourceBar({
               ))}
             </select>
           </label>
+        ) : checking ? (
+          <LoadingIndicator busy label={t("loading")} />
+        ) : unavailable ? (
+          <p className={styles.warning} role="status">
+            {t("lifecycle.sourcesUnavailable")}
+          </p>
         ) : (
           <p className={styles.note}>{t("lifecycle.empty")}</p>
         )}
@@ -178,8 +210,11 @@ export function HoldingsSourceBar({
           <button
             type="button"
             className={styles.secondary}
-            disabled={blocked}
-            onClick={() => void model.readStored()}
+            disabled={blocked || library.offline}
+            onClick={() => {
+              if (unchecked && !selected) void library.reload("catalogue");
+              else void model.readStored();
+            }}
           >
             {t("manage.refresh")}
           </button>
@@ -240,7 +275,7 @@ export function HoldingsSourceBar({
           {t("manage.finishPending")}
         </button>
       )}
-      {model.sourceCreationId && !selected && children}
+      {(model.sourceCreationId || model.sourceMutation) && !selected && children}
       <ReportDialog
         id="holdings-source-settings"
         open={settings && model.phase === "unlocked" && Boolean(selectedRef)}
