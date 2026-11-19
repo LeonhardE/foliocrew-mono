@@ -1,5 +1,6 @@
 /** Trusted browser worker crypto. No network, logging, or plaintext persistence. */
 import {
+  Registry as SharedRegistry,
   createRegistryCertificateVerifier,
   markdownDestinations,
 } from "../../../packages/encrypted-workspace/dist/core.mjs";
@@ -3626,6 +3627,80 @@ export class VaultCore {
     return { first, prior, originalArchive };
   }
 
+  private async verifiedRegistryPrefix(
+    vault: Vault,
+    bundles: RegistryBundle[],
+    at: number,
+  ): Promise<Registry[]> {
+    if (bundles.length < 1 || bundles.length > (vault.userAuthority ? 129 : 32))
+      throw new VaultError("registry_conflict");
+    const snapshot = structuredClone(bundles);
+    const owner = await this.owner;
+    const verify = await registryBundleVerifier(vault.rootJwk);
+    const history: Registry[] = [];
+    if (vault.userAuthority) {
+      if (!equal(snapshot[0], vault.registryHistory[0])) throw new VaultError("registry_conflict");
+      const { first } = await this.verifyUserVaultStart(vault, owner, verify);
+      if (first.checkpoint.issuedAt > at) throw new VaultError("registry_conflict");
+      history.push(first);
+    }
+    for (const bundle of snapshot.slice(history.length)) {
+      const previous = history.at(-1);
+      const current = await verify(bundle, owner, vault.vaultId, previous, at);
+      if (!previous && current.checkpoint.registrySequence !== 1)
+        throw new VaultError("registry_conflict");
+      history.push(current);
+    }
+    return history;
+  }
+
+  private registryIndex(vault: Vault, sequence: number) {
+    const start = vault.userAuthority?.registryStart.registrySequence ?? 1;
+    const index = sequence - start;
+    if (!Number.isSafeInteger(index) || index < 0 || index >= vault.registryHistory.length)
+      throw new VaultError("untrusted_vault");
+    return index;
+  }
+
+  private async registryAt(vault: Vault, sequence: number) {
+    const prefix = vault.registryHistory.slice(0, this.registryIndex(vault, sequence) + 1);
+    return (await this.verifiedRegistryPrefix(vault, prefix, this.now())).at(-1)!;
+  }
+
+  private async persistentUserRegistry(vault: Vault, bundles: RegistryBundle[], at: number) {
+    const history = await this.verifiedRegistryPrefix(vault, bundles, at);
+    const last = history.at(-1)!;
+    const registry = new SharedRegistry({
+      ownerSubject: await this.owner,
+      vaultId: vault.vaultId,
+      rootJwk: vault.rootJwk,
+      rootKeyId: vault.rootKeyId,
+      rootEpoch: 1,
+      registrySequence: last.checkpoint.registrySequence,
+      checkpointDigest: last.digest,
+    });
+    for (const entry of history) {
+      const cp = entry.checkpoint;
+      const current = {
+        keys: new Map(
+          [...entry.certificates].map(([id, cert]) => [
+            id,
+            { ...cert, active: entry.active.has(id) },
+          ]),
+        ),
+        revoked: new Set<string>(cp.revokedKeyIds),
+        digest: entry.digest,
+        keyEpoch: cp.keyEpoch,
+        issuedAt: cp.issuedAt,
+      };
+      registry.sequence = cp.registrySequence;
+      registry.history.set(cp.registrySequence, entry.digest);
+      registry.snapshots.set(cp.registrySequence, { ...current, localEpochs: entry.localEpochs });
+      registry.current = current;
+    }
+    return registry;
+  }
+
   private originalBridgePage(bridge: OriginalRegistryBridge): {
     id: string;
     request: import("./encrypted-user-recovery").OwnerRegistryPageRequest;
@@ -6011,15 +6086,19 @@ export class VaultCore {
       validate("Identifier", actor.connectionId);
       validate("Identifier", actor.clientId);
     }
+    const vault = this.vault;
     return new PersistentOwner({
       actor,
       ownerSubject: await this.owner,
-      vault: this.vault,
+      vault,
       root: this.root,
       deviceSigningKey: this.device?.sig as CryptoKey,
       deviceSigningKeyId: this.device?.sigId ?? "",
       now: this.now,
       reader: (ids) => this.reader(ids),
+      userRegistry: vault.userAuthority
+        ? (bundles, at) => this.persistentUserRegistry(vault, bundles, at)
+        : undefined,
     });
   }
   private async persistentLocal(packet: Json) {
@@ -6696,13 +6775,8 @@ export class VaultCore {
     const current = await this.checkVault(currentVault, this.pin);
     if (
       current.checkpoint.registrySequence <= command.registrySequence ||
-      (await sha(
-        canonical(
-          parsed(
-            unb64(currentVault.registryHistory[command.registrySequence - 1].checkpoint.payload),
-          ),
-        ),
-      )) !== command.checkpointDigest
+      (await this.registryAt(currentVault, command.registrySequence)).digest !==
+        command.checkpointDigest
     )
       throw new VaultError("binding_mismatch");
     bounded(sources, 16384);
@@ -6781,22 +6855,8 @@ export class VaultCore {
     validate("ControlCommandPayload", command);
     if (command.ownerSubject !== (await this.owner) || command.vaultId !== vault.vaultId)
       throw new VaultError("binding_mismatch");
-    let historical: Registry | undefined;
-    const privateHistory4 = structuredClone(vault.registryHistory);
-    const verifyHistoryBundle4 = await registryBundleVerifier(vault.rootJwk);
-    for (let i = 0; i < command.registrySequence; i++) {
-      if (!privateHistory4[i]) throw new VaultError("untrusted_vault");
-      historical = await verifyHistoryBundle4(
-        privateHistory4[i],
-        await this.owner,
-        vault.vaultId,
-        historical,
-        this.now(),
-      );
-      if (historical.checkpoint.registrySequence !== i + 1) throw new VaultError("untrusted_vault");
-    }
+    const historical = await this.registryAt(vault, command.registrySequence);
     if (
-      !historical ||
       historical.digest !== command.checkpointDigest ||
       historical.checkpoint.keyEpoch !== command.keyEpoch
     )
@@ -7502,20 +7562,12 @@ export class VaultCore {
         }),
       );
     resultRequire(matching.length === 1);
-    let registry: Registry | undefined;
-    const privateHistory7 = structuredClone(vault.registryHistory);
-    const verifyHistoryBundle7 = await registryBundleVerifier(vault.rootJwk);
-    for (let i = 0; i <= matching[0].i; i++) {
-      registry = await verifyHistoryBundle7(
-        privateHistory7[i],
-        owner,
-        vault.vaultId,
-        registry,
-        written,
-      );
-      resultRequire(registry.checkpoint.registrySequence === i + 1);
-    }
-    const historical = registry!,
+    const history = await this.verifiedRegistryPrefix(
+      vault,
+      vault.registryHistory.slice(0, matching[0].i + 1),
+      written,
+    );
+    const historical = history.at(-1)!,
       { writers, recipients } = this.ownerSelection(historical, written);
     const raw = parsed(unb64(task.signedObject.payload, 524288));
     validate("ObjectMessage", raw);
@@ -7847,22 +7899,7 @@ export class VaultCore {
     await this.checkVault(vault, this.pin);
     bounded(pending, 589824);
     positive(pending.registrySequence);
-    if (pending.registrySequence > vault.registryHistory.length)
-      throw new VaultError("untrusted_vault");
-    let registry: Registry | undefined;
-    const privateHistory8 = structuredClone(vault.registryHistory);
-    const verifyHistoryBundle8 = await registryBundleVerifier(vault.rootJwk);
-    for (let i = 0; i < pending.registrySequence; i++) {
-      registry = await verifyHistoryBundle8(
-        privateHistory8[i],
-        await this.owner,
-        vault.vaultId,
-        registry,
-        this.now(),
-      );
-      resultRequire(registry.checkpoint.registrySequence === i + 1);
-    }
-    const historical = registry!,
+    const historical = await this.registryAt(vault, pending.registrySequence),
       message = parsed(unb64(pending.body?.envelope?.signedObject?.payload, 524288));
     validate("ObjectMessage", message);
     const certificates = [
@@ -8100,7 +8137,11 @@ export class VaultCore {
     await this.taskPendingAt(pending, historical, vault, accepted);
     // Initial task commits require the then-current directory. A later revocation cannot
     // erase an earlier stored fact; second-precision checkpoints cannot establish a tie's order.
-    for (let i = pending.registrySequence; i < vault.registryHistory.length; i++) {
+    for (
+      let i = this.registryIndex(vault, pending.registrySequence) + 1;
+      i < vault.registryHistory.length;
+      i++
+    ) {
       if (
         parsed(unb64(vault.registryHistory[i].checkpoint.payload)).issuedAt >= Math.floor(accepted)
       )
@@ -8295,21 +8336,7 @@ export class VaultCore {
       !equal(c.binding, this.binding(pending.source, c.revision))
     )
       throw new VaultError("binding_mismatch");
-    let registry: Registry | undefined;
-    const privateHistory9 = structuredClone(vault.registryHistory);
-    const verifyHistoryBundle9 = await registryBundleVerifier(vault.rootJwk);
-    for (let i = 0; i < c.registrySequence; i++) {
-      if (!privateHistory9[i]) throw new VaultError("untrusted_vault");
-      registry = await verifyHistoryBundle9(
-        privateHistory9[i],
-        await this.owner,
-        vault.vaultId,
-        registry,
-        this.now(),
-      );
-      if (registry.checkpoint.registrySequence !== i + 1) throw new VaultError("untrusted_vault");
-    }
-    const historical = registry!;
+    const historical = await this.registryAt(vault, c.registrySequence);
     if (
       historical.digest !== c.checkpointDigest ||
       historical.checkpoint.rootEpoch !== c.rootEpoch ||
