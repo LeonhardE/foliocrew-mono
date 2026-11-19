@@ -452,6 +452,11 @@ export function createUserRecoveryProxy(options: Options = {}) {
         if (!matches(selected, DIGEST)) fail("authorization_unavailable");
         if (selected !== input.ownerSubject) fail("not_found");
       }
+      if (rule.profile === HANDOVER_CHECK_PROFILE || rule.profile === HANDOVER_PROFILE) {
+        const selected = env.FOLIOVIEW_USER_HANDOVER_OWNER;
+        if (selected !== undefined && !matches(selected, DIGEST)) fail("authorization_unavailable");
+        if (selected !== undefined && selected !== input.ownerSubject) fail("not_found");
+      }
 
       const token = await until(identity(origin), signal);
       const response = await until(

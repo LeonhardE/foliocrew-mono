@@ -35,7 +35,10 @@ import {
   type ResourceDisplaySnapshot,
 } from "@/lib/resource-display";
 import { EncryptedVaultSession } from "@/lib/encrypted-vault";
+import type { RegistryTransitionReview } from "@/lib/encrypted-user-recovery";
 import {
+  HANDOVER_CHECK_PROFILE,
+  HANDOVER_PROFILE,
   HOLDINGS_REGISTRATION_PROFILE,
   OWNER_CURRENT_PATH,
   OWNER_CURRENT_PROFILE,
@@ -486,6 +489,13 @@ export function useHoldingsWorkspace() {
   const auth = useAuth();
   const owner = auth.status === "authenticated" && auth.profile ? auth.sessionKey : null;
   const uid = owner ? auth.profile!.uid : null;
+  const [userHandover, setUserHandover] = useState<{
+    owner: string;
+    generation: number;
+    vault: Vault;
+    review: RegistryTransitionReview | null;
+    status: "review" | "pending" | "installed";
+  } | null>(null);
   const configured = auth.agentHubConfigured;
   const holdingsConfigured = auth.portfolioConfigured && configured;
   const capabilitiesRef = useRef({ hub: configured, portfolio: auth.portfolioConfigured });
@@ -864,6 +874,116 @@ export function useHoldingsWorkspace() {
       return session.current.instance;
     },
     [owner],
+  );
+
+  const reviewUserHandover = useCallback(
+    () =>
+      perform("managing", async ({ assertActive, signal }) => {
+        if (!owner || !auth.ownerCapabilities?.userHandover)
+          throw new WorkspaceError("service_unavailable");
+        const instance = liveSession();
+        const current = await readCurrent(signal);
+        const vault = current.vault;
+        if (!vault?.archive || vault.userAuthority) throw new WorkspaceError("invalid_response");
+        const ownerSubject = vault.archive.ownerSubject;
+        const generation = vaultGeneration.current;
+        const body = await api(
+          "user",
+          `/api/v3/private-resources/vaults/${vault.vaultId}/handover/check`,
+          signal,
+          {
+            method: "POST",
+            json: {
+              contractVersion: CONTRACT,
+              profile: HANDOVER_CHECK_PROFILE,
+              ownerSubject,
+              vaultId: vault.vaultId,
+            },
+          },
+        );
+        assertActive();
+        if (
+          !record(body) ||
+          body.ownerSubject !== ownerSubject ||
+          body.vaultId !== vault.vaultId ||
+          body.rootKeyId !== vault.rootKeyId
+        )
+          throw new WorkspaceError("invalid_response");
+        const pending = await instance.pendingUserHandover(vault);
+        assertActive();
+        if (pending) {
+          if (
+            body.status !== "ready" &&
+            (body.status !== "installed" || body.operationId !== pending.operationId)
+          )
+            throw new WorkspaceError("version_conflict");
+          setUserHandover({ owner, generation, vault, review: null, status: "pending" });
+          return;
+        }
+        if (body.status !== "ready" || body.vaultVersion !== vault.version)
+          throw new WorkspaceError("version_conflict");
+        const lifecycle = await readLifecycle(vault, signal);
+        await instance.verifyLifecycle(vault, lifecycle);
+        const review = await instance.reviewUserRegistryTransition(lifecycle);
+        assertActive();
+        setUserHandover({ owner, generation, vault, review, status: "review" });
+      }),
+    [
+      api,
+      auth.ownerCapabilities?.userHandover,
+      liveSession,
+      owner,
+      perform,
+      readCurrent,
+      readLifecycle,
+    ],
+  );
+
+  const confirmUserHandover = useCallback(
+    () =>
+      perform("managing", async ({ assertActive, signal }) => {
+        const context = userHandover;
+        if (
+          !context ||
+          context.owner !== owner ||
+          context.generation !== vaultGeneration.current ||
+          context.status === "installed"
+        )
+          throw new WorkspaceError("version_conflict");
+        const { vault } = context;
+        const instance = liveSession();
+        if (context.review) {
+          const material = await unlockVaultPasskey(requireArchive(vault.archive), { signal });
+          try {
+            assertActive();
+            await instance.stageUserHandover(vault, context.review, material);
+            assertActive();
+            setUserHandover({ ...context, review: null, status: "pending" });
+          } finally {
+            if (material.secret.byteLength) new Uint8Array(material.secret).fill(0);
+          }
+        }
+        await instance.submitUserHandover(
+          vault,
+          (packet, active) =>
+            api("user", `/api/v3/private-resources/vaults/${vault.vaultId}/handover`, active, {
+              method: "POST",
+              json: {
+                contractVersion: CONTRACT,
+                profile: HANDOVER_PROFILE,
+                ownerSubject: requireArchive(vault.archive).ownerSubject,
+                vaultId: vault.vaultId,
+                ...packet,
+              },
+            }),
+          signal,
+        );
+        assertActive();
+        setUserHandover({ ...context, review: null, status: "installed" });
+        terminate();
+        setState((previous) => ({ ...empty, owner, vault, phase: "locked", busy: previous.busy }));
+      }),
+    [api, liveSession, owner, perform, terminate, userHandover],
   );
 
   const proveResourceDisplay = useCallback(
@@ -5185,6 +5305,15 @@ export function useHoldingsWorkspace() {
   };
   return {
     providerSlotsSupported: true,
+    userHandoverAvailable: Boolean(auth.ownerCapabilities?.userHandover),
+    userHandover:
+      userHandover?.owner === owner &&
+      (userHandover.status === "installed" ||
+        (visible.phase === "unlocked" && userHandover.generation === vaultGeneration.current))
+        ? userHandover
+        : null,
+    reviewUserHandover,
+    confirmUserHandover,
     displayCache: displayCache.current,
     contentRefreshing: state.busy === "reading" && Boolean(state.content),
     contentStale: Boolean(state.error && state.content),

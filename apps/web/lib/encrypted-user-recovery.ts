@@ -60,3 +60,17 @@ export type RegistryTransitionPacket = {
   signedTransition: Signed;
   firstBundle: RegistryBundle;
 };
+
+export type RegistryHandoverReceipt = {
+  contractVersion: typeof CONTRACT;
+  profile: "folioview.owner-handover.v1";
+  ownerSubject: string;
+  vaultId: string;
+  rootKeyId: string;
+  operationId: string;
+  baselineDigest: string;
+  transitionFingerprint: string;
+  nextVaultVersion: number;
+  registryStart: PrivateRegistryHead;
+  writerEpoch: 2;
+};
