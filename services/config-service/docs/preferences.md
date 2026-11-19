@@ -4,6 +4,26 @@ Config continues to require the existing server-verified Google identity and pri
 responses. Requests cannot choose a different Owner. It does not call User or Market, publish
 resource facts, renew credentials, or change portfolio/native quote data.
 
+## Unified account read
+
+`GET /api/v2/preferences` returns a private, no-store snapshot of the signed-in
+Owner's UI, language, and currency preferences. The `ui`, `language`, and `currency`
+sections each carry a `state` field. An `available` section retains the fields and
+independent versions of its existing read response, including `currencyGeneration`.
+Missing records carry null preferences and version zero. The missing currency generation
+is zero. A malformed record yields an `unavailable` section consisting only of that
+state. A failed or incomplete storage batch returns HTTP 503.
+
+The `effective` section contains `theme`, `defaultChartRange`, `language` and
+`defaultPortfolioCurrency`. Language inherits the explicit v2 choice, then the stored
+v1 value, then English after confirming absence. Other missing settings resolve to light,
+one month, and USD. A field whose value depends on an unavailable record is null.
+
+The read uses one Firestore batch for up to three documents or one SQLite query for the
+same keys. Firestore accounts for document reads within the batch. Each PUT retains its
+original version check and response, and the original read paths stay available to
+existing clients while Web adopts the unified response.
+
 ## Independent contracts
 
 `GET/PUT /api/v1/preferences` keeps its strict three-field preference shape (`theme`, `language`,

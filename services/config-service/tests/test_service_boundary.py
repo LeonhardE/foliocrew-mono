@@ -22,6 +22,7 @@ class ConfigBoundaryTests(unittest.TestCase):
                 {
                     "/health",
                     "/api/v1/preferences",
+                    "/api/v2/preferences",
                     "/api/v2/preferences/currency",
                     "/api/v2/preferences/language",
                 },
