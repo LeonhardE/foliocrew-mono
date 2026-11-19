@@ -74,6 +74,39 @@ class TaskLifecycleTests(unittest.TestCase):
         with self.assertRaises(ContractError):
             self.owner.command(OTHER_UID, self.f.vault, TASK, packet, op)
 
+    def test_trash_reads_previously_purged_task_without_reading_retired_envelope(self):
+        from app.task_center import task_path
+        from app.task_lifecycle import lifecycle_index, lifecycle_path
+        from app.tasks import _paths
+
+        self.lifecycle("trash")
+        self.assertLess(self.fx.fx.now, self.fx.definition["purgeAfter"])
+
+        def retire(unit):
+            owner, vault = self.f.owner, self.f.vault
+            path = task_path(owner, vault, TASK)
+            row = unit.get(path)
+            definition = row["definition"]
+            definition.update(
+                status="purged",
+                schedule=None,
+                definitionVersion=definition["definitionVersion"] + 1,
+                lifecycleEpoch=definition["lifecycleEpoch"] + 1,
+            )
+            unit.put(path, row)
+            index = lifecycle_index(unit, owner, vault)
+            index["tasks"][TASK] = "purged"
+            index["version"] += 1
+            unit.put(lifecycle_path(owner, vault), index)
+            version = definition["taskVersion"]
+            unit.put(_paths(owner, vault, TASK, version), {"retiredTaskContent": True})
+
+        self.fx.store.transact(retire)
+        item = self.owner.trash(UID, self.f.vault)["items"][0]
+        self.assertFalse(item["canRestore"])
+        self.assertIsNone(item["envelope"])
+        self.assertEqual(item["definition"]["status"], "purged")
+
     @patch("folioview_shared.encrypted.task_center.TRASH_RETENTION_SECONDS", 10)
     def test_restore_deadline_and_bounded_idempotent_retention_without_new_jobs(self):
         saved = self.fx.submit(self.fx.begin())
