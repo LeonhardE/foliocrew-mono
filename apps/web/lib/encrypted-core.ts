@@ -8,6 +8,8 @@ import type {
   OwnerRecoveryProgress,
   OwnerRecoveryRequest,
   PrivateRegistryHead,
+  RegistryTransitionPacket,
+  RegistryTransitionReview,
 } from "./encrypted-user-recovery";
 import {
   GeneralEncrypt,
@@ -861,6 +863,13 @@ export class VaultCore {
   private registry?: Registry;
   private pin?: Pin;
   private userRecoveryRead?: OwnerRecoveryRead;
+  private userRegistryReview?: {
+    review: RegistryTransitionReview;
+    vault: Vault;
+    registry: Registry;
+    lifecycle: VaultLifecyclePin;
+    entries: RegistryBundle["entries"];
+  };
   private device?: {
     deviceId: string;
     sig: CryptoKey;
@@ -4144,6 +4153,141 @@ export class VaultCore {
       throw new VaultError("device_change_pending");
     this.deviceChange = undefined;
     return { operationId };
+  }
+  async reviewUserRegistryTransition(
+    state: VaultLifecycleState,
+  ): Promise<RegistryTransitionReview> {
+    this.requireOrdinarySession();
+    this.userRegistryReview = undefined;
+    const vault = this.vault,
+      registry = this.registry,
+      root = this.root,
+      device = this.device;
+    if (!vault?.archive || !registry || !root || !device) throw new VaultError("locked");
+    const pendingBundle = this.pendingDevice?.operation.registryBundle;
+    if (
+      this.archiveChange ||
+      this.deviceChange ||
+      (pendingBundle && !vault.registryHistory.some((bundle) => equal(bundle, pendingBundle)))
+    )
+      throw new VaultError("pending_registration");
+    if (state?.pendingAuthorization !== null) throw new VaultError("untrusted_lifecycle");
+    const lifecycle = await this.verifyLifecycle(vault, state, this.lifecyclePin);
+    const now = this.now();
+    cert(registry, device.sigId, "device_sig", now);
+    cert(registry, device.encId, "device_enc", now);
+    const ownerRoles = new Set(["device_sig", "device_enc", "recovery_enc"]);
+    const roles = new Set<string>();
+    const entries: RegistryBundle["entries"] = [];
+    const ownerKeyIds: string[] = [];
+    for (const entry of registry.bundle.entries) {
+      const { keyId } = parsed(unb64(entry.certificate.payload));
+      const key = registry.certificates.get(keyId);
+      if (
+        !key ||
+        !ownerRoles.has(key.role) ||
+        !registry.active.has(keyId) ||
+        now < key.notBefore ||
+        now >= key.expiresAt ||
+        key.keyEpoch !==
+          registry.localEpochs.get([key.principalId, key.role, key.connectionId].join("/"))
+      )
+        continue;
+      entries.push(entry);
+      ownerKeyIds.push(keyId);
+      roles.add(key.role);
+    }
+    if (ownerKeyIds.length > 32 || roles.size !== ownerRoles.size)
+      throw new VaultError("key_revoked");
+    const review = {
+      operationId: randomId(),
+      vaultId: vault.vaultId,
+      rootKeyId: vault.rootKeyId,
+      previousHead: privateRegistryHead(registry),
+      archiveVersion: lifecycle.lifecycleVersion + 1,
+      ownerKeyIds: ownerKeyIds.sort(),
+      expiresAt: now + 60,
+    };
+    this.userRegistryReview = { review, vault, registry, lifecycle, entries };
+    return structuredClone(review);
+  }
+  async signUserRegistryTransition(
+    review: RegistryTransitionReview,
+    material: PasskeyMaterial,
+  ): Promise<RegistryTransitionPacket> {
+    try {
+      this.requireOrdinarySession();
+      const pending = this.userRegistryReview;
+      const root = this.root;
+      if (!pending || !root || !equal(review, pending.review))
+        throw new VaultError("untrusted_vault");
+      this.userRegistryReview = undefined;
+      const { vault, registry, lifecycle, entries } = pending;
+      if (
+        this.vault !== vault ||
+        this.registry !== registry ||
+        this.lifecyclePin !== lifecycle ||
+        this.pin?.checkpointDigest !== registry.digest ||
+        this.now() >= review.expiresAt
+      )
+        throw new VaultError("untrusted_vault");
+      const archive = requireArchive(vault.archive);
+      if (material.credentialId !== archive.credentialId || material.prfSalt !== archive.prfSalt)
+        throw new VaultError("unlock_failed");
+      const master = await open(await aesMaterial(material), archive);
+      if (
+        master.ownerSubject !== (await this.owner) ||
+        master.vaultId !== vault.vaultId ||
+        master.rootKeyId !== vault.rootKeyId ||
+        (await thumb(master.rootPrivateJwk)) !== vault.rootKeyId
+      )
+        throw new VaultError("untrusted_vault");
+      const firstBundle = await this.bundle(entries, registry);
+      const candidate = await verifyRegistry(
+        firstBundle,
+        vault.rootJwk,
+        await this.owner,
+        vault.vaultId,
+        undefined,
+        this.now(),
+      );
+      const issuedAt = candidate.checkpoint.issuedAt;
+      if (
+        this.now() >= review.expiresAt ||
+        !equal([...candidate.active].sort(), review.ownerKeyIds)
+      )
+        throw new VaultError("untrusted_vault");
+      for (const keyId of review.ownerKeyIds) cert(candidate, keyId, undefined, issuedAt);
+      const signedTransition = await sign(
+        {
+          contractVersion: CONTRACT,
+          profile: "folioview.owner-registry-transition.v1",
+          ownerSubject: await this.owner,
+          vaultId: vault.vaultId,
+          rootKeyId: vault.rootKeyId,
+          operationId: review.operationId,
+          previousVaultVersion: vault.version,
+          nextVaultVersion: vault.version + 1,
+          previousHead: review.previousHead,
+          nextHead: {
+            ...privateRegistryHead(candidate),
+            registryEpoch: review.previousHead.registryEpoch + 1,
+          },
+          ownerKeyIds: review.ownerKeyIds,
+          archive: {
+            state: "active",
+            version: review.archiveVersion,
+            digest: lifecycle.archiveDigest,
+          },
+          issuedAt,
+        },
+        root,
+        vault.rootKeyId,
+      );
+      return { operationId: review.operationId, signedTransition, firstBundle };
+    } finally {
+      if (material?.secret instanceof ArrayBuffer) new Uint8Array(material.secret).fill(0);
+    }
   }
   async beginUserRecovery(sourcesDigest: string): Promise<OwnerRecoveryRequest> {
     this.requireOrdinarySession();

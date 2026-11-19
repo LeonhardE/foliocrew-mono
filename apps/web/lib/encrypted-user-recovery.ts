@@ -1,4 +1,6 @@
 import type {
+  RegistryBundle,
+  Signed,
   CONTRACT,
   OWNER_RECOVERY_PROFILE,
   OWNER_REGISTRY_PAGE_PROFILE,
@@ -34,4 +36,20 @@ export type OwnerRecoveryProgress =
 export type OwnerRecoveryTransport = {
   evidence(request: OwnerRecoveryRequest, signal: AbortSignal): Promise<unknown>;
   page(request: OwnerRegistryPageRequest, signal: AbortSignal): Promise<unknown>;
+};
+
+export type RegistryTransitionReview = {
+  operationId: string;
+  vaultId: string;
+  rootKeyId: string;
+  previousHead: PrivateRegistryHead;
+  archiveVersion: number;
+  ownerKeyIds: string[];
+  expiresAt: number;
+};
+
+export type RegistryTransitionPacket = {
+  operationId: string;
+  signedTransition: Signed;
+  firstBundle: RegistryBundle;
 };

@@ -238,3 +238,77 @@ test("Worker verifies contiguous signed pages against one target and keeps the o
     assert.equal(leakedSignal?.aborted, true);
   });
 });
+
+test("the new registry start requires a fresh original Passkey and preserves current pins", async () => {
+  await browser.withDatabase(async (db) => {
+    const { vault, state, material, session, storage } = await initialize(db);
+    await session.verifyLifecycle(vault, state);
+    const key = vault.archive.ownerSubject + ":pin";
+    const before = await storage.get(key);
+    const expired = await session.reviewUserRegistryTransition(state);
+    browser.time(expired.expiresAt);
+    await assert.rejects(
+      session.signUserRegistryTransition(expired, material()),
+      /untrusted_vault/,
+    );
+    browser.time(1000);
+    const first = await session.reviewUserRegistryTransition(state);
+    await assert.rejects(
+      session.signUserRegistryTransition(first, {
+        ...material(),
+        secret: new Uint8Array(32).buffer,
+      }),
+      /unlock_failed/,
+    );
+    await assert.rejects(session.signUserRegistryTransition(first, material()), /untrusted_vault/);
+    const review = await session.reviewUserRegistryTransition(state);
+    const packet = await session.signUserRegistryTransition(review, material());
+    const transition = decoded(packet.signedTransition);
+    assert.equal(packet.operationId, review.operationId);
+    assert.equal(transition.previousVaultVersion, vault.version);
+    assert.equal(transition.nextVaultVersion, vault.version + 1);
+    assert.equal(transition.archive.digest, state.archiveDigest);
+    assert.deepEqual(transition.ownerKeyIds, review.ownerKeyIds);
+    assert.equal(decoded(packet.firstBundle.checkpoint).previousDigest, before.checkpointDigest);
+    assert.equal(transition.nextHead.registryEpoch, 2);
+    assert.deepEqual(await storage.get(key), before);
+    assert.ok(!JSON.stringify(packet).includes("rootPrivateJwk"));
+    assert.ok(!JSON.stringify(packet).includes(vault.archive.credentialId));
+    await assert.rejects(session.signUserRegistryTransition(review, material()), /untrusted_vault/);
+
+    const { spawnSync } = require("node:child_process");
+    const { resolve } = require("node:path");
+    const repository = resolve(__dirname, "../../..");
+    const python =
+      process.env.FOLIOVIEW_TEST_PYTHON ||
+      resolve(repository, "services/market-data-service/.venv/bin/python");
+    const script = `
+import json, sys
+from folioview_shared.encrypted.authority import verify_registry
+from folioview_shared.encrypted.private_resources import PrivateRegistryCursor, verify_private_registry_transition
+v = json.load(sys.stdin)
+args = dict(root_jwk=v['vault']['rootJwk'], pinned_root_key_id=v['vault']['rootKeyId'],
+            owner_subject=v['owner'], vault_id=v['vault']['vaultId'], now=1000)
+previous = verify_registry(v['vault']['registryHistory'][0], **args)
+next_start = verify_private_registry_transition(
+    v['packet']['signedTransition'], first_bundle=v['packet']['firstBundle'],
+    authenticated_start=v['target'], previous=PrivateRegistryCursor(previous, 1), **args,
+)
+print(json.dumps(next_start.head()))
+`;
+    const checked = spawnSync(python, ["-c", script], {
+      cwd: repository,
+      env: { ...process.env, PYTHONPATH: resolve(repository, "services/common") },
+      input: JSON.stringify({
+        vault,
+        packet,
+        target: transition.nextHead,
+        owner: vault.archive.ownerSubject,
+      }),
+      encoding: "utf8",
+      timeout: 10000,
+    });
+    assert.equal(checked.status, 0, checked.stderr || checked.error?.message);
+    assert.deepEqual(JSON.parse(checked.stdout), transition.nextHead);
+  });
+});
