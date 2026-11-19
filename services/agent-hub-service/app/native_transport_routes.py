@@ -135,17 +135,9 @@ def capabilities(request: Request, user: Owner):
     }
 
 
-@owner_router.get("/{request_id}")
-async def pending(request_id: str, request: Request, user: Owner, service: Service):
-    _invoke(lambda: control_transport(request))
-    cookie = _invoke(lambda: native_browser(request, service))
-    return await run_in_threadpool(_invoke, lambda: service.pending(user.uid, request_id, cookie))
-
-
 @owner_router.post("/{request_id}/pending")
 async def browser_pending(request_id: str, request: Request, user: Owner, service: Service):
-    # Same-origin GET is not required to carry Origin. A closed POST lets the
-    # browser send it naturally while preserving the exact cookie/Origin guard.
+    # The browser sends Origin on this closed POST, bound to the Owner and cookie.
     _invoke(lambda: control_transport(request))
     cookie = _invoke(lambda: native_browser(request, service))
     await body(request, {"contractVersion"}, max_bytes=4096)

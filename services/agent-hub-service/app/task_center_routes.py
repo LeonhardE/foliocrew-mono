@@ -186,12 +186,6 @@ for route, method in {
     agent_router.add_api_route("/" + route, endpoint(method), methods=["POST"])
 
 
-@owner_router.get("/{vault}/trash")
-def trash(vault: str, request: Request, user: Owner, service: OwnerService):
-    _invoke(lambda: control_transport(request))
-    return _invoke(lambda: service.trash(user.uid, vault))
-
-
 @owner_router.post("/{vault}/trash/query")
 async def trash_query(vault: str, request: Request, user: Owner, service: OwnerService):
     _invoke(lambda: control_transport(request))

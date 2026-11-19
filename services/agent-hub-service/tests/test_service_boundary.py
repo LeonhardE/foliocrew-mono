@@ -36,7 +36,6 @@ class AgentHubBoundaryTests(unittest.TestCase):
                     "/api/v3/task-center/{vault}/tasks/{task}/manual/{intent}",
                     "/api/v3/task-center/{vault}/tasks/{task}/manual/{intent}/cancel",
                     "/agent/v3/persistent/owners/{owner}/vaults/{vault}/connections/{connection}/task-center/manual/query",
-                    "/api/v3/task-center/{vault}/trash",
                     "/api/v3/task-center/{vault}/trash/query",
                     "/api/v3/task-center/{vault}/tasks/{task}/maintenance",
                     "/api/v3/task-center/{vault}/tasks/{task}",
@@ -64,7 +63,6 @@ class AgentHubBoundaryTests(unittest.TestCase):
                     "/oauth/persistent/token",
                     "/oauth/persistent/revoke",
                     "/api/v2/persistent-account-authorizations/capabilities",
-                    "/api/v2/persistent-account-authorizations/{request_id}",
                     "/api/v2/persistent-account-authorizations/{request_id}/approvals",
                     "/api/v2/persistent-account-authorizations/{request_id}/pending",
                     "/agent/v3/persistent/owners/{owner}/vaults/{vault}/connections/{connection}/runs/submit",
@@ -140,6 +138,8 @@ class AgentHubBoundaryTests(unittest.TestCase):
             for method, path in (
                 ("GET", "/api"),
                 ("GET", "/api/v2/resources"),
+                ("GET", "/api/v3/task-center/retired_vault/trash"),
+                ("GET", "/api/v2/persistent-account-authorizations/retired_request"),
                 ("POST", "/api/v2/inbox"),
                 ("GET", "/api/v2/inbox"),
                 ("GET", "/api/v2/results"),
@@ -164,7 +164,7 @@ class AgentHubBoundaryTests(unittest.TestCase):
                         json={"report": "synthetic-private-marker"},
                     )
                     self.assertEqual(response.status_code, 404)
-                    if path.startswith(("/api/v2/", "/.well-known/")):
+                    if path.startswith(("/api/v2/", "/api/v3/", "/.well-known/")):
                         validate_schema("Error", response.json())
                     else:
                         self.assertEqual(response.json(), {"detail": "Not Found"})

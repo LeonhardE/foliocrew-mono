@@ -644,9 +644,9 @@ A paused or archived legacy task may initialize signed rules solely to enter thi
 lifecycle; its business task status stays inactive, with no assignments or execution.
 The explicit purge control is allowed only after that retention deadline.
 
-`GET /{vault}/trash` returns the first task and its encrypted original (before
-expiry). `POST /{vault}/trash/query` accepts `{contractVersion,cursor}` for
-subsequent one-task pages with a nullable `nextCursor`. After expiry no original is returned.
+`POST /{vault}/trash/query` accepts `{contractVersion,cursor}`. Start with a null
+cursor and advance using the nullable `nextCursor`. Each page contains at most one
+task and its encrypted original until expiry.
 `POST /{vault}/tasks/{task}/maintenance` with `{contractVersion}` processes at most
 four Owner-scoped documents in one cleanup phase, in the current request. It can
 be safely repeated; no background response thread, worker or scheduler is created.
