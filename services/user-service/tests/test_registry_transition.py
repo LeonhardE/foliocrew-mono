@@ -19,7 +19,8 @@ from app.private_resources.recovery import RecoveryHeads
 from app.private_resources.registry_pages import COLLECTION, RegistryHistory
 from app.private_resources.registry_transition import UserRegistryTransition
 from app.private_resources.report_sources import HOLDINGS_FENCES, holdings_fence_key
-from app.private_resources.source_invalidations import SourceInvalidations
+from app.private_resources.source_invalidations import SOURCE_INDEX, SourceInvalidations
+from app.private_resources.source_registrations import SOURCE_REGISTRATIONS, HoldingsRegistrations
 from app.resources import SQLiteUserResourceStore
 from folioview_shared.auth import CurrentUser, require_google_user
 from folioview_shared.encrypted.authority import verify_registry
@@ -39,7 +40,8 @@ class RegistryTransitionTests(unittest.TestCase):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
         self.store = SQLiteUserResourceStore(str(Path(folder.name) / "original.sqlite"))
-        self.root, public, scope, base, bundle, _ = registry_fixture()
+        self.signing_keys = {}
+        self.root, public, scope, base, bundle, _ = registry_fixture(signing_keys=self.signing_keys)
         self.scope = {"ownerSubject": OWNER, "vaultId": VAULT, "rootKeyId": base.root_key_id}
         recovery = jwk.JWK.generate(kty="EC", crv="P-256").export(private_key=False, as_dict=True)
         certificate = {
@@ -381,3 +383,85 @@ class RegistryTransitionTests(unittest.TestCase):
                 confirmed = client.post(path + "/check", headers=header, json=ready)
                 self.assertEqual(confirmed.status_code, 200, confirmed.text)
                 self.assertEqual(confirmed.json()["status"], "installed")
+
+    def test_ten_retired_registrations_leave_capacity_for_a_new_signed_source(self):
+        cutover = UserAuthorityCutover(self.store)
+        self.stage_frozen_scope()
+        cutover.install(UID, VAULT, self.packet, now=1000)
+        for number in range(10):
+            ref = {
+                "kind": "holdings",
+                "sourceService": "portfolio",
+                "resourceId": f"retired_{number}",
+                "incarnation": f"retired_instance_{number}",
+            }
+            fence = {
+                "ownerSubject": OWNER,
+                "vaultId": VAULT,
+                "binding": {"ref": ref, "sourceEpoch": 2},
+                "state": "deleted",
+                "currentRevision": 0,
+            }
+            with self.store.connection() as db:
+                db.execute(
+                    f"INSERT INTO {HOLDINGS_FENCES} VALUES (?, ?)",
+                    (
+                        holdings_fence_key(OWNER, VAULT, ref["resourceId"]),
+                        canonical_json(fence).decode(),
+                    ),
+                )
+        auth = HoldingsRegistrations(self.store, clock=lambda: 1000)
+        source = "new_holdings_fixture"
+        operation = "synthetic_holdings_registration_01"
+        target = self.transition["nextHead"]
+
+        def command(source_name, operation_id, head):
+            return sign_jws(
+                {
+                    "contractVersion": CONTRACT_VERSION,
+                    "ownerSubject": OWNER,
+                    "vaultId": VAULT,
+                    "artifactType": "control_command",
+                    "stableOperationId": operation_id,
+                    "action": "manual_source_create",
+                    "targetId": source_name,
+                    "expectedVersion": 0,
+                    "expectedSourceEpoch": None,
+                    "parameters": {},
+                    "registrySequence": head["registrySequence"],
+                    "checkpointDigest": head["checkpointDigest"],
+                    "keyEpoch": head["keyEpoch"],
+                },
+                self.signing_keys["device_sig"],
+                typ="fv-control+jws",
+            )
+
+        with self.assertRaisesRegex(ContractError, "rollback_detected"):
+            auth.register(
+                UID,
+                VAULT,
+                source,
+                command(source, operation, self.transition["previousHead"]),
+                operation,
+            )
+        signed = command(source, operation, target)
+        first = auth.register(UID, VAULT, source, signed, operation)
+        self.assertEqual(first["source"]["sourceEpoch"], 1)
+        self.assertEqual(auth.register(UID, VAULT, source, signed, operation), first)
+        self.assertEqual(self.heads.read(OWNER)["vaultVersion"], 3)
+        with self.store.connection() as db:
+            self.assertEqual(
+                db.execute(f"SELECT COUNT(*) FROM {HOLDINGS_FENCES}").fetchone(), (11,)
+            )
+            self.assertEqual(
+                db.execute(f"SELECT COUNT(*) FROM {SOURCE_REGISTRATIONS}").fetchone(), (1,)
+            )
+            index = self.store.value(db, SOURCE_INDEX, OWNER)
+        self.assertEqual(
+            [row["binding"]["ref"]["resourceId"] for row in index["entries"]], [source]
+        )
+        with self.assertRaisesRegex(ContractError, "version_conflict"):
+            new_operation = "synthetic_holdings_registration_02"
+            auth.register(
+                UID, VAULT, "retired_0", command("retired_0", new_operation, target), new_operation
+            )
