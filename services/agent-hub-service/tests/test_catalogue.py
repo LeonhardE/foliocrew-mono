@@ -7,7 +7,7 @@ import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import httpx
 from fastapi import HTTPException, Request
@@ -28,7 +28,8 @@ from app.catalogue import (
 from app.fences import FenceService
 from app.main import app
 from app.signing import KMSSigner
-from app.store import SQLiteHubStore
+from app.store import SQLiteHubStore, private_resource_writer_fence_path
+from app.user_vault_authority import CurrentUserVault, ScopedUserVaults
 from app.vaults import VaultService
 from folioview_shared.delegated_keys import KeyCache
 from folioview_shared.delegation import CatalogueRequirement, DelegationVerifier
@@ -36,6 +37,7 @@ from folioview_shared.encrypted.constants import CONTRACT_VERSION
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import canonical_json
 from folioview_shared.encrypted.schema import validate_schema
+from folioview_shared.identity import owner_key
 from folioview_shared.service_identity import GoogleCallerVerifier
 
 HUB = "https://hub.synthetic.example"
@@ -603,6 +605,60 @@ class CatalogueTests(CatalogueFixture, unittest.TestCase):
             self.read()
         self.assertEqual(verify.call_count, 1)
         self.assertEqual(transactions.call_count, 2)
+
+    def test_transferred_catalogue_uses_only_current_active_holdings(self):
+        owner = owner_key(UID)
+        marker = {
+            "ownerSubject": owner,
+            "vaultId": self.fixture.vault,
+            "state": "transferred",
+            "writerEpoch": 2,
+            "transitionFingerprint": "d" * 64,
+        }
+        path = private_resource_writer_fence_path(owner)
+        self.store.transact(lambda unit: unit.put(path, marker))
+        retired = {**self.source, "resourceId": "retired_test_source"}
+        proof = CurrentUserVault(
+            {
+                "ownerSubject": owner,
+                "vaultId": self.fixture.vault,
+                "vaultVersion": 2,
+                "registry": {"registryEpoch": 2},
+                "sourcesDigest": "a" * 64,
+                "sources": [
+                    {"binding": {"ref": self.source, "sourceEpoch": 1}, "state": "active"},
+                    {"binding": {"ref": retired, "sourceEpoch": 2}, "state": "disconnected"},
+                ],
+            },
+            None,
+            marker,
+            1008,
+        )
+        client = Mock()
+        client.read.return_value = proof
+        scopes = ScopedUserVaults(self.store, owner=owner, client=client)
+        service = CatalogueService(self.vaults, self.sources, user_vaults=scopes)
+        with patch("app.catalogue._verify_row", side_effect=AssertionError("legacy vault")):
+            view = service.read(UID)
+            items = view["groups"][0]["items"]
+            self.assertEqual([item["ref"] for item in items], [self.source])
+            self.assertEqual(items[0]["snapshotId"], self.snapshot)
+            self.assertEqual(client.read.call_count, 2)
+            self.assertEqual(client.read.call_args.args, (UID, self.fixture.vault, marker))
+            self.assertEqual(
+                client.read.call_args_list[0].kwargs["deadline"],
+                client.read.call_args_list[1].kwargs["deadline"],
+            )
+            client.read.side_effect = ContractError("source_unavailable")
+            with self.assertRaisesRegex(ContractError, "source_unavailable"):
+                service.read(UID)
+
+        client.read.side_effect = None
+        self.on_request = lambda: self.store.transact(
+            lambda unit: unit.put(path, {**marker, "transitionFingerprint": "b" * 64})
+        )
+        with self.assertRaisesRegex(ContractError, "source_unavailable"):
+            service.read(UID)
 
     def test_context_work_consumes_shared_budget_and_timings_contain_no_identities(self):
         clock, timeouts = [100.0], []

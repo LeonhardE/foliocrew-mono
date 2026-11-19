@@ -80,7 +80,7 @@ class UserVaultAuthority:
         self.signer_factory, self.token_factory = signer_factory, token_factory
         self.transport, self.clock, self.wall_clock = transport, clock, wall_clock
 
-    def read(self, uid, vault, writer_fence, *, minimum_epoch=2):
+    def read(self, uid, vault, writer_fence, *, minimum_epoch=2, deadline=None):
         owner = owner_key(uid)
         if (
             type(writer_fence) is not dict
@@ -107,7 +107,9 @@ class UserVaultAuthority:
         )
         try:
             started_at = self.wall_clock()
-            deadline = self.clock() + 8
+            window = self.clock() + 8
+            deadline = window if deadline is None else min(window, deadline)
+            remaining(deadline, self.clock)
             raw = canonical_json(lookup)
             request_digest = hashlib.sha256(raw).hexdigest()
             response = self._fetch(uid, lookup["nonce"], raw, request_digest, started_at, deadline)
@@ -242,7 +244,7 @@ class ScopedUserVaults:
             raise ContractError("authorization_unavailable")
         self.store, self.owner, self.client = store, owner, client
 
-    def read(self, uid, vault):
+    def read(self, uid, vault=None, *, deadline=None):
         owner = owner_key(uid)
         if owner != self.owner:
             return None
@@ -250,9 +252,14 @@ class ScopedUserVaults:
         fence = self.store.transact(lambda unit: unit.get(fence_path))
         if fence is None:
             return None
-        if self.client is None:
+        if self.client is None or type(fence) is not dict:
             raise ContractError("source_unavailable")
-        return self.client.read(uid, vault, fence)
+        selected_vault = vault if vault is not None else fence.get("vaultId")
+        if type(selected_vault) is not str:
+            raise ContractError("source_unavailable")
+        if deadline is not None:
+            return self.client.read(uid, selected_vault, fence, deadline=deadline)
+        return self.client.read(uid, selected_vault, fence)
 
 
 def scoped_user_vaults(store):
