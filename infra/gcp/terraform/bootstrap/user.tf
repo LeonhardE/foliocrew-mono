@@ -51,33 +51,6 @@ resource "google_service_account_iam_member" "user_runtime_deployer" {
   member             = "serviceAccount:${each.value}"
 }
 
-# Derive the default-database condition without creating a second IAM owner.
-module "user_database_scope" {
-  source = "../modules/firestore-access"
-
-  project_id  = var.project_id
-  database_id = "(default)"
-}
-
-# Retain this address so an administrator can replace the imported broad grant.
-# This does not own the database, user documents, or any other runtime's IAM.
-resource "google_project_iam_member" "user_cache" {
-  project = var.project_id
-  role    = "roles/datastore.user"
-  member  = "serviceAccount:${local.user_deployment.inputs.runtime_account_id}@${var.project_id}.iam.gserviceaccount.com"
-
-  condition {
-    title       = module.user_database_scope.condition.title
-    description = module.user_database_scope.condition.description
-    expression  = module.user_database_scope.condition.expression
-  }
-
-  # Establish the conditional tuple before removing this member's old broad tuple.
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-
 resource "google_project_iam_custom_role" "user_service_read" {
   project     = var.project_id
   role_id     = "folioviewUserServiceRead"
@@ -168,11 +141,6 @@ import {
 import {
   to = google_service_account_iam_member.user_runtime_deployer["image"]
   id = "${local.user_runtime} roles/iam.serviceAccountUser serviceAccount:${local.user_build}"
-}
-
-import {
-  to = google_project_iam_member.user_cache
-  id = "${var.project_id} roles/datastore.user serviceAccount:${local.user_deployment.inputs.runtime_account_id}@${var.project_id}.iam.gserviceaccount.com ${module.user_database_scope.condition.title}"
 }
 
 # Keep the existing token-verification metadata permission on the runtime only.

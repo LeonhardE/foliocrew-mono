@@ -1,5 +1,8 @@
 # User default-database IAM migration
 
+Historical procedure for the former shared-database setup. INF-023 retires this
+membership after verified production writes and rollback on `user-data`.
+
 Examples use a fictitious deployment. Replace project and identity values from your reviewed private instance; the historical acceptance notes do not certify any other deployment.
 This is an administrator-owned migration in `bootstrap/user.tf`. It changes only
 `google_project_iam_member.user_cache`, retaining its Terraform address, role

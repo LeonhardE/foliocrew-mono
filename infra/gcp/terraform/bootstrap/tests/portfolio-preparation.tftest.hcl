@@ -87,11 +87,6 @@ override_resource {
 }
 
 override_resource {
-  target = google_project_iam_member.user_cache
-  values = {}
-}
-
-override_resource {
   target          = google_project_iam_custom_role.user_service_read
   override_during = plan
   values = {
