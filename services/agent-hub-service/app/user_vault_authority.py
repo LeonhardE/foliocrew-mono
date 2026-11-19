@@ -54,6 +54,18 @@ class CurrentUserVault:
     writer_fence: dict
     expires_at: float
 
+    def require_active_holdings(self, bindings):
+        active = {
+            canonical_json(row["binding"])
+            for row in self.authority["sources"]
+            if row["state"] == "active"
+        }
+        if any(
+            binding["ref"]["kind"] == "holdings" and canonical_json(binding) not in active
+            for binding in bindings
+        ):
+            raise ContractError("version_conflict")
+
     def require_current(self, unit, now):
         owner = self.authority["ownerSubject"]
         if (
