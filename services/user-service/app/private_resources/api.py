@@ -39,7 +39,7 @@ from .recovery import (
 from .registry_pages import RegistryHistory, RegistryPageRequest
 from .registry_transition import MAX_TRANSITION_PACKET_BYTES
 from .report_sources import ReportSourceAuthority
-from .source_invalidations import SourceInvalidations
+from .source_invalidations import PortfolioSourceRevision, SourceInvalidations
 from .source_registrations import HoldingsRegistrations
 
 router = APIRouter(
@@ -48,6 +48,7 @@ router = APIRouter(
 internal = APIRouter(tags=["private-resources"], route_class=ResourceRoute)
 REPORT_DECISION_PATH = "/internal/v2/private-resources/report-source-decisions"
 PORTFOLIO_FENCE_PATH = "/internal/v2/private-resources/source-fences"
+PORTFOLIO_REVISION_PATH = "/internal/v2/private-resources/source-revisions"
 OWNER_PROXY_HEADER = "x-folioview-proxy-authorization"
 _USER_ORIGIN = re.compile(r"https://user-api-[0-9]{1,20}\.[a-z]+(?:-[a-z0-9]+)+[0-9]\.run\.app\Z")
 
@@ -112,6 +113,15 @@ async def invalidate_portfolio_source(
     response: Response,
     authority: Annotated[SourceInvalidations, Depends(portfolio_invalidation)],
 ):
+    require_portfolio_workload(request)
+    value = (await body(request, RootModel[dict[str, object]])).root
+    result = await run_in_threadpool(authority.invalidate, value)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-FolioView-Contract"] = CONTRACT_VERSION
+    return result
+
+
+def require_portfolio_workload(request):
     if request.headers.getlist("x-folioview-delegation"):
         raise ContractError("insufficient_scope")
     _require_private_workload(
@@ -120,8 +130,17 @@ async def invalidate_portfolio_source(
         audience_env="USER_SERVICE_AUDIENCE",
         caller_env="USER_PRIVATE_PORTFOLIO_CALLER",
     )
-    value = (await body(request, RootModel[dict[str, object]])).root
-    result = await run_in_threadpool(authority.invalidate, value)
+
+
+@internal.post(PORTFOLIO_REVISION_PATH)
+async def acknowledge_portfolio_source_revision(
+    request: Request,
+    response: Response,
+    authority: Annotated[SourceInvalidations, Depends(portfolio_invalidation)],
+):
+    require_portfolio_workload(request)
+    value = await body(request, PortfolioSourceRevision, maximum=4096)
+    result = await run_in_threadpool(authority.acknowledge_revision, value)
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-FolioView-Contract"] = CONTRACT_VERSION
     return result

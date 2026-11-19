@@ -1,6 +1,7 @@
 """Commit Portfolio invalidations and exact receipts under the User writer."""
 
 import math
+import os
 import time
 from datetime import UTC, datetime
 from typing import Literal
@@ -19,7 +20,7 @@ from ..firestore_reads import read_documents
 from ..resources import FirestoreUserResourceStore, ResourceUnavailable, SQLiteUserResourceStore
 from .legacy_baselines import _sha
 from .recovery import COLLECTION as HEADS
-from .recovery import ClosedModel, Digest, RecoveryHeads, Version
+from .recovery import ClosedModel, Digest, Identifier, RecoveryHeads, Version
 from .report_sources import HOLDINGS_FENCES, HoldingsFence, HoldingsRef, holdings_fence_key
 
 SOURCE_INDEX = "user_private_source_indexes"
@@ -40,6 +41,15 @@ class PortfolioInvalidation(ClosedModel):
     expectedSourceEpoch: Version
     newSourceEpoch: Version
     reason: Literal["account_scope_changed", "disconnected", "deleted"]
+
+
+class PortfolioSourceRevision(ClosedModel):
+    contractVersion: Literal[CONTRACT_VERSION]
+    ownerSubject: Digest
+    vaultId: Identifier
+    ref: HoldingsRef
+    sourceEpoch: Version
+    sourceRevision: Version
 
 
 def _request(value):
@@ -142,6 +152,75 @@ class SourceInvalidations:
         except (ValidationError, ValueError, OverflowError, OSError):
             pass
         raise ContractError("authorization_unavailable")
+
+    def acknowledge_revision(self, packet: PortfolioSourceRevision):
+        request = packet.model_dump()
+        owner, vault, ref = (request[key] for key in ("ownerSubject", "vaultId", "ref"))
+        fence_id = holdings_fence_key(owner, vault, ref["resourceId"])
+        try:
+            if isinstance(self.store, SQLiteUserResourceStore) and "K_SERVICE" not in os.environ:
+                with self.store.connection() as db:
+                    db.execute("BEGIN IMMEDIATE")
+                    head = self.heads._decode(self.heads._local(db, owner))
+                    raw = self.store.value(db, HOLDINGS_FENCES, fence_id)
+                    ack, updated = self._plan_revision(head, raw, request)
+                    if updated is not None:
+                        db.execute(
+                            f"UPDATE {HOLDINGS_FENCES} SET value=? WHERE owner=?",
+                            (canonical_json(updated).decode(), fence_id),
+                        )
+                    return ack
+            if isinstance(self.store, FirestoreUserResourceStore):
+                return self._firestore_revision(owner, fence_id, request)
+        except ContractError:
+            raise
+        except ResourceUnavailable as error:
+            if isinstance(error.__cause__, ContractError):
+                raise error.__cause__ from None
+        except (ValidationError, ValueError, OSError):
+            pass
+        raise ContractError("authorization_unavailable")
+
+    @staticmethod
+    def _plan_revision(head, raw, request):
+        if (
+            head is None
+            or raw is None
+            or head.get("handover") is None
+            or any(head[key] != request[key] for key in ("ownerSubject", "vaultId"))
+        ):
+            raise ContractError("source_unavailable")
+        fence = HoldingsFence.model_validate(raw).model_dump()
+        if (
+            any(fence[key] != request[key] for key in ("ownerSubject", "vaultId"))
+            or fence["binding"] != {"ref": request["ref"], "sourceEpoch": request["sourceEpoch"]}
+            or fence["state"] != "eligible"
+        ):
+            raise ContractError("version_conflict")
+        revision = max(fence["currentRevision"], request["sourceRevision"])
+        ack = {**request, "sourceRevision": revision}
+        updated = (
+            None if revision == fence["currentRevision"] else {**fence, "currentRevision": revision}
+        )
+        return ack, updated
+
+    def _firestore_revision(self, owner, fence_id, request):
+        client = self.store.client
+        if client._database != "user-data":
+            raise ContractError("authorization_unavailable")
+        head_ref = self.heads._reference(owner)
+        fence_ref = client.collection(HOLDINGS_FENCES).document(fence_id)
+
+        @firestore.transactional
+        def write(transaction):
+            head = self.heads._decode(self.heads._firestore(head_ref, transaction))
+            raw = read_documents(client, transaction, (fence_ref,))[0]
+            ack, updated = self._plan_revision(head, raw, request)
+            if updated is not None:
+                transaction.set(fence_ref, updated)
+            return ack
+
+        return write(BoundedTransaction(client, max_attempts=3))
 
     def _plan(self, head, saved, index, raw_fence, request):
         owner, vault = request["ownerSubject"], head["vaultId"]
