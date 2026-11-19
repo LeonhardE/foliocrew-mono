@@ -274,6 +274,28 @@ function harness({ transport, center, timers, clock = Date, resultsVisible = tru
     },
   };
 }
+test("task reports read the persistent feed and retire old bookmarks locally", async () => {
+  const h = harness();
+  try {
+    const initial = await h.ready();
+    assert.equal(initial.rows[0].kind, "persistent");
+    assert.equal(initial.retiredReportLink, false);
+    h.link("#inbox/result/old_foreground_fixture");
+    const retired = await h.ready();
+    assert.equal(retired.retiredReportLink, true);
+    assert.equal(retired.error, "");
+    assert.equal(
+      h.calls.some((call) => call.path.startsWith("/api/v2/results")),
+      false,
+    );
+    h.workspace.phase = "locked";
+    assert.equal((await h.ready()).retiredReportLink, true);
+    h.link("");
+    assert.equal((await h.ready()).retiredReportLink, false);
+  } finally {
+    h.close();
+  }
+});
 test("title preload never marks read; presentation performs exactly one signed update, and history retains the original Agent", async () => {
   const h = harness();
   let m = await h.ready();
@@ -308,7 +330,7 @@ test("returning to a loaded task preserves filters and avoids reloading metadata
   h.active(true);
   m = await h.ready();
   assert.equal(m.filters.query, "PRIVATE");
-  assert.equal(h.calls.filter((c) => c.path.includes("?limit=")).length, 3);
+  assert.equal(h.calls.filter((c) => c.path.includes("?limit=")).length, 1);
   assert.equal(h.stats().decrypts, decrypts);
   assert.ok(h.calls.length >= calls);
   h.close();
@@ -385,7 +407,7 @@ test("read-only presentation does not consume the later ability to acknowledge a
   h.close();
 });
 
-test("initial result metadata reads only one page per source and no private report bodies", async () => {
+test("initial result metadata reads one persistent page and no private report bodies", async () => {
   const h = harness({
     transport: async (path) =>
       path.includes("?limit=")
@@ -402,13 +424,13 @@ test("initial result metadata reads only one page per source and no private repo
         : undefined,
   });
   let m = await h.ready();
-  assert.equal(h.calls.filter((c) => c.path.includes("?limit=")).length, 3);
+  assert.equal(h.calls.filter((c) => c.path.includes("?limit=")).length, 1);
   assert.equal(m.hasMore, true);
   assert.equal(m.partial, true);
   assert.equal(h.stats().decrypts, 0);
   await m.more();
   m = h.render();
-  assert.equal(h.calls.filter((c) => c.path.includes("?limit=")).length, 6);
+  assert.equal(h.calls.filter((c) => c.path.includes("?limit=")).length, 2);
   h.close();
 });
 
@@ -558,7 +580,7 @@ test("expired result metadata refreshes the head instead of continuing an old cu
   h.active(true);
   await h.ready();
   const globals = h.calls.filter((c) => c.path.includes("?limit="));
-  assert.equal(globals.length, 6);
+  assert.equal(globals.length, 2);
   assert.ok(
     globals.every((c) => !c.path.includes("cursor=")),
     JSON.stringify(globals.map((c) => c.path)),
@@ -597,7 +619,7 @@ test("new results arriving during initial loading queue one fresh head read with
     }),
   );
   await h.ready();
-  assert.equal(h.calls.filter((c) => c.path.includes("?limit=")).length, 6);
+  assert.equal(h.calls.filter((c) => c.path.includes("?limit=")).length, 2);
   assert.equal(h.render().loading, false);
   h.close();
 });
@@ -626,7 +648,7 @@ test("a run result reported during loading needs no refresh when the pending fee
       }),
     );
     const r = await h.ready();
-    assert.equal(h.calls.filter((c) => c.path.includes("?limit=")).length, 3);
+    assert.equal(h.calls.filter((c) => c.path.includes("?limit=")).length, 1);
     assert.equal(r.unreadCounts.task_A, 1);
   } finally {
     h.close();
@@ -653,29 +675,29 @@ test("each newly reported ID refreshes once, a failed read waits for recovery, a
     await h.ready();
     h.observe("presult_A");
     await h.ready();
-    assert.equal(count(), 3);
+    assert.equal(count(), 1);
     items = [meta(), { ...meta(), resultId: "presult_new" }];
     h.observe("presult_A|presult_new");
     let r = await h.ready();
-    assert.equal(count(), 6);
+    assert.equal(count(), 2);
     assert.equal(r.unreadCounts.task_A, 2);
     fail = true;
     h.observe("presult_A|presult_new|presult_unknown");
     r = await h.ready();
     assert.ok(r.error);
     await h.ready();
-    assert.equal(count(), 9);
+    assert.equal(count(), 3);
     h.observe("presult_new|presult_unknown");
     await h.ready();
-    assert.equal(count(), 9);
+    assert.equal(count(), 3);
     fail = false;
     items = [];
     h.owner("owner_B");
     r = await h.ready();
-    assert.equal(count(), 15);
+    assert.equal(count(), 5);
     assert.equal(r.unreadCounts.task_A, undefined);
     await h.ready();
-    assert.equal(count(), 15);
+    assert.equal(count(), 5);
   } finally {
     h.close();
   }

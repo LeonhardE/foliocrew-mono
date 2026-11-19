@@ -1498,6 +1498,7 @@
     "previousConnection": "歷史連線"
   },
   "taskCenter": {
+    "retiredReportLink": "此舊報告已退役。",
     "title": "任務中心",
     "taskList": "任務",
     "noTasks": "暫無任務。",

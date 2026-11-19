@@ -402,26 +402,20 @@ with capped card heights and keyboard-focusable lists. Reduced-motion mode remov
 ## Private agent Inbox
 
 Results now live in each Task Center detail, grouped by their actual historical
-Agent connection. Removing an executor does not remove its history. The sidebar
-has no separate Inbox or foreground-report section. `/inbox` and the existing
-result/revision fragments resolve to the owning task and open its report dialog.
+Agent connection. Removing an executor does not remove its history. The
+`/inbox` path opens Task Center. Persistent result fragments resolve to the
+owning task and open its report dialog. A retired foreground bookmark shows
+a local notice without requesting the former report.
 Unsaved task edits take precedence over a pending deep link.
 
-Persistent and original foreground ciphertext retain their separate verification
-adapters and original evidence. The Worker verifies the pinned root, registry,
+The persistent report keeps its original signed evidence. The Worker verifies the pinned root, registry,
 Run/manifest/receipt, recipient and AEAD before returning report text. Historical
 revisions remain read only; old scheduling claims display Unknown unless the
 producer supplies verified trigger provenance. Current assignment does not infer
 which Agent produced a historical report.
 
-The historical report adapter uses the released shared linear link collector,
-while retaining its original entity decoding, content refusal and URL policy.
-Its decrypted private wrapper remains bounded to 196,608 bytes, with up to eight
-16,384-character sections; it does not inherit the persistent adapter's smaller
-private limit. Root, evidence, receipt, recipient and AEAD checks remain separate.
-
 Metadata loads independently with visible progress, bounded pagination and local
-retry. Each global source loads one page initially; further pages require Load more.
+retry. The persistent feed loads one page initially. Further pages require Load more.
 The selected task reads one task-history page and reuses its already verified Task Center state,
 without a second state GET or an automatic32-page attribution scan. Sparse legacy history remains
 explicitly incomplete until its cursor is exhausted. Selected-task pages are bounded to32 memory
@@ -690,8 +684,10 @@ and this read never replays a save or source mutation.
 
 Task homepage automatic reads use one fixed Owner-only
 `POST /api/v3/tasks/{vault}/overview/query` shared by task metadata, task-center capabilities,
-the three first report pages and the historical provider map. The closed response retains the
-original 32-task list, 20-row report limits and independent cursors. Up to four original encrypted
+the first persistent report page and the historical provider map. The browser
+accepts the earlier complete feed shape during rollout and displays persistent
+results. The response retains the 32-task list and 20-row persistent report page
+with its cursor. Up to four original encrypted
 task packets may be included; successful cached name versions are only bandwidth hints. All
 composition and original nested DTO parsing finishes before any part publishes, and the original
 two-worker name queue still verifies each uncached task. A null packet section does not complete

@@ -57,6 +57,7 @@ export function TaskCenterView({
     complete: boolean;
     loading: boolean;
     error: string;
+    retiredReportLink?: boolean;
     partial: boolean;
     busy: boolean;
   };
@@ -494,6 +495,11 @@ export function TaskCenterView({
           </button>
         </div>
       </header>
+      {resultState?.retiredReportLink && (
+        <div className={styles.notice} role="status">
+          {t("retiredReportLink")}
+        </div>
+      )}
       {failureLabel && (
         <InlineError
           message={failureLabel}

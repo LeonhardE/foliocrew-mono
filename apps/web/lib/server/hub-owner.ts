@@ -133,8 +133,9 @@ function taskDisplayResponse(path: string, body: unknown, request: unknown, uid:
       hubResponse("/api/v2/tasks", "GET", v.tasks) &&
       taskCenterResponse("/api/v3/task-center/capabilities", v.capabilities) &&
       persistentResponse(`/api/v2/persistent-results/${v.vaultId}`, "GET", v.feeds.persistent) &&
-      hubResponse("/api/v2/results", "GET", v.feeds.foreground) &&
-      hubResponse("/api/v2/results", "GET", v.feeds.archived) &&
+      (!v.feeds.foreground ||
+        (hubResponse("/api/v2/results", "GET", v.feeds.foreground) &&
+          hubResponse("/api/v2/results", "GET", v.feeds.archived))) &&
       persistentResponse("/api/v2/persistent-connections", "GET", v.connections) &&
       (v.packets === null ||
         hubResponse("/api/v2/tasks/packets/query", "POST", v.packets, undefined, ids))
