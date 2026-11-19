@@ -71,12 +71,32 @@ run "current_opaque_storage_has_index_exemptions_without_ttl" {
       output.index_exemptions.hub_task_versions_carrierJson.field == "carrierJson" &&
       output.index_exemptions.hub_result_revisions_bundleJson.collection == "hub_result_revisions" &&
       output.index_exemptions.hub_vault_lifecycle_history.field == "history" &&
+      output.index_exemptions.hub_persistent_publications_context.field == "context" &&
+      output.index_exemptions.hub_persistent_results_context.field == "context" &&
       output.index_exemptions.hub_persistent_publications_carrierJson.field == "carrierJson" &&
       output.index_exemptions.hub_persistent_runs_registryHistory.field == "registryHistory" &&
       output.index_exemptions.hub_persistent_plan_operations_proofJson.field == "proofJson" &&
       output.index_exemptions.hub_runtime_setup_intents_paired.field == "paired"
     )
     error_message = "Only implemented opaque fields lose indexes; no grant/history/operation/cursor document is assigned TTL."
+  }
+}
+
+run "report_cleanup_can_page_by_owner_and_document_id" {
+  command = plan
+  assert {
+    condition = (
+      toset(keys(google_firestore_field.report_cleanup_owner)) == toset(["hub_persistent_publications", "hub_persistent_results"]) &&
+      alltrue([for collection, field in google_firestore_field.report_cleanup_owner :
+        field.database == "agent-hub" &&
+        field.collection == collection &&
+        field.field == "context.ownerSubject" &&
+        length(field.ttl_config) == 0 &&
+        one(one(field.index_config).indexes).order == "ASCENDING" &&
+        one(one(field.index_config).indexes).query_scope == "COLLECTION"
+      ])
+    )
+    error_message = "Only the report owner subfield should have an ascending index for the two cleanup scans."
   }
 }
 

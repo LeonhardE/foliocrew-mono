@@ -116,8 +116,11 @@ native account credentials/setup, frozen Runs, report history and plan statement
 evidence use exact document lookups and inherit the same exemptions.
 This is deliberately separate from the shared database module's TTL input, which
 would enable TTL. No grants, refresh families, immutable histories, operation
-ACKs, manifests, deliveries or result references are deleted by TTL. All current
-lookups use bounded exact document IDs/get-many; no composite query index is added.
+ACKs, manifests, deliveries or result references are deleted by TTL. For bounded
+task cleanup, `hub_persistent_results` and `hub_persistent_publications` each have
+a collection-scope ascending override on `context.ownerSubject`. This supports
+owner equality and an ascending document ID cursor. The parent `context` maps
+retain their exemptions. No composite query index is added.
 
 The runtime alone receives data access conditioned on the exact Hub database.
 Plan/apply metadata permissions retain the same DB condition. Field GET/PATCH use
