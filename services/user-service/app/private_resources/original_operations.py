@@ -196,3 +196,30 @@ def original_fence_receipts(baseline, data):
         return result
     except (AttributeError, ContractError, TypeError, KeyError, ValueError, RecursionError):
         raise ContractError("authorization_unavailable") from None
+
+
+def original_key_renewal(vault, data, operation):
+    """Read only the requested original renewal from the verified same-Root baseline."""
+    try:
+        validate_schema("OperationIdentifier", operation)
+        owner = vault["ownerSubject"]
+        value = strict_json_loads(data, max_bytes=MAX_BASELINE_BYTES)
+        if (
+            value.keys()
+            != {"profile", "ownerSubject", "vaultId", "rootKeyId", "originalOperations"}
+            or value["profile"] != PROFILE
+            or any(value[key] != vault[key] for key in ("ownerSubject", "vaultId", "rootKeyId"))
+        ):
+            raise ValueError
+        records = value["originalOperations"]
+        if type(records) is not dict or not 1 <= len(records) <= MAX_BATCH:
+            raise ValueError
+        key = _sha(canonical_json([owner, "key-renewal", operation]))
+        fields = records.get("hub_operations/" + key)
+        if fields is None:
+            return None
+        record = _fields(fields)
+        _vault_operation(vault, key, record)
+        return record
+    except (AttributeError, ContractError, TypeError, KeyError, ValueError, RecursionError):
+        raise ContractError("authorization_unavailable") from None
