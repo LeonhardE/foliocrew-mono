@@ -274,6 +274,8 @@ function renderDashboard({
   let stateIndex = 0;
   const { default: Dashboard } = compile("../components/WorkspaceShell.tsx", {
     "next/navigation": { usePathname: () => "/", useRouter: () => ({ push() {}, replace() {} }) },
+    "./AuthProvider": { useAuth: () => ({ ownerConfigStatus: "ready" }) },
+    "./useWorkspaceJourney": { useWorkspaceJourney: () => () => {} },
     "@/lib/workspace-routes": compile("../lib/workspace-routes.ts", {}),
     react: {
       useEffect: () => {},

@@ -73,6 +73,8 @@ test("workspace navigation keeps one owner session without server transitions af
           throw new Error("Server navigation would reload the stale client and lose its keys");
         },
       },
+      "./AuthProvider": { useAuth: () => ({ ownerConfigStatus: "ready" }) },
+      "./useWorkspaceJourney": { useWorkspaceJourney: () => () => {} },
       "@/lib/workspace-routes": compile("../lib/workspace-routes.ts", {}),
       react: {
         useState(initial) {
