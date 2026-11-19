@@ -13,6 +13,37 @@
       "minimum": 0,
       "maximum": 9007199254740991
     },
+    "PrivateAuthorityLookup": {
+      "type": "object",
+      "properties": {
+        "contractVersion": { "const": "folioview.agent-workspace.v2.0" },
+        "profile": { "const": "folioview.private-authority-read.v1" },
+        "consumer": { "enum": ["hub", "portfolio"] },
+        "ownerSubject": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "vaultId": { "$ref": "#/$defs/Identifier" },
+        "nonce": { "$ref": "#/$defs/OperationIdentifier" },
+        "minimumRegistryEpoch": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 9007199254740991
+        },
+        "sourceId": { "anyOf": [{ "$ref": "#/$defs/Identifier" }, { "type": "null" }] }
+      },
+      "required": [
+        "contractVersion",
+        "profile",
+        "consumer",
+        "ownerSubject",
+        "vaultId",
+        "nonce",
+        "minimumRegistryEpoch",
+        "sourceId"
+      ],
+      "additionalProperties": false,
+      "if": { "properties": { "consumer": { "const": "portfolio" } } },
+      "then": { "properties": { "sourceId": { "$ref": "#/$defs/Identifier" } } },
+      "else": { "properties": { "sourceId": { "type": "null" } } }
+    },
     "ReportSourceRequest": {
       "type": "object",
       "properties": {

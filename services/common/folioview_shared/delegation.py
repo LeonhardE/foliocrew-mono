@@ -22,7 +22,7 @@ from jsonschema import Draft202012Validator
 from .delegated_keys import KeyCache, validate_jwks_url
 from .encrypted.errors import ContractError
 from .encrypted.jsonutil import canonical_json
-from .encrypted.private_resources import report_source_request
+from .encrypted.private_resources import private_authority_lookup, report_source_request
 from .identity import owner_key
 from .service_identity import (
     GoogleCallerVerifier,
@@ -35,6 +35,7 @@ from .service_identity import (
 
 DELEGATION_TYPE = "folioview-delegation+jwt"
 REPORT_DELEGATION_TYPE = "folioview-report-decision+jwt"
+PRIVATE_AUTHORITY_DELEGATION_TYPE = "folioview-private-authority+jwt"
 MAX_DELEGATION_SECONDS = 60
 MAX_DELEGATION_BYTES = 16_384
 _SAFE_INTEGER = 9_007_199_254_740_991
@@ -346,16 +347,45 @@ class DelegationVerifier:
         self, service_token: str, delegation_token: str, *, request: dict
     ) -> str:
         """Return the signed Owner UID for this exact authenticated User operation."""
+        return self._verify_bound_owner(
+            service_token,
+            delegation_token,
+            request=request,
+            typ=REPORT_DELEGATION_TYPE,
+            purpose="report_source_decision",
+            validator=report_source_request,
+            request_id="attemptId",
+        )
+
+    def verify_private_authority_read(
+        self, service_token: str, delegation_token: str, *, request: dict, consumer: str
+    ) -> str:
+        """Reject a delegation issued for another consumer, minimum epoch or source."""
+        if consumer not in ("hub", "portfolio") or (
+            type(request) is not dict or request.get("consumer") != consumer
+        ):
+            raise DelegationError("permission_denied")
+        return self._verify_bound_owner(
+            service_token,
+            delegation_token,
+            request=request,
+            typ=PRIVATE_AUTHORITY_DELEGATION_TYPE,
+            purpose="private_authority_read",
+            validator=private_authority_lookup,
+            request_id="nonce",
+        )
+
+    def _verify_bound_owner(
+        self, service_token, delegation_token, *, request, typ, purpose, validator, request_id
+    ):
         if self._source_service != "user":
             raise DelegationError("permission_denied")
-        caller, value = self._authenticate(
-            service_token, delegation_token, typ=REPORT_DELEGATION_TYPE
-        )
+        caller, value = self._authenticate(service_token, delegation_token, typ=typ)
         if (
             type(value) is not dict
             or value.keys()
             != {"iss", "aud", "sub", "iat", "exp", "jti", "caller", "purpose", "requestDigest"}
-            or value["purpose"] != "report_source_decision"
+            or value["purpose"] != purpose
             or not isinstance(value["sub"], str)
             or any(
                 type(value[key]) is not int or not 0 <= value[key] <= _SAFE_INTEGER
@@ -365,7 +395,7 @@ class DelegationVerifier:
             raise DelegationError("invalid_credentials")
         try:
             _owner(value["sub"])
-            exact_request = report_source_request(request)
+            exact_request = validator(request)
             subject = owner_key(value["sub"])
             digest = hashlib.sha256(canonical_json(exact_request)).hexdigest()
         except (ValueError, ContractError):
@@ -373,7 +403,7 @@ class DelegationVerifier:
         self._check_connection(caller, value)
         if (
             subject != exact_request["ownerSubject"]
-            or value["jti"] != exact_request["attemptId"]
+            or value["jti"] != exact_request[request_id]
             or value["requestDigest"] != digest
         ):
             raise DelegationError("permission_denied")
