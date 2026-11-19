@@ -64,6 +64,12 @@ AUTH_TABLES = {
 }
 
 
+def configured_native_vaults(store):
+    if os.getenv("HUB_NATIVE_USER_VAULT_AUTHORITY_ENABLED") == "1":
+        return scoped_user_vaults(store)
+    return ScopedUserVaults(store)
+
+
 class NativeUnit:
     """Expose native credential records only to their issuing resource."""
 
@@ -233,11 +239,7 @@ class NativeTransportService(OwnerConnectionService):
     def __init__(self, store, config, *, clock=time.time, user_vaults=None):
         super().__init__(store, clock=clock)
         self.config = NativeConfig(config)
-        self.user_vaults = user_vaults or (
-            scoped_user_vaults(store)
-            if os.getenv("HUB_NATIVE_USER_VAULT_AUTHORITY_ENABLED") == "1"
-            else ScopedUserVaults(store)
-        )
+        self.user_vaults = user_vaults or configured_native_vaults(store)
 
     def transact(self, callback):
         return self.store.transact(lambda u: callback(NativeUnit(u, self.config.resource)))

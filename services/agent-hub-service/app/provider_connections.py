@@ -466,15 +466,25 @@ class ProviderConnectionService(AgentCredentialService):
         activate = payload["action"] == "activate"
         if activate != ("credential" in command):
             raise ContractError("malformed_request")
+        path = operation_path(owner, vault, provider, operation)
+
+        def replay(saved):
+            if command_identity(saved["command"]) != command_identity(command):
+                raise ContractError("idempotency_conflict")
+            return self._receipt(saved, owner, vault, provider, operation)
+
+        user_scope = None
+        if owner == self.user_vaults.owner:
+            saved = self.store.transact(lambda unit: unit.get(path))
+            if saved is not None:
+                return replay(saved)
+            user_scope = self.user_vaults.read(uid, vault)
 
         def write(unit):
-            _, registry = _current(unit, owner, self.now(), vault)
-            path = operation_path(owner, vault, provider, operation)
             saved = unit.get(path)
             if saved is not None:
-                if command_identity(saved["command"]) != command_identity(command):
-                    raise ContractError("idempotency_conflict")
-                return self._receipt(saved, owner, vault, provider, operation)
+                return replay(saved)
+            _, registry = self._authority_registry(unit, owner, vault, user_scope)
             current = stored_slot(unit, owner, vault, provider)
             slot = None if current is None else current["slot"]
             args = dict(
@@ -512,8 +522,20 @@ class ProviderConnectionService(AgentCredentialService):
                 ):
                     raise ContractError("recipient_binding_mismatch")
                 credential = AgentCredentialService(
-                    self.store, audience=self.audience, client_ids=self.client_ids, clock=self.clock
-                ).command(uid, vault, connection, command["credential"], operation, _unit=unit)
+                    self.store,
+                    audience=self.audience,
+                    client_ids=self.client_ids,
+                    clock=self.clock,
+                    user_vaults=self.user_vaults,
+                ).command(
+                    uid,
+                    vault,
+                    connection,
+                    command["credential"],
+                    operation,
+                    _unit=unit,
+                    _user_scope=user_scope,
+                )
                 plan = prepare_provider_activation(
                     command["approval"],
                     **args,

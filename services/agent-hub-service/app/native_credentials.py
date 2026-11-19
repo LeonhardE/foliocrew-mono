@@ -31,23 +31,32 @@ class NativeCredentialService:
             audience=native.config.base.issuer,
             client_ids=[c.client_id for c in native.config.clients],
             clock=native.clock,
+            user_vaults=native.user_vaults,
         )
 
     def _principal(self, token):
         return self.native.authenticate(token)
 
+    def _user_scope(self, token):
+        if self.credentials.user_vaults.owner is None:
+            return None
+        return self.credentials._native_user_scope(self._principal(token))
+
     def _context(self, token):
+        user_scope = self._user_scope(token)
+
         def read(unit):
             p = self.native.principal(NativeUnit(unit, self.native.config.resource), token)
-            owner, _, _, conn = self.credentials._native(unit, p)
-            identity = stored_identity(unit, owner, p.vault_id, p.connection_id)
-            return p, conn, identity
+            owner, _, _, conn = self.credentials._native(unit, p, user_scope)
+            state = self.credentials._credential_state(
+                unit, owner, p.vault_id, p.connection_id, conn
+            )
+            return p, conn, state
 
         return self.store.transact(read)
 
     def inspect(self, token):
-        p, conn, identity = self._context(token)
-        state = self.credentials.state(p.owner_uid, p.vault_id, p.connection_id)
+        p, conn, state = self._context(token)
         from .agent_client_assets import client_metadata
 
         lease = state["lease"]
@@ -87,9 +96,11 @@ class NativeCredentialService:
         return {"setupIntentId": setup["setupIntentId"], "state": "awaiting_owner_approval"}
 
     def activation(self, token, intent):
+        user_scope = self._user_scope(token)
+
         def read(unit):
             p = self.native.principal(NativeUnit(unit, self.native.config.resource), token)
-            owner, _, _, conn = self.credentials._native(unit, p)
+            owner, _, _, conn = self.credentials._native(unit, p, user_scope)
             setup = self.credentials._setup(
                 unit, intent, owner, p.vault_id, p.connection_id, conn, live=False
             )

@@ -3,7 +3,7 @@
 import copy
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import legacy_connection_fixture as legacy
 import test_native_transport as accounts
@@ -14,13 +14,15 @@ from app.native_credentials import NativeCredentialService
 from app.native_transport import NativeTransportService
 from app.oauth import OAuthFailure, OAuthService
 from app.oauth_config import Client, OAuthConfig
-from app.store import document_path
+from app.store import document_path, private_resource_writer_fence_path
+from app.user_vault_authority import CurrentUserVault, ScopedUserVaults
 from app.vaults import VaultService
 from folioview_shared.encrypted.agent_credentials import AGENT_CREDENTIAL_PROFILE
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
 from folioview_shared.encrypted.crypto import signing_input_fingerprint
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import b64url_encode
+from folioview_shared.encrypted.private_resources import PrivateRegistryCursor
 
 PACKET = {"version": 1, "iv": b64url_encode(b"i" * 12), "ciphertext": b64url_encode(b"c" * 32)}
 
@@ -50,21 +52,22 @@ class NativeCredentialTests(unittest.TestCase):
             lambda u: u.get(document_path("hub_oauth_connections", self.f.owner, connection))
         )
 
-    def command(self):
+    def command(self, *, save_legacy=True):
         self.f.add_key("owned_sig", "agent_sig", "owned_agent", self.new)
         self.f.add_key("owned_enc", "agent_enc", "owned_agent", self.new)
         self.f.bundle = self.f.make_bundle(previous=self.f.registry, issued_at=1000)
         self.f.registry = self.f.verify(self.f.bundle, previous=self.f.registry)
-        VaultService(self.a.store, clock=lambda: self.a.now).update_registry(
-            UID,
-            self.f.vault,
-            {
-                "contractVersion": CONTRACT_VERSION,
-                "expectedVersion": 2,
-                "registryBundle": self.f.bundle,
-            },
-            "synthetic_owned_migration_registry_01",
-        )
+        if save_legacy:
+            VaultService(self.a.store, clock=lambda: self.a.now).update_registry(
+                UID,
+                self.f.vault,
+                {
+                    "contractVersion": CONTRACT_VERSION,
+                    "expectedVersion": 2,
+                    "registryBundle": self.f.bundle,
+                },
+                "synthetic_owned_migration_registry_01",
+            )
         operation = "synthetic_owned_migration_approve_01"
         binding = self.f.sign(
             {
@@ -110,6 +113,52 @@ class NativeCredentialTests(unittest.TestCase):
         with self.assertRaises(OAuthFailure):
             self.domain.offer(self.token, self.setup["setupIntentId"], PACKET)
         self.assertEqual(self.parent(self.old)["status"], "active")
+
+    def test_current_user_registry_approves_new_credential_and_receipt_survives_outage(self):
+        transfer = {
+            "ownerSubject": self.f.owner,
+            "vaultId": self.f.vault,
+            "rootKeyId": self.f.root_id,
+            "writerEpoch": 2,
+            "state": "transferred",
+            "transitionFingerprint": "a" * 64,
+        }
+        marker = private_resource_writer_fence_path(self.f.owner)
+        self.a.store.transact(lambda unit: unit.put(marker, transfer))
+        client = Mock()
+
+        def read(uid, vault, marker_value):
+            self.assertEqual((uid, vault, marker_value), (UID, self.f.vault, transfer))
+            return CurrentUserVault(
+                {"ownerSubject": self.f.owner},
+                PrivateRegistryCursor(self.f.registry, 2),
+                transfer,
+                self.a.now + 8,
+            )
+
+        client.read.side_effect = read
+        self.a.service.user_vaults = ScopedUserVaults(
+            self.a.store, owner=self.f.owner, client=client
+        )
+        self.domain = NativeCredentialService(
+            self.a.service, owner_url="https://owner.example/agents"
+        )
+        with self.assertRaises(OAuthFailure):
+            self.domain.inspect(self.token)
+        self.token = self.a.connect()["access_token"]
+        self.new = self.a.service.authenticate(self.token).connection_id
+        self.setup = self.domain.prepare(self.token)["setup"]
+        self.domain.offer(self.token, self.setup["setupIntentId"], PACKET)
+        command, operation = self.command(save_legacy=False)
+        service = self.domain.credentials
+        receipt = service.command(UID, self.f.vault, self.new, command, operation)
+        self.assertEqual(
+            self.domain.activation(self.token, self.setup["setupIntentId"])["activation"], PACKET
+        )
+        self.assertEqual(self.domain.inspect(self.token)["credentialStatus"], "expiring")
+        client.read.side_effect = ContractError("source_unavailable")
+        self.assertEqual(service.receipt(UID, self.f.vault, self.new, operation), receipt)
+        self.assertEqual(service.command(UID, self.f.vault, self.new, command, operation), receipt)
 
     def test_encrypted_activation_and_old_parent_revocation_are_atomic_and_retry_stable(self):
         self.domain.offer(self.token, self.setup["setupIntentId"], PACKET)
