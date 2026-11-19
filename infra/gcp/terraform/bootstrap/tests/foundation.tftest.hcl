@@ -494,9 +494,12 @@ run "market_cache_provisioning_uses_the_owned_database_and_denies_clients" {
       module.market_cache_database[0].location_id == "northamerica-northeast2" &&
       google_firebaserules_release.market_cache[0].name == "cloud.firestore/market-cache" &&
       strcontains(one(google_firebaserules_ruleset.market_cache[0].source).files[0].content, "allow read, write: if false;") &&
-      module.market_database_scope.database_resource_name == "projects/${var.project_id}/databases/(default)"
+      module.market_database_scope.database_resource_name == "projects/${var.project_id}/databases/(default)" &&
+      module.market_cache_runtime_scope[0].grants["runtime"].member == google_project_iam_member.market_cache.member &&
+      module.market_cache_runtime_scope[0].grants["runtime"].role == "roles/datastore.user" &&
+      module.market_cache_runtime_scope[0].grants["runtime"].condition.expression == "resource.type == 'firestore.googleapis.com/Database' && resource.name == 'projects/${var.project_id}/databases/market-cache'"
     )
-    error_message = "Prepare the protected Toronto cache and deny client access while Market uses its existing database."
+    error_message = "Prepare the protected Toronto cache, deny client access, and scope the existing runtime identity to the exact database."
   }
 }
 
