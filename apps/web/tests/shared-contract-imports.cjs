@@ -17,6 +17,17 @@ exports.rewrite = (code) => {
       JSON.stringify(pathToFileURL(target).href),
     )
     .replace(
+      /(["'])\.\.\/\.\.\/\.\.\/packages\/encrypted-workspace\/dist\/private-recovery\.mjs\1/g,
+      JSON.stringify(
+        pathToFileURL(
+          path.resolve(
+            __dirname,
+            "../../../packages/encrypted-workspace/dist/private-recovery.mjs",
+          ),
+        ).href,
+      ),
+    )
+    .replace(
       /(["'])\.\.\/\.\.\/\.\.\/packages\/encrypted-workspace\/valuation\/dist\/holdings\.mjs\1/g,
       JSON.stringify(
         pathToFileURL(
