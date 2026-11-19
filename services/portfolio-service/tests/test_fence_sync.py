@@ -17,7 +17,15 @@ from fastapi.testclient import TestClient
 from fixtures import MUTATION_OPERATION, OTHER_UID, SOURCE, UID, HoldingsFixture
 
 from app.api import get_service
-from app.fence_sync import HubFenceClient, fence_request, synchronize, validate_ack, workload_token
+from app.fence_sync import (
+    HubFenceClient,
+    UserFenceClient,
+    fence_client_for_owner,
+    fence_request,
+    synchronize,
+    validate_ack,
+    workload_token,
+)
 from app.holdings import PortfolioService
 from app.lifecycle import mutation_path
 from app.main import app
@@ -100,6 +108,52 @@ class FenceDeliveryTests(unittest.TestCase):
             asyncio.run(synchronize(restarted, UID, SOURCE, MUTATION_OPERATION, forbidden)), result
         )
         self.assertEqual(len(self.calls), 1)
+
+    def test_only_the_pinned_owner_moves_to_the_numbered_user_workload(self):
+        owner = owner_key(UID)
+        hub = "https://agent-hub-api-123456.northamerica-northeast2.run.app"
+        user = "https://user-api-123456.northamerica-northeast2.run.app"
+        self.assertIs(type(fence_client_for_owner(owner, hub, "", "")), HubFenceClient)
+        self.assertIs(
+            type(fence_client_for_owner(owner_key(OTHER_UID), hub, user, owner)), HubFenceClient
+        )
+        self.assertIs(type(fence_client_for_owner(owner, hub, user, owner)), UserFenceClient)
+        for bad in (
+            user + "/",
+            user.replace("123456", "123457"),
+            user.replace("northeast2", "northeast1"),
+        ):
+            with self.subTest(bad=bad):
+                self.code(
+                    "authorization_unavailable",
+                    lambda bad=bad: fence_client_for_owner(owner, hub, bad, owner),
+                )
+
+    def test_user_ack_uses_fixed_audience_and_failure_has_no_hub_fallback(self):
+        origin = "https://user-api-123456.northamerica-northeast2.run.app"
+
+        async def token(audience):
+            self.audiences.append(audience)
+            return TOKEN
+
+        def transport(request):
+            self.calls.append(request)
+            self.assertEqual(
+                str(request.url), origin + "/internal/v2/private-resources/source-fences"
+            )
+            self.assertEqual(json.loads(request.content), self.packet)
+            if len(self.calls) == 1:
+                raise httpx.ReadTimeout("synthetic lost User receipt")
+            return httpx.Response(200, json=ack(self.packet))
+
+        client = UserFenceClient(
+            origin, token_factory=token, transport=httpx.MockTransport(transport)
+        )
+        self.code("source_unavailable", lambda: self.deliver(client))
+        self.assertEqual(self.service.mutation(UID, SOURCE, MUTATION_OPERATION), self.pending)
+        self.assertEqual(self.deliver(client)["state"], "acknowledged")
+        self.assertEqual(self.audiences, [origin, origin])
+        self.assertEqual(len(self.calls), 2)
 
     def test_lost_ack_is_replayed_exactly_after_restart_without_double_advancing(self):
         committed = {}
