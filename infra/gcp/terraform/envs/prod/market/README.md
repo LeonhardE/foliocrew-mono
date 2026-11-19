@@ -57,7 +57,7 @@ full-template update path.
 ## Preserved runtime, access and release boundaries
 
 Keep one HTTP container on port `8080`, request-billed one-vCPU, `512Mi`, startup CPU boost, timeout
-`300s`, concurrency `80`, revision scaling `0..12`, the same seven runtime environment values and
+`300s`, concurrency `80`, revision scaling `0..12`, the declared runtime environment values and
 no secret references. The independent service-wide maximum remains `2`. Neither instance maximum
 nor process-local request/storage controls promise a whole-project spending cap.
 
@@ -114,6 +114,12 @@ state or establish current production acceptance. Full repository checks and the
 no-change plans remain required for integration.
 
 ## Existing database scope and historical evidence
+
+The first configuration phase of INF-022 serves retained cache entries from
+`(default)` during final replication. Apply the saved plan after the
+cache-only image is live, verify that all traffic serves the paused revision,
+and allow the previous request window to drain before reconciling the copy.
+Review the named-database switch and refresh resumption as separate plans.
 
 INF-022 uses `market_cache_database_enabled=true` in the administrator
 bootstrap root for the protected Toronto `market-cache` database and its named
