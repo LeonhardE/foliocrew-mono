@@ -121,3 +121,12 @@ def get_report_source_authority():
         caller=os.getenv("HUB_CATALOGUE_CALLER_EMAIL", ""),
         user_origin=os.getenv("HUB_USER_ORIGIN", ""),
     )
+
+
+def selected_report_owner():
+    if os.getenv("HUB_REPORT_SOURCE_AUTHORITY_ENABLED") != "1":
+        return None
+    owner = os.getenv("HUB_USER_PRIVATE_AUTHORITY_OWNER", "")
+    if re.fullmatch(r"[a-f0-9]{64}", owner) is None:
+        raise ContractError("authorization_unavailable")
+    return owner
