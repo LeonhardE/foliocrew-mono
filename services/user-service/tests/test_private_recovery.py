@@ -31,12 +31,17 @@ from folioview_shared.encrypted.private_resources import (
     recovery_request_digest,
 )
 from folioview_shared.identity import owner_key
+from folioview_shared.service_identity import UntrustedServiceCaller
 
 UID = "private-recovery-fixture"
 OWNER = owner_key(UID)
 VAULT = "vault_fixture"
 PATH = f"/api/v3/private-resources/vaults/{VAULT}/recovery-evidence"
 ARCHIVE = {"state": "active", "version": 4, "digest": "a" * 64}
+PROXY_HEADERS = {
+    "X-FolioView-Contract": CONTRACT_VERSION,
+    "X-FolioView-Proxy-Authorization": "Bearer synthetic_web_workload",
+}
 
 
 def registry_fixture(now=1000):
@@ -188,18 +193,36 @@ class RecoveryReadTests(unittest.TestCase):
                     ),
                     patch("app.private_resources.api.time.time", return_value=1000),
                     patch.object(self.heads, "install") as write,
+                    patch("app.private_resources.api.configured_owner_proxy") as configure,
                 ):
-                    response = client.post(PATH, json=self.request)
+                    bearer = configure.return_value.verify
+                    missing = client.post(
+                        PATH, json=self.request, headers={"X-FolioView-Contract": CONTRACT_VERSION}
+                    )
+                    self.assertEqual(missing.status_code, 401)
+                    ignored = client.post(
+                        PATH + "?owner=foreign", json=self.request, headers=PROXY_HEADERS
+                    )
+                    self.assertEqual(ignored.status_code, 400)
+                    bearer.assert_not_called()
+                    response = client.post(PATH, json=self.request, headers=PROXY_HEADERS)
                     self.assertEqual(response.status_code, 200)
                     self.assertEqual(response.headers["cache-control"], "no-store")
+                    self.assertEqual(response.headers["x-folioview-contract"], CONTRACT_VERSION)
                     self.assertEqual(response.json()["vaultVersion"], 18)
+                    bearer.assert_called_once_with("synthetic_web_workload")
                     for owner in ("foreign", owner_key("another account")):
                         self.assertEqual(
                             client.post(
-                                PATH, json={**self.request, "ownerSubject": owner}
+                                PATH,
+                                json={**self.request, "ownerSubject": owner},
+                                headers=PROXY_HEADERS,
                             ).status_code,
                             404,
                         )
+                    bearer.side_effect = UntrustedServiceCaller
+                    refused = client.post(PATH, json=self.request, headers=PROXY_HEADERS)
+                    self.assertEqual(refused.status_code, 403)
                 write.assert_not_called()
 
 

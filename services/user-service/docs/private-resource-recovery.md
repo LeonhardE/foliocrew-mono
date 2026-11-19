@@ -29,6 +29,15 @@ transaction boundary. The cutover must install the projection atomically with
 each recovered authority change or keep the route disabled. The original full
 recovery and legacy authority routes continue through the transition.
 
+The private Owner reads require the original Firebase Owner token and the
+Web proxy's Google-signed workload identity. The server checks
+`X-FolioView-Proxy-Authorization` against `USER_PRIVATE_OWNER_AUDIENCE` and
+the single reviewed subject/email in `USER_PRIVATE_OWNER_WEB_CALLER`. The
+audience is the configured User Cloud Run service URL. The application
+header preserves the signature for verification. Cloud Run may remove that
+signature from its own authorization header.
+[Cloud Run service authentication](https://docs.cloud.google.com/run/docs/authenticating/service-to-service)
+
 ## Original registry pages
 
 `POST /api/v3/private-resources/vaults/{vaultId}/registry-pages/read` serves

@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
-from test_private_recovery import ARCHIVE, OWNER, UID, VAULT, registry_fixture
+from test_private_recovery import ARCHIVE, OWNER, PROXY_HEADERS, UID, VAULT, registry_fixture
 
 from app.main import app
 from app.private_resources.api import owner_recovery_store
@@ -138,25 +138,31 @@ class RegistryPageTests(unittest.TestCase):
         request = self.request(end.head())
         with TestClient(app) as client:
             self.assertEqual(client.post(PATH, json=request).status_code, 401)
-            with patch.dict(
-                app.dependency_overrides,
-                {
-                    require_google_user: lambda: CurrentUser(
-                        uid=UID,
-                        email=None,
-                        displayName=None,
-                        photoURL=None,
-                    ),
-                    owner_recovery_store: lambda: self.heads,
-                },
+            with (
+                patch.dict(
+                    app.dependency_overrides,
+                    {
+                        require_google_user: lambda: CurrentUser(
+                            uid=UID,
+                            email=None,
+                            displayName=None,
+                            photoURL=None,
+                        ),
+                        owner_recovery_store: lambda: self.heads,
+                    },
+                ),
+                patch("app.private_resources.api.configured_owner_proxy") as configure,
             ):
-                response = client.post(PATH, json=request)
+                response = client.post(PATH, json=request, headers=PROXY_HEADERS)
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.headers["cache-control"], "no-store")
                 self.assertEqual(len(response.json()["bundles"]), 4)
+                configure.return_value.verify.assert_called_once_with("synthetic_web_workload")
                 self.assertEqual(
                     client.post(
-                        PATH, json={**request, "ownerSubject": "another_owner"}
+                        PATH,
+                        json={**request, "ownerSubject": "another_owner"},
+                        headers=PROXY_HEADERS,
                     ).status_code,
                     404,
                 )
