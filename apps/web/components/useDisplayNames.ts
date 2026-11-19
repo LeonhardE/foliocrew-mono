@@ -38,7 +38,7 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
     workspace.phase === "unlocked" &&
     !workspace.needsDeviceApproval &&
     workspace.vault
-      ? `${auth.sessionKey}:${workspace.vault.vaultId}:${workspace.vault.rootKeyId}:${workspace.vaultGeneration}`
+      ? `${auth.sessionKey}:${workspace.vault.vaultId}:${workspace.vault.rootKeyId}:${workspace.vaultGeneration}${workspace.vault.userAuthority ? ":user" : ""}`
       : null;
   const [state, setState] = useState<{
     scope: string | null;
@@ -108,20 +108,51 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
       };
       try {
         check();
-        const response = await untilSignal(
-          start.auth.requestPrivate("agent-hub", path, start.auth.sessionKey!, {
-            method: options.packet ? "POST" : "GET",
-            signal: abort.signal,
-            coalesceDisplay: !options.packet && !options.fresh,
-            ...(options.display ? { coalesceDisplayScope: options.display.coalesceScope } : {}),
-            ...(options.packet ? { json: options.packet.body } : {}),
-            headers: {
-              "X-FolioView-Contract": C,
-              ...(options.packet ? { "Idempotency-Key": options.packet.operationId } : {}),
-            },
-          }),
-          abort.signal,
-          () => Error(timedOut ? "timeout" : "cancelled"),
+        const vault = start.workspace.vault!;
+        const transferred = Boolean(vault.userAuthority);
+        if (transferred && path.endsWith("/capabilities"))
+          return {
+            contractVersion: C,
+            profile: P,
+            enabled: true,
+            maxSources: 10,
+            maxNameLength: 80,
+          };
+        const [, , , , , , sourceId, action, operation] = path.split("/");
+        const request = transferred
+          ? start.auth.requestPrivate(
+              "user",
+              `/api/v3/private-resources/vaults/${vault.vaultId}/display-names/${options.packet ? "write" : "read"}`,
+              start.auth.sessionKey!,
+              {
+                method: "POST",
+                signal: abort.signal,
+                json: {
+                  contractVersion: C,
+                  profile: P,
+                  ownerSubject: vault.archive?.ownerSubject,
+                  vaultId: vault.vaultId,
+                  sourceId: sourceId ?? null,
+                  operationId:
+                    options.packet?.operationId ?? (action === "operations" ? operation : null),
+                  ...(options.packet ? { command: options.packet.body.command } : {}),
+                },
+                headers: { "X-FolioView-Contract": C },
+              },
+            )
+          : start.auth.requestPrivate("agent-hub", path, start.auth.sessionKey!, {
+              method: options.packet ? "POST" : "GET",
+              signal: abort.signal,
+              coalesceDisplay: !options.packet && !options.fresh,
+              ...(options.display ? { coalesceDisplayScope: options.display.coalesceScope } : {}),
+              ...(options.packet ? { json: options.packet.body } : {}),
+              headers: {
+                "X-FolioView-Contract": C,
+                ...(options.packet ? { "Idempotency-Key": options.packet.operationId } : {}),
+              },
+            });
+        const response = await untilSignal(request, abort.signal, () =>
+          Error(timedOut ? "timeout" : "cancelled"),
         );
         check();
         if (response.status === 404 && options.missing) {
@@ -233,7 +264,10 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
           w.sources.map((s) => [displayRefKey(s.resourceRef), s.sourceEpoch]).sort(),
         ]);
       const version = context(start.workspace);
-      const display = !refreshRoot ? start.workspace.resourceDisplay?.prepare() : null;
+      const display =
+        !refreshRoot && !start.workspace.vault?.userAuthority
+          ? start.workspace.resourceDisplay?.prepare()
+          : null;
       const displayCurrent = () => {
         try {
           display?.assertCurrent();

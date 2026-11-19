@@ -129,6 +129,35 @@ function harness(transport) {
     },
   };
 }
+test("transferred aliases select User with the signed vault scope", async () => {
+  const ownerSubject = "b".repeat(64);
+  const h = harness(({ service, path, options }) => {
+    assert.equal(service, "user");
+    assert.equal(path, "/api/v3/private-resources/vaults/vault/display-names/read");
+    assert.equal(options.method, "POST");
+    assert.deepEqual(JSON.parse(JSON.stringify(options.json)), {
+      contractVersion: C,
+      profile: P,
+      ownerSubject,
+      vaultId: "vault",
+      sourceId: null,
+      operationId: null,
+    });
+    return response(wrap({ items: [] }));
+  });
+  try {
+    h.workspace({
+      vault: { vaultId: "vault", rootKeyId: "root", archive: { ownerSubject }, userAuthority: {} },
+    });
+    const state = await h.ready();
+    assert.equal(state.enabled, true);
+    assert.equal(h.calls.filter((call) => call.service === "user").length, 1);
+    assert.equal(state.name(h.r), null);
+  } finally {
+    h.close();
+  }
+});
+
 test("names load once across navigation, remain scoped to unlocked visible Owner, and never auto-submit", async () => {
   const h = harness();
   try {
