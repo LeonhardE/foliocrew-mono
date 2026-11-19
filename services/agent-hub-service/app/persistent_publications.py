@@ -20,7 +20,6 @@ from folioview_shared.encrypted.resource_consents import check_resource_consent
 from folioview_shared.encrypted.schema import validate_schema
 from folioview_shared.identity import owner_key
 
-from .fences import require_current_bindings
 from .persistent_agents import snapshot
 from .preparations import KINDS, source_versions
 from .resource_consents import ResourceConsentService, stored_consent
@@ -171,6 +170,7 @@ class PersistentPublicationService(ResourceConsentService):
         context,
         sources,
         local_source_fence=True,
+        user_scope=None,
     ):
         policy = stored_consent(unit, owner, vault, connection)
         if policy is None:
@@ -205,8 +205,8 @@ class PersistentPublicationService(ResourceConsentService):
             now=self.now(),
         )
         if local_source_fence:
-            require_current_bindings(
-                unit, owner, [{"ref": ref, "sourceEpoch": context["sourceEpoch"]}]
+            self._require_bindings(
+                unit, owner, [{"ref": ref, "sourceEpoch": context["sourceEpoch"]}], user_scope
             )
         return decision
 
@@ -248,35 +248,51 @@ class PersistentPublicationService(ResourceConsentService):
             raise ContractError("recipient_binding_mismatch")
         fingerprint = signing_input_fingerprint(carrier["proof"])
 
-        def duplicate(unit):
-            owner, row, registry, conn = self._context(unit, uid, vault, connection)
+        owner = owner_key(uid)
+
+        def saved_result(unit):
             saved = stored_publication(unit, owner, vault, operation)
-            if saved is not None:
-                if (
-                    saved["fingerprint"] != fingerprint
-                    or saved["context"]["connectionId"] != connection
-                ):
-                    raise ContractError("idempotency_conflict")
-                self._check_retry_carrier(saved["carrierJson"], carrier)
-                return saved["receipt"], None
-            return None, (row["version"], registry.checkpoint_digest, conn["clientId"])
+            if saved is None:
+                return None
+            if (
+                saved["fingerprint"] != fingerprint
+                or saved["context"]["connectionId"] != connection
+            ):
+                raise ContractError("idempotency_conflict")
+            self._check_retry_carrier(saved["carrierJson"], carrier)
+            return saved["receipt"]
+
+        if owner == self.user_vaults.owner:
+
+            def receipt(unit):
+                self._receipt_owner(unit, uid, vault, connection)
+                return saved_result(unit)
+
+            prior = self.store.transact(receipt)
+            if prior is not None:
+                return prior
+        initial_scope = self.user_vaults.read(uid, vault)
+
+        def duplicate(unit):
+            _, row, registry, conn = self._context(
+                unit, uid, vault, connection, user_scope=initial_scope
+            )
+            result = saved_result(unit)
+            return result, (row["version"], registry.checkpoint_digest, conn["clientId"])
 
         prior, fence = self.store.transact(duplicate)
         if prior is not None:
             return prior
         sources = source_versions(self.catalogue, uid)
+        current_scope = self.user_vaults.read(uid, vault) if initial_scope is not None else None
 
         def write(unit):
-            owner, row, registry, conn = self._context(unit, uid, vault, connection)
-            saved = stored_publication(unit, owner, vault, operation)
-            if saved is not None:
-                if (
-                    saved["fingerprint"] != fingerprint
-                    or saved["context"]["connectionId"] != connection
-                ):
-                    raise ContractError("idempotency_conflict")
-                self._check_retry_carrier(saved["carrierJson"], carrier)
-                return saved["receipt"]
+            owner, row, registry, conn = self._context(
+                unit, uid, vault, connection, user_scope=current_scope
+            )
+            result = saved_result(unit)
+            if result is not None:
+                return result
             if conn["status"] != "active":
                 raise ContractError("key_authorization_required")
             identity = self._identity(unit, owner, vault, connection, conn, active=True)
@@ -310,7 +326,7 @@ class PersistentPublicationService(ResourceConsentService):
                     source = sources.get(canonical_json(b["ref"]))
                     if source is None or source["sourceEpoch"] != b["sourceEpoch"]:
                         raise ContractError("source_unavailable")
-                require_current_bindings(unit, owner, meta["resourceBindings"])
+                self._require_bindings(unit, owner, meta["resourceBindings"], current_scope)
                 # The content revision is the producer task version. Authority
                 # CAS also permits an explicit reassignment of that version.
                 if c is not None and context["revision"] < c["revision"]:
@@ -330,6 +346,7 @@ class PersistentPublicationService(ResourceConsentService):
                     registry=registry,
                     context=context,
                     sources=sources,
+                    user_scope=current_scope,
                 )
                 path = source_path(owner, vault, connection, context["ref"])
                 old = unit.get(path)

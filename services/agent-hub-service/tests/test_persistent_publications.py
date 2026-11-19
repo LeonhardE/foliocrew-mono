@@ -1,6 +1,8 @@
 """Synthetic Root publications enforce live producer, policy and authority CAS."""
 
 import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import test_persistent_identity_store as identities
 import test_persistent_resource_store as consents
@@ -9,9 +11,13 @@ from test_oauth import TASK
 from test_persistent_content import PersistentContentFixture
 
 from app.fences import FenceService
+from app.native_transport import USER_AUTHORITY_TRANSITION
 from app.persistent_publications import PersistentPublicationService
+from app.store import document_path, private_resource_writer_fence_path
 from app.tasks import TaskService
+from app.user_vault_authority import CurrentUserVault, ScopedUserVaults
 from folioview_shared.encrypted.crypto import signing_input_fingerprint
+from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import canonical_json
 from folioview_shared.encrypted.persistent_content import digest, seal_persistent_content
 
@@ -99,6 +105,75 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual(receipt.pop("envelope"), carrier)
         self.assertEqual(receipt, first)
         self.rejects("idempotency_conflict", lambda: self.publish(c, self.seal(c)))
+
+    def test_current_user_fences_new_controls_and_preserves_their_exact_receipts(self):
+        owner, vault = self.f.owner, self.f.vault
+        account = identities.CONNECTION
+        marker = {
+            "ownerSubject": owner,
+            "vaultId": vault,
+            "state": "transferred",
+            "writerEpoch": 2,
+            "transitionFingerprint": "d" * 64,
+        }
+        path = private_resource_writer_fence_path(owner)
+        connection = document_path("hub_oauth_connections", owner, account)
+
+        def install(unit):
+            record = unit.get(connection)
+            unit.put(path, marker)
+            unit.put(
+                connection, {**record, USER_AUTHORITY_TRANSITION: marker["transitionFingerprint"]}
+            )
+
+        self.fx.store.transact(install)
+        refs = [self.fx.a, self.fx.b]
+        core = {
+            "ownerSubject": owner,
+            "vaultId": vault,
+            "vaultVersion": 18,
+            "rootJwk": self.f.root_public,
+        }
+
+        def authority(eligible):
+            return CurrentUserVault(
+                {
+                    **core,
+                    "sources": [
+                        {"binding": {"ref": ref, "sourceEpoch": 1}, "state": "active"}
+                        for ref in eligible
+                    ],
+                },
+                SimpleNamespace(registry=self.f.registry),
+                marker,
+                self.fx.now + 8,
+            )
+
+        client = Mock()
+        client.read.return_value = authority(refs)
+        scopes = ScopedUserVaults(self.fx.store, owner=owner, client=client)
+        self.fx.service.user_vaults = scopes
+        self.service.user_vaults = scopes
+        with patch(
+            "app.resource_consents.require_current_bindings",
+            side_effect=AssertionError("legacy source"),
+        ):
+            approval = self.fx.command(
+                resources=[self.fx.proposal(ref=refs[1], ident="permission_B", floor=1)]
+            )
+            approved = self.fx.apply(approval)
+            publication = self.context()
+            carrier = self.seal(publication)
+            self.fx.catalogue.callback = lambda: setattr(
+                client.read, "return_value", authority(refs[1:])
+            )
+            self.rejects("version_conflict", lambda: self.publish(publication, carrier))
+            client.read.return_value = authority(refs)
+            committed = self.publish(publication, carrier)
+
+        client.read.side_effect = ContractError("source_unavailable")
+        self.assertEqual(self.fx.apply(approval), approved)
+        self.assertEqual(self.publish(publication, carrier), committed)
 
     def test_new_source_versions_reuse_policy_and_skip_missing_revisions(self):
         first = self.publish(self.context())
