@@ -501,6 +501,8 @@ def validate_target(value):
         require(not has_portfolio_trust or target == "portfolio")
         has_user_trust = "userHubTrust" in value
         require(not has_user_trust or target == "user")
+        has_user_rollout = "userPrivateRollout" in value
+        require(not has_user_rollout or has_user_trust)
         has_browser_origins = "browserOrigins" in value
         require(not has_browser_origins or target in MANAGED_BROWSER_ORIGIN_TARGETS)
         fields(
@@ -508,6 +510,7 @@ def validate_target(value):
             TARGET_TOP_FIELDS
             | ({"build"} if target == "web" else set())
             | ({"userHubTrust"} if has_user_trust else set())
+            | ({"userPrivateRollout"} if has_user_rollout else set())
             | ({"portfolioHubTrust"} if has_portfolio_trust else set())
             | ({"webOwner"} if has_web_owner else set())
             | ({"workspaceEdge"} if has_workspace_edge else set())
@@ -626,7 +629,7 @@ def validate_target(value):
             base = {
                 name: item
                 for name, item in value.items()
-                if name not in {"userHubTrust", "browserOrigins"}
+                if name not in {"userHubTrust", "userPrivateRollout", "browserOrigins"}
             }
             configuration = trust["configuration"]
             require(type(configuration) is dict)
@@ -635,6 +638,27 @@ def validate_target(value):
             validate_user_hub_trust(
                 configuration, base, trust["hubDeployment"], trust.get("webDeployment")
             )
+            if has_user_rollout:
+                rollout = value["userPrivateRollout"]
+                require(type(rollout) is list and len(rollout) == 4)
+                phase, owner, subject, account = rollout
+                require(phase in ("prepare", "active"))
+                matches(re.compile(r"[a-f0-9]{64}\Z"), owner)
+                matches(HUB_SUBJECT, subject)
+                matches(ACCOUNT, account)
+                require(trust["hubDeployment"] is not None and "webDeployment" in trust)
+                require(
+                    subject
+                    not in (configuration["hubSubject"], configuration["ownerRecoveryWebSubject"])
+                )
+                require(
+                    account
+                    not in (
+                        base["inputs"]["runtime_account_id"],
+                        trust["hubDeployment"]["inputs"]["runtime_account_id"],
+                        trust["webDeployment"]["runtimeAccountId"],
+                    )
+                )
         if has_web_owner:
             owner = value["webOwner"]
             fields(owner, {"server", "public"})
@@ -690,6 +714,14 @@ def terraform_inputs(instance):
     result = {"deployment": dict(value["inputs"])}
     if "userHubTrust" in value:
         result["hub_trust"] = dict(value["userHubTrust"]["configuration"]["environment"])
+    if "userPrivateRollout" in value:
+        phase, owner, subject, account = value["userPrivateRollout"]
+        result["private_rollout"] = {
+            "phase": phase,
+            "owner_subject": owner,
+            "portfolio_subject": subject,
+            "portfolio_account_id": account,
+        }
     if "portfolioHubTrust" in value:
         result["hub_trust"] = dict(value["portfolioHubTrust"]["configuration"]["environment"])
     if "webOwner" in value:
@@ -702,6 +734,29 @@ def terraform_inputs(instance):
             "public_key": value["workspaceEdge"]["publicKey"],
         }
     return result
+
+
+def add_user_private_rollout(
+    instance, portfolio, *, phase, owner, portfolio_subject, expected_sha256
+):
+    """Attach a scoped stage to the reviewed User and Portfolio deployment pair."""
+    instance = parse_target(canonical(instance))
+    portfolio = parse_target(canonical(portfolio))
+    require(instance["target"] == "user" and digest(instance) == expected_sha256)
+    require(portfolio["target"] == "portfolio")
+    for key in ("instanceId", "project", "region", "source", "artifactRepository"):
+        require(instance[key] == portfolio[key])
+    require(instance["adoption"]["serviceUid"] != portfolio["adoption"]["serviceUid"])
+    result = {
+        **instance,
+        "userPrivateRollout": [
+            phase,
+            owner,
+            portfolio_subject,
+            portfolio["inputs"]["runtime_account_id"],
+        ],
+    }
+    return parse_target(canonical(result))
 
 
 def add_workspace_edge(instance, edge, *, expected_sha256):
