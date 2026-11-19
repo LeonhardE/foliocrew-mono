@@ -115,11 +115,10 @@ no-change plans remain required for integration.
 
 ## Existing database scope and historical evidence
 
-The first configuration phase of INF-022 serves retained cache entries from
-`(default)` during final replication. Apply the saved plan after the
-cache-only image is live, verify that all traffic serves the paused revision,
-and allow the previous request window to drain before reconciling the copy.
-Review the named-database switch and refresh resumption as separate plans.
+This configuration phase of INF-022 serves retained cache entries from
+`market-cache`. Apply its reviewed plan after the paused source has drained
+and final reconciliation matches the two scoped inventories. Verify cached
+queries from the named database before resuming provider refreshes.
 
 INF-022 uses `market_cache_database_enabled=true` in the administrator
 bootstrap root for the protected Toronto `market-cache` database and its named
@@ -129,9 +128,9 @@ before copying cache entries.
 
 `google_project_iam_member.market_cache` remains administrator-owned with its exact condition
 limiting the selected runtime's existing Datastore User role to this project's `(default)`
-database. The shared scope-only module creates no second grant or database owner; application
-storage still selects `(default)`. Preserve the already-correct condition without repeating IAM
-replacement. The [database migration runbook](database-iam-migration.md) describes the separate
+database. The separate named-database grant serves the current configuration.
+Revoke the existing default-database grant after cutover and rollback verification.
+The [database migration runbook](database-iam-migration.md) describes the separate
 historical migration and recovery process, outside normal Market execution permissions.
 
 The [pseudonymized first-adoption read-only fixture](adoption-readonly-results-2026-10-23.json) records its own
