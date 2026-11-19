@@ -1,5 +1,6 @@
 """Synthetic Hub-to-Portfolio authority replication; no production credentials."""
 
+import hashlib
 import json
 import os
 import tempfile
@@ -12,13 +13,21 @@ from fastapi.testclient import TestClient
 from fixtures import OTHER_UID, SOURCE, UID, HoldingsFixture
 
 from app.api import get_service
-from app.authority_sync import HubAuthorityClient, configured_client, get_authority_client
+from app.authority_sync import (
+    USER_AUTHORITY_PATH,
+    HubAuthorityClient,
+    UserAuthorityClient,
+    configured_client,
+    get_authority_client,
+)
 from app.holdings import PortfolioService
 from app.main import app
 from app.store import SQLitePortfolioStore, StoreUnavailable, document_path
 from folioview_shared.auth import CurrentUser, require_google_user
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
 from folioview_shared.encrypted.errors import ContractError
+from folioview_shared.encrypted.jsonutil import canonical_json
+from folioview_shared.encrypted.private_resources import PrivateRegistryCursor
 from folioview_shared.encrypted.schema import validate_schema
 from folioview_shared.identity import owner_key
 
@@ -41,6 +50,43 @@ def projection(fixture, *, version=1, history=None, epoch=1):
         "writerKeyIds": [fixture.kid("device_sig")],
         "recipientKeyIds": sorted([fixture.kid("device_enc"), fixture.kid("recovery_enc")]),
     }
+
+
+def transferred_projection(f, *, bundles=1):
+    owners = {
+        name: value
+        for name, value in f.certificates.items()
+        if value["role"] in {"device_sig", "device_enc", "recovery_enc"}
+    }
+    history = [f.make_bundle(previous=f.registry, certificates=owners)]
+    current = f.verify(history[0])
+    start = PrivateRegistryCursor(current, 2).head()
+    for _ in range(1, bundles):
+        following = f.make_bundle(previous=current, certificates=owners)
+        current = f.verify(following, previous=current)
+        history.append(following)
+    change = {
+        "contractVersion": CONTRACT_VERSION,
+        "profile": "folioview.owner-registry-transition.v1",
+        "ownerSubject": f.owner,
+        "vaultId": f.vault,
+        "rootKeyId": f.root_id,
+        "operationId": "synthetic_registry_transition_01",
+        "previousVaultVersion": 1,
+        "nextVaultVersion": 2,
+        "previousHead": PrivateRegistryCursor(f.registry, 1).head(),
+        "nextHead": start,
+        "ownerKeyIds": sorted(value["keyId"] for value in owners.values()),
+        "archive": {"state": "active", "version": 1, "digest": "a" * 64},
+        "issuedAt": f.registry.issued_at + 1,
+    }
+    return {
+        **projection(f, version=bundles + 1, history=history),
+        "vaultVersion": bundles + 1,
+        "registry": PrivateRegistryCursor(current, 2).head(),
+        "registryStart": start,
+        "signedTransition": f.sign(change, "root"),
+    }, current
 
 
 class AuthorityReplicationTests(unittest.TestCase):
@@ -69,6 +115,77 @@ class AuthorityReplicationTests(unittest.TestCase):
         document["version"] = 78
         self.assertEqual(first, self.service.synchronize_authority(UID, SOURCE, document))
         self.assertEqual(self.service.metadata(UID, SOURCE)["authorityVersion"], 1)
+
+    def test_transferred_authority_preserves_current_storage_and_denies_old_rollback(self):
+        f = self.fixture
+        self.service.synchronize_authority(UID, SOURCE, projection(f))
+        transferred, registry = transferred_projection(f, bundles=33)
+        self.assertEqual(transferred["registry"]["registryEpoch"], 2)
+        published = self.service.synchronize_authority(UID, SOURCE, transferred)
+        self.assertEqual(published["authorityVersion"], 2)
+        self.assertEqual(self.service.metadata(UID, SOURCE)["authorityVersion"], 2)
+        self.assertEqual(self.service.synchronize_authority(UID, SOURCE, transferred), published)
+        self.code(
+            "rollback_detected",
+            lambda: self.service.synchronize_authority(UID, SOURCE, projection(f)),
+        )
+        self.code(
+            "rollback_detected",
+            lambda: self.service.synchronize_authority(
+                UID, SOURCE, {**transferred, "vaultVersion": transferred["vaultVersion"] - 1}
+            ),
+        )
+        f.registry = registry
+        written = f.write(self.service)
+        self.assertEqual(written["revision"], 1)
+        self.assertEqual(self.service.metadata(UID, SOURCE)["revision"], 1)
+
+    def test_user_transport_is_bound_to_the_requested_source_epoch_and_nonce(self):
+        f = self.fixture
+        origin = "https://user-api-123456.northamerica-northeast2.run.app"
+        body = {
+            "contractVersion": CONTRACT_VERSION,
+            "vaultId": f.vault,
+            "nonce": "synthetic_lookup_operation_00001",
+            "minimumRegistryEpoch": 2,
+        }
+        transferred, _ = transferred_projection(f)
+        projection_only = {k: v for k, v in transferred.items() if k not in ("version", "active")}
+        projection_only["archive"] = {"state": "active", "version": 1, "digest": "a" * 64}
+        projection_only["sourcesDigest"] = "b" * 64
+        calls = []
+        reply = {}
+
+        def route(request):
+            self.assertEqual(str(request.url), origin + USER_AUTHORITY_PATH)
+            self.assertEqual(request.headers["x-folioview-delegation"], DELEGATION)
+            packet = json.loads(request.content)
+            self.assertEqual(packet["sourceId"], SOURCE)
+            self.assertEqual(packet["ownerSubject"], f.owner)
+            calls.append(request)
+            return httpx.Response(
+                200,
+                headers={"X-FolioView-Contract": CONTRACT_VERSION},
+                json={
+                    **{k: packet[k] for k in ("contractVersion", "profile", "consumer", "nonce")},
+                    "requestDigest": hashlib.sha256(canonical_json(packet)).hexdigest(),
+                    "authority": projection_only,
+                    **reply,
+                },
+            )
+
+        client = UserAuthorityClient(
+            origin, token_factory=lambda audience: TOKEN, transport=httpx.MockTransport(route)
+        )
+        self.assertEqual(client.read_user(UID, SOURCE, DELEGATION, body), transferred)
+        for label, value in (("nonce", "synthetic_other_nonce_0002"), ("requestDigest", "0" * 64)):
+            reply.clear()
+            reply[label] = value
+            self.code(
+                "recipient_binding_mismatch",
+                lambda: client.read_user(UID, SOURCE, DELEGATION, body),
+            )
+        self.assertEqual(len(calls), 3)
 
     def test_current_owner_source_and_root_are_independent_of_projection_claims(self):
         f = self.fixture

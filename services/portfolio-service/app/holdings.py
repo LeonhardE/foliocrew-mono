@@ -25,6 +25,10 @@ from folioview_shared.encrypted.envelope import (
 )
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import b64url_decode, canonical_json, strict_json_loads
+from folioview_shared.encrypted.private_resources import (
+    PrivateRegistryCursor,
+    verify_private_registry_transition,
+)
 from folioview_shared.encrypted.schema import validate_schema
 from folioview_shared.identity import owner_key
 
@@ -66,6 +70,7 @@ _AUTHORITY_FIELDS = frozenset(
         "recipientKeyIds",
     }
 )
+_TRANSFER_FIELDS = frozenset({"registry", "registryStart", "signedTransition", "vaultVersion"})
 _RECEIPT_FIELDS = frozenset(
     {
         "contractVersion",
@@ -175,8 +180,12 @@ def _authority(
     Retained consecutive signed directories preserve high-water/revocation checks
     across restart. Storage limits bound this replica; overflow fails closed.
     """
-    if type(document) is not dict or set(document) != _AUTHORITY_FIELDS:
+    if type(document) is not dict or set(document) not in (
+        _AUTHORITY_FIELDS,
+        _AUTHORITY_FIELDS | _TRANSFER_FIELDS,
+    ):
         raise StoreUnavailable
+    transferred = "registryStart" in document
     if document["ownerSubject"] != owner or document["sourceId"] != source:
         raise StoreUnavailable
     _positive(document["version"])
@@ -195,8 +204,11 @@ def _authority(
     _key_ids(document["writerKeyIds"])
     _key_ids(document["recipientKeyIds"])
     history = document["registryHistory"]
-    if type(history) is not list or not 1 <= len(history) <= 32:
+    if type(history) is not list or not 1 <= len(history) <= (128 if transferred else 32):
         raise StoreUnavailable
+    if transferred:
+        _positive(document["vaultVersion"])
+        return Authority(document, _transferred_registry(document, owner, now))
     # Reuse only identical public signature history within one read attempt.
     # Each source still validates its own current row, root, epoch and lifecycle.
     if (
@@ -247,6 +259,62 @@ def _authority(
         if registry.issued_at > now:
             raise ContractError("registry_conflict")
     return Authority(document, registry)
+
+
+def _transferred_registry(document, owner, now, previous=None):
+    history = document["registryHistory"]
+    cursor = verify_private_registry_transition(
+        document["signedTransition"],
+        first_bundle=history[0],
+        root_jwk=document["rootJwk"],
+        owner_subject=owner,
+        vault_id=document["vaultId"],
+        pinned_root_key_id=document["rootKeyId"],
+        authenticated_start=document["registryStart"],
+        previous=previous,
+        now=now,
+    )
+    root = document["rootJwk"]
+    memo = RegistryCertificateMemo()
+    registry = cursor.registry
+    for bundle in history[1:]:
+        registry = verify_registry(
+            bundle,
+            root_jwk=root,
+            pinned_root_key_id=document["rootKeyId"],
+            owner_subject=owner,
+            vault_id=document["vaultId"],
+            previous=registry,
+            now=now,
+            signature_memo=memo,
+        )
+    if PrivateRegistryCursor(registry, cursor.registry_epoch).head() != document["registry"]:
+        raise ContractError("registry_conflict")
+    return registry
+
+
+def _require_current_authority_lineage(prior, incoming, owner, now):
+    old = prior.document
+    old_epoch = old["registry"]["registryEpoch"] if "registry" in old else 1
+    epoch = incoming["registry"]["registryEpoch"] if "registry" in incoming else 1
+    if epoch < old_epoch or (
+        "vaultVersion" in old and incoming["vaultVersion"] < old["vaultVersion"]
+    ):
+        raise ContractError("rollback_detected")
+    if epoch != old_epoch:
+        _transferred_registry(
+            incoming, owner, now, PrivateRegistryCursor(prior.registry, old_epoch)
+        )
+        return
+    old_history = old["registryHistory"]
+    if canonical_json(incoming["registryHistory"][: len(old_history)]) != canonical_json(
+        old_history
+    ):
+        raise ContractError("registry_conflict")
+    if "registryStart" in old and any(
+        incoming[key] != old[key] for key in ("registryStart", "signedTransition")
+    ):
+        raise ContractError("registry_conflict")
 
 
 def _current_authority(
@@ -417,6 +485,8 @@ class PortfolioService:
             history = []
             if previous is not None:
                 prior = _authority(previous, owner, source, now)
+                if "registryStart" in prior.document:
+                    raise ContractError("rollback_detected")
                 if (
                     prior.document["rootJwk"] != root_jwk
                     or prior.document["vaultId"] != vault_id
@@ -502,14 +572,10 @@ class PortfolioService:
                     for key in ("rootJwk", "rootKeyId", "vaultId", "resourceRef", "sourceEpoch")
                 ):
                     raise ContractError("recipient_binding_mismatch")
-                old_history = previous["registryHistory"]
-                if canonical_json(
-                    document["registryHistory"][: len(old_history)]
-                ) != canonical_json(old_history):
-                    raise ContractError("registry_conflict")
+                _require_current_authority_lineage(prior, document, owner, now)
                 source_state(unit, prior)
                 version = prior.version
-                if all(previous[key] == document[key] for key in _AUTHORITY_FIELDS - {"version"}):
+                if {**previous, "version": document["version"]} == document:
                     return {
                         "contractVersion": CONTRACT_VERSION,
                         "authorityVersion": version,

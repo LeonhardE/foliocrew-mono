@@ -29,6 +29,9 @@ COLLECTIONS = frozenset(
     }
 )
 MAX_BATCH_DOCUMENTS = 30
+_TRANSFER_HISTORY_FORMAT = "folioview.portfolio-authority-history.segments.v1"
+_HISTORY_PER_SEGMENT = 32
+_MAX_HISTORY_SEGMENTS = 4
 
 
 class StoreUnavailable(RuntimeError):
@@ -70,6 +73,43 @@ def _history_budget(value: dict) -> int:
     return MAX_READ_BYTES - remainder
 
 
+def _decode_transfer_history(value, budget):
+    if value.keys() != {"format", "segments"} or type(value["segments"]) is not list:
+        raise StoreUnavailable
+    segments = value["segments"]
+    if not 1 <= len(segments) <= _MAX_HISTORY_SEGMENTS:
+        raise StoreUnavailable
+    result = []
+    for index, segment in enumerate(segments):
+        remaining = budget if not result else budget - len(canonical_json(result)) + 1
+        decoded = decode_reference_history(segment, max_expanded_bytes=remaining)
+        if index < len(segments) - 1 and len(decoded) != _HISTORY_PER_SEGMENT:
+            raise StoreUnavailable
+        result.extend(decoded)
+    if len(canonical_json(result)) > budget:
+        raise StoreUnavailable
+    return result
+
+
+def _encode_transfer_history(value, budget):
+    if (
+        type(value) is not list
+        or not 1 <= len(value) <= _HISTORY_PER_SEGMENT * _MAX_HISTORY_SEGMENTS
+    ):
+        raise ContractError("malformed_request")
+    if len(canonical_json(value)) > budget:
+        raise ContractError("payload_too_large")
+    return {
+        "format": _TRANSFER_HISTORY_FORMAT,
+        "segments": [
+            encode_reference_history(
+                value[start : start + _HISTORY_PER_SEGMENT], max_expanded_bytes=budget
+            )
+            for start in range(0, len(value), _HISTORY_PER_SEGMENT)
+        ],
+    }
+
+
 def _read_document(value: dict, *, path: str) -> dict:
     """Expand bounded legacy or referenced storage without changing authority.
 
@@ -90,12 +130,15 @@ def _read_document(value: dict, *, path: str) -> dict:
             raise ContractError("payload_too_large")
         if _history_row(path) and "registryHistory" in value:
             # Validate references before canonical JSON can normalize 0.0 to 0.
-            value = {
-                **value,
-                "registryHistory": decode_reference_history(
-                    value["registryHistory"], max_expanded_bytes=_history_budget(value)
-                ),
-            }
+            history = value["registryHistory"]
+            budget = _history_budget(value)
+            if type(history) is dict and history.get("format") == _TRANSFER_HISTORY_FORMAT:
+                if path.split("/", 1)[0] != "portfolio_authorities" or "registryStart" not in value:
+                    raise StoreUnavailable
+                expanded = _decode_transfer_history(history, budget)
+            else:
+                expanded = decode_reference_history(history, max_expanded_bytes=budget)
+            value = {**value, "registryHistory": expanded}
             if len(canonical_json(value)) > MAX_READ_BYTES:
                 raise ContractError("payload_too_large")
         # Preserve numeric types for the authority schema's own integer checks.
@@ -129,9 +172,11 @@ def stored_document(value: dict, *, path: str, project: str, database: str) -> d
     if history_row:
         # Normal service writers still provide every original signed bundle.
         # Reference storage neither installs an authority nor skips its checks.
-        data["registryHistory"] = encode_reference_history(
-            data["registryHistory"], max_expanded_bytes=_history_budget(data)
-        )
+        history, budget = data["registryHistory"], _history_budget(data)
+        if path.split("/", 1)[0] == "portfolio_authorities" and "registryStart" in data:
+            data["registryHistory"] = _encode_transfer_history(history, budget)
+        else:
+            data["registryHistory"] = encode_reference_history(history, max_expanded_bytes=budget)
     name = f"projects/{project}/databases/{database}/documents/{path}"
     encoded = Document(
         name=name, fields=encode_dict(_firestore_document(data, path=path))
