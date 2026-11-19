@@ -280,7 +280,7 @@ test("the three handover requests use fixed scope and signed-input receipt ident
     assert.equal(result.headers.get("Set-Cookie"), null);
   }
   assert.deepEqual(
-    calls.map(([url]) => url).filter((u) => u.startsWith(ORIGIN)),
+    calls.map(([url]) => url).filter((url) => new URL(url).origin === ORIGIN),
     [ORIGIN + CHECK, ORIGIN + HANDOVER, ORIGIN + START],
   );
   const wrongReceipt = fixture({
