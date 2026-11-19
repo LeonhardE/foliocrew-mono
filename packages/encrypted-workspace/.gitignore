@@ -1,2 +1,3 @@
 node_modules
 src/validators.cjs
+src/private-recovery-validators.cjs
