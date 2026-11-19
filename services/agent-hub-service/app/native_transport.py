@@ -45,12 +45,19 @@ from .oauth import (
     _Server,
 )
 from .oauth_config import Client, digest
-from .store import StoreUnavailable, document_path, require_legacy_private_writer
+from .store import (
+    StoreUnavailable,
+    document_path,
+    private_resource_writer_fence_path,
+    require_legacy_private_writer,
+)
+from .user_vault_authority import ScopedUserVaults, scoped_user_vaults
 from .vaults import _current, identifier
 
 PROFILE = "folioview.persistent-account.v1"
 SCOPE = "runtime:connect"
 REFRESH_IDLE_SECONDS = 180 * 86400
+USER_AUTHORITY_TRANSITION = "userAuthorityTransition"
 AUTH_TABLES = {
     "hub_oauth_" + part: "hub_native_oauth_" + part
     for part in ("pending", "codes", "access", "refresh", "families")
@@ -133,6 +140,14 @@ class NativeRevoke(_Revoke):
         s._revoke_family(self.server.unit, token.value["familyId"], disconnect=True)
 
 
+class NativeRefreshGrant(_RefreshGrant):
+    def authenticate_user(self, record):
+        result = super().authenticate_user(record)
+        if USER_AUTHORITY_TRANSITION in record.value:
+            result[USER_AUTHORITY_TRANSITION] = record.value[USER_AUTHORITY_TRANSITION]
+        return result
+
+
 class NativeServer(_Server):
     def __init__(self, service, unit=None):
         AuthorizationServer.__init__(self, scopes_supported=[SCOPE])
@@ -146,7 +161,7 @@ class NativeServer(_Server):
             ),
         )
         self.register_grant(_CodeGrant, [_S256(required=True)])
-        self.register_grant(_RefreshGrant)
+        self.register_grant(NativeRefreshGrant)
         self.register_endpoint(NativeRevoke)
 
     def save_token(self, token, request):
@@ -215,9 +230,14 @@ class NativeServer(_Server):
 
 
 class NativeTransportService(OwnerConnectionService):
-    def __init__(self, store, config, *, clock=time.time):
+    def __init__(self, store, config, *, clock=time.time, user_vaults=None):
         super().__init__(store, clock=clock)
         self.config = NativeConfig(config)
+        self.user_vaults = user_vaults or (
+            scoped_user_vaults(store)
+            if os.getenv("HUB_NATIVE_USER_VAULT_AUTHORITY_ENABLED") == "1"
+            else ScopedUserVaults(store)
+        )
 
     def transact(self, callback):
         return self.store.transact(lambda u: callback(NativeUnit(u, self.config.resource)))
@@ -358,7 +378,15 @@ class NativeTransportService(OwnerConnectionService):
     def approve(self, uid, request, browser, vault):
         identifier(vault)
         family_id = _random("native_family_")
-        aad = canonical_json([PROFILE, owner_key(uid), request])
+        owner_subject = owner_key(uid)
+        aad = canonical_json([PROFILE, owner_subject, request])
+        user_scope = None
+        if owner_subject == self.user_vaults.owner:
+            status = self.transact(
+                lambda unit: self._pending(unit, uid, request, browser)[2]["status"]
+            )
+            if status != "approved":
+                user_scope = self.user_vaults.read(uid, vault)
 
         def write(unit):
             owner, bucket, pending = self._pending(unit, uid, request, browser)
@@ -376,8 +404,13 @@ class NativeTransportService(OwnerConnectionService):
                     )
                 except Exception:
                     raise StoreUnavailable from None
-            require_legacy_private_writer(unit, owner)
-            _current(unit, owner, self.now(), vault)
+            fingerprint = None
+            if user_scope is None:
+                require_legacy_private_writer(unit, owner)
+                _current(unit, owner, self.now(), vault)
+            else:
+                user_scope.require_current(unit, self.now())
+                fingerprint = user_scope.writer_fence["transitionFingerprint"]
             index = self._owner(unit, uid)
             # A legacy identity/tombstone is create-only. Prepare a new slot and
             # retire the predecessor only when the Owner commits new credentials.
@@ -391,6 +424,7 @@ class NativeTransportService(OwnerConnectionService):
                     and candidate["status"] == "active"
                     and candidate["clientId"] == pending["params"]["client_id"]
                     and candidate["vaultId"] == vault
+                    and candidate.get(USER_AUTHORITY_TRANSITION) == fingerprint
                 ):
                     if candidate["provider"] != self._provider(candidate["clientId"]):
                         raise StoreUnavailable
@@ -442,6 +476,8 @@ class NativeTransportService(OwnerConnectionService):
                 }
                 if predecessor is not None:
                     conn["predecessorConnectionId"] = predecessor
+                if fingerprint is not None:
+                    conn[USER_AUTHORITY_TRANSITION] = fingerprint
                 index["connectionIds"].append(conn["connectionId"])
             conn.update(
                 transportStatus="awaiting_exchange",
@@ -459,6 +495,8 @@ class NativeTransportService(OwnerConnectionService):
                 "expiresAt": now + REFRESH_IDLE_SECONDS,
                 "familyId": family_id,
             }
+            if fingerprint is not None:
+                context[USER_AUTHORITY_TRANSITION] = fingerprint
             server = NativeServer(self, unit)
             authorization_request = _Request(
                 "GET", self.config.issuer + "/authorize", pending["params"]
@@ -500,15 +538,31 @@ class NativeTransportService(OwnerConnectionService):
 
     def _context_active(self, unit, context):
         owner = context["ownerSubject"]
-        if unit.get(document_path("hub_private_resource_writer_fences", owner)) is not None:
-            return False
         conn = _row(unit, "hub_oauth_connections", owner, context["connectionId"])
+        authority = context.get(USER_AUTHORITY_TRANSITION)
+        fence = unit.get(private_resource_writer_fence_path(owner))
+        if fence is None:
+            if authority is not None:
+                return False
+        elif (
+            self.user_vaults.owner != owner
+            or fence.get("state") != "transferred"
+            or fence.get("ownerSubject") != owner
+            or fence.get("vaultId") != context["vaultId"]
+            or type(fence.get("writerEpoch")) is not int
+            or fence["writerEpoch"] != 2
+            or type(authority) is not str
+            or re.fullmatch(r"[a-f0-9]{64}", authority) is None
+            or fence.get("transitionFingerprint") != authority
+        ):
+            return False
         return bool(
             owner_allowed(context["ownerSubject"])
             and conn
             and conn.get("transportKind") == "persistent_runtime"
             and conn.get("ownerSubject") == context["ownerSubject"]
             and conn.get("connectionId") == context["connectionId"]
+            and conn.get(USER_AUTHORITY_TRANSITION) == authority
             and conn.get("provider") == self._provider(conn.get("clientId"))
             and conn["status"] == "active"
             and conn["vaultId"] == context["vaultId"]
@@ -527,6 +581,7 @@ class NativeTransportService(OwnerConnectionService):
             and row["scope"] == SCOPE
             and family
             and not family["revoked"]
+            and family.get(USER_AUTHORITY_TRANSITION) == row.get(USER_AUTHORITY_TRANSITION)
             and family["expiresAt"] > self.now()
             and all(
                 family[k] == row[k]
