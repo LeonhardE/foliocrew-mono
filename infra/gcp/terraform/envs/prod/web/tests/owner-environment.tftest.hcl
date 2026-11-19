@@ -240,3 +240,56 @@ run "workspace_edge_rejects_noncanonical_key" {
   }
   expect_failures = [var.workspace_edge]
 }
+
+run "user_recovery_uses_the_same_numbered_project_and_region" {
+  command = plan
+  variables {
+    owner_environment = {
+      FOLIOVIEW_OWNER_FIREBASE_PROJECT_ID = "demo-web-alpha"
+      FOLIOVIEW_PORTFOLIO_OWNER_ENABLED   = "true"
+      FOLIOVIEW_PORTFOLIO_ORIGIN          = "https://portfolio-api-111222333444.us-central1.run.app"
+      FOLIOVIEW_PORTFOLIO_AUDIENCE        = "https://portfolio-api-111222333444.us-central1.run.app"
+      FOLIOVIEW_HUB_OWNER_ENABLED         = "true"
+      FOLIOVIEW_HUB_ORIGIN                = "https://agent-hub-api-111222333444.us-central1.run.app"
+      FOLIOVIEW_USER_OWNER_ENABLED        = "true"
+      FOLIOVIEW_USER_ORIGIN               = "https://user-api-111222333444.us-central1.run.app"
+    }
+  }
+  assert {
+    condition     = local.environment == var.owner_environment && output.adoption_boundary.invoker_iam_disabled
+    error_message = "The existing Web may consume the fixed User route without changing its access mode."
+  }
+}
+
+run "reject_user_recovery_in_another_project" {
+  command = plan
+  variables {
+    owner_environment = {
+      FOLIOVIEW_OWNER_FIREBASE_PROJECT_ID = "demo-web-alpha"
+      FOLIOVIEW_PORTFOLIO_OWNER_ENABLED   = "true"
+      FOLIOVIEW_PORTFOLIO_ORIGIN          = "https://portfolio-api-111222333444.us-central1.run.app"
+      FOLIOVIEW_PORTFOLIO_AUDIENCE        = "https://portfolio-api-111222333444.us-central1.run.app"
+      FOLIOVIEW_HUB_OWNER_ENABLED         = "false"
+      FOLIOVIEW_HUB_ORIGIN                = ""
+      FOLIOVIEW_USER_OWNER_ENABLED        = "true"
+      FOLIOVIEW_USER_ORIGIN               = "https://user-api-555555555555.us-central1.run.app"
+    }
+  }
+  expect_failures = [var.owner_environment]
+}
+
+run "reject_unpaired_user_recovery" {
+  command = plan
+  variables {
+    owner_environment = {
+      FOLIOVIEW_OWNER_FIREBASE_PROJECT_ID = ""
+      FOLIOVIEW_PORTFOLIO_OWNER_ENABLED   = "false"
+      FOLIOVIEW_PORTFOLIO_ORIGIN          = ""
+      FOLIOVIEW_PORTFOLIO_AUDIENCE        = ""
+      FOLIOVIEW_HUB_OWNER_ENABLED         = "false"
+      FOLIOVIEW_HUB_ORIGIN                = ""
+      FOLIOVIEW_USER_OWNER_ENABLED        = "false"
+    }
+  }
+  expect_failures = [var.owner_environment]
+}
