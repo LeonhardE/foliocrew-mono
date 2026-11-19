@@ -286,7 +286,7 @@ class UserAuthorityCutover:
         except (ValidationError, ValueError):
             raise ContractError("authorization_unavailable") from None
 
-    def read_start(self, uid, vault, nonce, *, now):
+    def read_start(self, uid, vault, nonce, *, now, allow_deleted=False):
         validate_schema("OperationIdentifier", nonce)
         self._named_store()
         owner = owner_key(uid)
@@ -296,7 +296,9 @@ class UserAuthorityCutover:
             if stored is None or raw_head is None:
                 raise ContractError("not_found")
             receipt, head = self._installed(stored, raw_head, owner, vault)
-            if head.archive.state != "active":
+            if head.archive.state != "active" and not (
+                allow_deleted and head.archive.state == "deleted"
+            ):
                 raise ContractError("key_authorization_required")
             first = receipt.registryStart.model_dump()
             key = _index(owner, vault, first["registryEpoch"], first["registrySequence"])

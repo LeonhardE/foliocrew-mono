@@ -12,6 +12,7 @@ from app.private_resources.authority_cutover import UserAuthorityCutover
 from app.private_resources.authority_views import PrivateAuthorityViews
 from app.private_resources.legacy_baselines import LegacyVaultBaselines, verified_baseline
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
+from folioview_shared.encrypted.crypto import signing_input_fingerprint
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import b64url_encode, canonical_json, strict_json_loads
 from folioview_shared.encrypted.legacy_archive import (
@@ -230,3 +231,108 @@ class UserArchiveLifecycleTests(unittest.TestCase):
             writer.advance(UID, VAULT, second, stale, None)
         with self.assertRaisesRegex(ContractError, "not_found"):
             writer.read(UID, VAULT, nonce, second)
+
+    def test_transferred_archive_removal_and_independent_recovery_keep_original_receipt(self):
+        sample, writer = self.start_transferred_archive()
+        nonce = "synthetic_removal_recovery_nonce"
+        original = writer.read(UID, VAULT, nonce, None)["state"]
+        removal = "synthetic_user_archive_removal"
+        command = self.command(sample, original, "archive_delete", removal)
+        unresolved = writer.check_removal(UID, VAULT, removal, command)
+        self.assertEqual(unresolved["outcome"], "unresolved")
+        with self.assertRaisesRegex(ContractError, "malformed_request"):
+            writer.advance(UID, VAULT, removal, command, None)
+        self.assertEqual(writer.read(UID, VAULT, nonce, None)["state"], original)
+
+        receipt = writer.advance(
+            UID, VAULT, removal, command, None, removal_action="archive_delete"
+        )
+        self.assertEqual(writer.check_removal(UID, VAULT, removal, command)["receipt"], receipt)
+        deleted = writer.read(UID, VAULT, nonce, None)["state"]
+        self.assertIsNone(deleted["archive"])
+        self.assertEqual(deleted["registrySequence"], original["registrySequence"])
+        self.assertEqual(deleted["archiveRevision"], original["archiveRevision"] + 1)
+        view = PrivateAuthorityViews(sample.store).owner_current(UID, nonce, now=1000)
+        self.assertIsNone(view["vault"]["archive"])
+        self.assertEqual(view["proof"]["archive"]["state"], "deleted")
+        self.assertEqual(view["proof"]["archiveLifecycle"]["state"], deleted)
+
+        replacement = {
+            **original["archive"],
+            "credentialId": b64url_encode(b"independent_recovery_test_credential"),
+            "prfSalt": b64url_encode(b"s" * 32),
+            "iv": b64url_encode(b"t" * 12),
+            "ciphertext": b64url_encode(b"synthetic_independent_archive"),
+        }
+        replacements = {
+            "authorizationId": "synthetic_removal_recovery_grant",
+            "newArchiveDigest": hashlib.sha256(canonical_json(replacement)).hexdigest(),
+        }
+        approval = "synthetic_removal_recovery_approval"
+        writer.advance(
+            UID,
+            VAULT,
+            approval,
+            self.command(sample, deleted, "recovery_authorize", approval, **replacements),
+            None,
+        )
+        pending = writer.read(UID, VAULT, nonce, None)["state"]
+        restore = "synthetic_removal_recovery_replace"
+        writer.advance(
+            UID,
+            VAULT,
+            restore,
+            self.command(
+                sample, pending, "archive_replace", restore, mode="recovery", **replacements
+            ),
+            replacement,
+        )
+        after = writer.read(UID, VAULT, nonce, None)["state"]
+        self.assertEqual(after["archive"], replacement)
+        self.assertEqual(writer.read(UID, VAULT, nonce, removal)["receipt"], receipt)
+        self.assertEqual(writer.check_removal(UID, VAULT, removal, command)["outcome"], "deleted")
+
+    def test_signed_withdrawal_closes_only_the_bound_original_removal(self):
+        sample, writer = self.start_transferred_archive()
+        nonce = "synthetic_withdraw_removal_nonce"
+        initial = writer.read(UID, VAULT, nonce, None)["state"]
+        original = "synthetic_bound_original_removal"
+        deletion = self.command(sample, initial, "archive_delete", original)
+        withdrawal = "synthetic_bound_removal_withdraw"
+        cancel = self.command(
+            sample,
+            initial,
+            "archive_delete_withdraw",
+            withdrawal,
+            deletionOperationId=original,
+            deletionCommandFingerprint=signing_input_fingerprint(deletion),
+            deletionLifecycleVersion=initial["lifecycleVersion"],
+        )
+        unrelated = self.command(sample, initial, "archive_delete", "synthetic_unrelated_removal")
+        with self.assertRaisesRegex(ContractError, "recipient_binding_mismatch"):
+            writer.advance(
+                UID,
+                VAULT,
+                withdrawal,
+                cancel,
+                None,
+                removal_action="archive_delete_withdraw",
+                deletion=unrelated,
+            )
+        receipt = writer.advance(
+            UID,
+            VAULT,
+            withdrawal,
+            cancel,
+            None,
+            removal_action="archive_delete_withdraw",
+            deletion=deletion,
+        )
+        checked = writer.check_removal(UID, VAULT, original, deletion)
+        self.assertEqual(checked["receipt"], receipt)
+        self.assertEqual(checked["outcome"], "withdrawn")
+        with self.assertRaisesRegex(ContractError, "version_conflict"):
+            writer.advance(UID, VAULT, original, deletion, None, removal_action="archive_delete")
+        self.assertEqual(
+            writer.read(UID, VAULT, nonce, None)["state"]["archive"], initial["archive"]
+        )

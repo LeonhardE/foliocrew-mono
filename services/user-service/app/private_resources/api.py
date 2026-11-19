@@ -575,6 +575,63 @@ async def advance_owner_archive_lifecycle(
     }
 
 
+class OwnerArchiveRemoval(CutoverScope):
+    profile: Literal[ARCHIVE_LIFECYCLE_PROFILE]
+    nonce: OperationId
+    operationId: OperationId
+    action: Literal["check", "delete", "withdraw"]
+    command: dict
+    deletionCommand: dict | None
+
+
+@router.post("/{vault_id}/archive-lifecycle/removal")
+async def owner_archive_removal(
+    vault_id: str,
+    request: Request,
+    response: Response,
+    user: Annotated[CurrentUser, Depends(require_google_user)],
+    lifecycle: Annotated[PrivateArchiveLifecycle, Depends(owner_archive_lifecycle)],
+    _: Annotated[None, Depends(require_owner_proxy)],
+):
+    if os.getenv("USER_PRIVATE_ARCHIVE_REMOVALS") != "true":
+        raise ContractError("not_found")
+    value = await body(request, OwnerArchiveRemoval, maximum=MAX_CONTROL_BYTES)
+    _cutover_scope(value.model_dump(), user.uid, vault_id)
+    if (value.deletionCommand is not None) != (value.action == "withdraw"):
+        raise ContractError("malformed_request")
+    if value.action == "check":
+        result = await run_in_threadpool(
+            lifecycle.check_removal, user.uid, vault_id, value.operationId, value.command
+        )
+    else:
+        kind = "archive_delete" if value.action == "delete" else "archive_delete_withdraw"
+        receipt = await run_in_threadpool(
+            lifecycle.advance,
+            user.uid,
+            vault_id,
+            value.operationId,
+            value.command,
+            None,
+            removal_action=kind,
+            deletion=value.deletionCommand,
+        )
+        result = {
+            "contractVersion": CONTRACT_VERSION,
+            "profile": receipt["profile"],
+            "receipt": receipt,
+        }
+    _uncached_private(response)
+    return {
+        "contractVersion": CONTRACT_VERSION,
+        "profile": ARCHIVE_LIFECYCLE_PROFILE,
+        "ownerSubject": value.ownerSubject,
+        "vaultId": vault_id,
+        "nonce": value.nonce,
+        "operationId": value.operationId,
+        "result": result,
+    }
+
+
 HOLDINGS_REGISTRATION_PROFILE = "folioview.owner-holdings-registration.v1"
 
 

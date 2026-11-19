@@ -104,8 +104,11 @@ class PrivateAuthorityViews:
                 raise ContractError("version_conflict")
             archive = state["archive"]
             lifecycle = {"state": state, "originalCheckpoints": snapshot["originalCheckpoints"]}
-        validate_passkey_archive(archive, owner=owner, vault=vault_id, root=root)
-        if boundary["digest"] != _sha(canonical_json(archive)):
+        if archive is not None:
+            validate_passkey_archive(archive, owner=owner, vault=vault_id, root=root)
+        if (archive is None) != (boundary["state"] == "deleted") or boundary["digest"] != _sha(
+            canonical_json(archive)
+        ):
             raise ContractError("source_unavailable")
         result = {
             "contractVersion": CONTRACT_VERSION,
@@ -143,7 +146,9 @@ class PrivateAuthorityViews:
         if owner != checked["ownerSubject"]:
             raise ContractError("insufficient_scope")
         try:
-            evidence, registry, bundles = current_registry(self.cutover, uid, vault, now)
+            evidence, registry, bundles = current_registry(
+                self.cutover, uid, vault, now, allow_deleted=True
+            )
             head = evidence["registry"]
             if head["registryEpoch"] < checked["minimumRegistryEpoch"]:
                 raise ContractError("rollback_detected")
