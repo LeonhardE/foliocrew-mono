@@ -29,7 +29,7 @@ from .persistent_agents import (
     snapshot,
     stored_identity,
 )
-from .store import StoreUnavailable, document_path
+from .store import StoreUnavailable, document_path, require_legacy_private_writer
 from .vaults import identifier
 
 SETUP_SECONDS = 600
@@ -140,6 +140,7 @@ class AgentCredentialService(PersistentAgentService):
 
         def write(unit):
             owner, _, _, conn = self._native(unit, principal)
+            require_legacy_private_writer(unit, owner)
             current = stored_identity(unit, owner, principal.vault_id, principal.connection_id)
             if current is None and conn.get("credentialMode") == "agent_owned":
                 # A missing current record is not an unused slot.
@@ -204,6 +205,7 @@ class AgentCredentialService(PersistentAgentService):
             if row["offer"] is not None and row["offer"] != offer:
                 raise ContractError("version_conflict")
             if row["offer"] is None:
+                require_legacy_private_writer(unit, owner)
                 row["offer"] = snapshot(offer)
                 unit.put(setup_path(intent), row)
             return snapshot(row)
@@ -379,6 +381,7 @@ class AgentCredentialService(PersistentAgentService):
                 if saved.get("command") != command or saved.get("connectionId") != connection:
                     raise ContractError("idempotency_conflict")
                 return self._receipt(saved, owner, vault, connection, operation)
+            require_legacy_private_writer(unit, owner)
             if _unit is None:
                 from .provider_connections import slot_path
 

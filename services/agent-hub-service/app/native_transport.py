@@ -45,7 +45,7 @@ from .oauth import (
     _Server,
 )
 from .oauth_config import Client, digest
-from .store import StoreUnavailable, document_path
+from .store import StoreUnavailable, document_path, require_legacy_private_writer
 from .vaults import _current, identifier
 
 PROFILE = "folioview.persistent-account.v1"
@@ -376,6 +376,7 @@ class NativeTransportService(OwnerConnectionService):
                     )
                 except Exception:
                     raise StoreUnavailable from None
+            require_legacy_private_writer(unit, owner)
             _current(unit, owner, self.now(), vault)
             index = self._owner(unit, uid)
             # A legacy identity/tombstone is create-only. Prepare a new slot and
@@ -498,7 +499,10 @@ class NativeTransportService(OwnerConnectionService):
         raise OAuthFailure("invalid_client")
 
     def _context_active(self, unit, context):
-        conn = _row(unit, "hub_oauth_connections", context["ownerSubject"], context["connectionId"])
+        owner = context["ownerSubject"]
+        if unit.get(document_path("hub_private_resource_writer_fences", owner)) is not None:
+            return False
+        conn = _row(unit, "hub_oauth_connections", owner, context["connectionId"])
         return bool(
             owner_allowed(context["ownerSubject"])
             and conn

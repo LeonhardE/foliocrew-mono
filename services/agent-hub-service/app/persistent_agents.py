@@ -27,7 +27,7 @@ from folioview_shared.encrypted.schema import validate_schema
 from folioview_shared.identity import owner_key
 
 from .oauth import MAX_CONNECTIONS, _row
-from .store import StoreUnavailable, document_path
+from .store import StoreUnavailable, document_path, require_legacy_private_writer
 from .vaults import _current, identifier
 
 MAX_IDENTITY_OPERATIONS = 2  # One enrollment and one terminal revocation.
@@ -347,6 +347,7 @@ class PersistentAgentService:
             else:
                 from .provider_connections import slot_path
 
+                require_legacy_private_writer(unit, owner)
                 if unit.get(slot_path(owner, conn["provider"])) is not None:
                     raise ContractError("version_conflict")
                 if conn.get("credentialMode") == "agent_owned":
