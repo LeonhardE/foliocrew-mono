@@ -8,6 +8,7 @@ from google.cloud import firestore
 
 from folioview_shared.encrypted.authority import RegistryCertificateMemo, verify_registry
 from folioview_shared.encrypted.constants import CONTRACT_VERSION, MAX_REGISTRY_BYTES
+from folioview_shared.encrypted.crypto import verify_jws
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import canonical_json, strict_json_loads
 from folioview_shared.encrypted.private_resources import (
@@ -162,6 +163,34 @@ class RegistryHistory:
             for raw, sequence in zip(values, sequences, strict=True)
         ]
 
+    def _require_original_target(self, uid, vault, head, target):
+        if (
+            head.get("handover") is None
+            or head["archive"]["state"] != "active"
+            or target["registryEpoch"] != 1
+            or (head["registryStart"] or {}).get("registryEpoch") != 2
+        ):
+            raise ContractError("registry_conflict")
+        from .authority_cutover import UserAuthorityCutover
+
+        proof = UserAuthorityCutover(self.store).read_start(
+            uid, vault, "original_registry_target_page", now=int(time.time())
+        )
+        if (
+            proof["rootKeyId"] != head["rootKeyId"]
+            or proof["registryStart"] != head["registryStart"]
+            or proof["archive"] != head["archive"]
+        ):
+            raise ContractError("registry_conflict")
+        transition = verify_jws(
+            proof["signedTransition"],
+            proof["rootJwk"],
+            typ="fv-control+jws",
+            expected_kid=head["rootKeyId"],
+        )
+        if transition["previousHead"] != target:
+            raise ContractError("registry_conflict")
+
     def page(self, uid: str, vault: str, request: RegistryPageRequest):
         owner = owner_key(uid)
         if request.ownerSubject != owner or request.vaultId != vault:
@@ -171,7 +200,7 @@ class RegistryHistory:
             raise ContractError("not_found")
         target = request.target.model_dump()
         if target != head["registry"]:
-            raise ContractError("registry_conflict")
+            self._require_original_target(uid, vault, head, target)
         epoch = request.target.registryEpoch
         base = request.base
         if (base is None and epoch != 1) or (
