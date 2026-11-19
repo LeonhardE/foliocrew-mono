@@ -118,7 +118,6 @@ class AgentHubBoundaryTests(unittest.TestCase):
                     "/internal/v2/portfolio-authorities/read",
                     "/internal/v2/source-fences",
                     "/.well-known/jwks.json",
-                    "/api/v2/agent-capabilities",
                     "/api/v2/persistent-agents/capabilities",
                     "/api/v2/persistent-agents/{vault_id}/{connection_id}",
                     "/api/v2/persistent-agents/{vault_id}/{connection_id}/operations/{operation_id}",
@@ -127,9 +126,6 @@ class AgentHubBoundaryTests(unittest.TestCase):
                     "/api/v2/persistent-agents/{vault_id}/{connection_id}/resource-operations/{operation_id}",
                     "/api/v2/persistent-agents/{vault_id}/{connection_id}/resource-approvals",
                     "/api/v2/persistent-agents/{vault_id}/{connection_id}/resource-revocations",
-                    "/api/v2/agent-connections",
-                    "/api/v2/agent-connections/{connection_id}/revoke",
-                    "/api/v2/agent-connections/{connection_id}/grants/{grant_id}/revoke",
                 },
             )
 
