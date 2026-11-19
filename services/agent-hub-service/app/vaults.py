@@ -20,7 +20,12 @@ from folioview_shared.identity import owner_key
 
 from .fences import _state
 from .registry_reads import RegistryPrefixCache
-from .store import StoreUnavailable, document_path, require_legacy_private_writer
+from .store import (
+    StoreUnavailable,
+    document_path,
+    require_legacy_archive_reader,
+    require_legacy_private_writer,
+)
 
 MAX_SOURCES = 10
 MAX_HISTORY = 32
@@ -194,6 +199,7 @@ def _source_projection(unit, owner, source):
 def _response(row, unit):
     if row is None:
         return {"contractVersion": CONTRACT_VERSION, "vault": None, "sources": []}
+    require_legacy_archive_reader(unit, row["ownerSubject"])
     value = {
         "contractVersion": CONTRACT_VERSION,
         "vault": {

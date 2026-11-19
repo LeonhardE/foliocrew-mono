@@ -43,7 +43,7 @@ class ConnectionSummaryTests(unittest.TestCase):
             result["credentials"], [{"connectionId": self.first, "state": expected_credential}]
         )
         self.assertEqual(before, self.rpc.documents)
-        self.assertEqual([len(batch) for batch in self.reads()], [4, 1, 1])
+        self.assertEqual([len(batch) for batch in self.reads()], [5, 1, 1])
         self.assertTrue(
             all(not kw["request"]["writes"] for name, kw in self.rpc.calls if name == "commit")
         )
@@ -63,7 +63,7 @@ class ConnectionSummaryTests(unittest.TestCase):
                 result = self.summary()
                 self.assertEqual(len(result["connections"]), count)
                 self.assertEqual([c["connectionId"] for c in result["credentials"]], [self.first])
-                self.assertEqual([len(batch) for batch in self.reads()], [4, count, count])
+                self.assertEqual([len(batch) for batch in self.reads()], [5, count, count])
                 paths = [name for batch in self.reads() for name in batch]
                 self.assertEqual(len(paths), len(set(paths)))
 

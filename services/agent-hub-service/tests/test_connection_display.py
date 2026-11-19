@@ -83,7 +83,7 @@ class ConnectionDisplayTests(unittest.TestCase):
                 "capabilities": CAPABILITIES,
             },
         )
-        self.assertEqual([len(b) for b in self.reads()], [4, 1, 1])
+        self.assertEqual([len(b) for b in self.reads()], [5, 1, 1])
         self.assertEqual(before, self.rpc.documents)
 
     def test_source_fences_join_connection_batch_and_original_vault_projection(self):
@@ -94,7 +94,7 @@ class ConnectionDisplayTests(unittest.TestCase):
         result = self.display()
         self.assertEqual(result["vaultResponse"], expected)
         self.assertEqual(len(result["vaultResponse"]["sources"]), 1)
-        self.assertEqual([len(b) for b in self.reads()], [4, 2, 1])
+        self.assertEqual([len(b) for b in self.reads()], [5, 2, 1])
         self.assertEqual(result["summary"]["vaultId"], expected["vault"]["vaultId"])
 
     def test_thirty_two_connections_remain_one_snapshot_with_original_selection(self):
@@ -104,7 +104,7 @@ class ConnectionDisplayTests(unittest.TestCase):
         self.assertEqual(result["mode"], "complete")
         self.assertEqual(len(result["summary"]["connections"]), 32)
         self.assertEqual(len(result["summary"]["credentials"]), 1)
-        self.assertEqual([len(b) for b in self.reads()], [4, 32, 32])
+        self.assertEqual([len(b) for b in self.reads()], [5, 32, 32])
 
     def test_combined_budget_returns_only_explicit_separate_read_hint(self):
         original = self.display()

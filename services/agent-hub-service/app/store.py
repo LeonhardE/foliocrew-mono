@@ -144,6 +144,16 @@ def require_legacy_private_writer(unit, owner: str) -> None:
         raise ContractError("authorization_unavailable")
 
 
+def require_legacy_archive_reader(unit, owner: str) -> None:
+    """Allow the original Passkey review through the freeze and close it after transfer."""
+    fence = unit.get(private_resource_writer_fence_path(owner))
+    if fence is None or (type(fence) is dict and fence.get("state") == "frozen"):
+        return
+    if type(fence) is dict and fence.get("state") == "transferred":
+        raise ContractError("not_found")
+    raise ContractError("authorization_unavailable")
+
+
 # These are logical read ceilings, not HTTP or physical storage write budgets.
 # A frozen Run also contains its independently bounded manifest and other fields.
 _HISTORY_COLLECTIONS = frozenset({"hub_vaults", "hub_persistent_runs"})

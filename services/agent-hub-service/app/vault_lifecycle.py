@@ -17,7 +17,12 @@ from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.schema import validate_schema
 from folioview_shared.identity import owner_key
 
-from .store import StoreUnavailable, document_path, require_legacy_private_writer
+from .store import (
+    StoreUnavailable,
+    document_path,
+    require_legacy_archive_reader,
+    require_legacy_private_writer,
+)
 from .vaults import _archive, _current, _fingerprint, identifier
 
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
@@ -66,6 +71,7 @@ class VaultLifecycleService:
         owner = owner_key(uid)
 
         def read(unit):
+            require_legacy_archive_reader(unit, owner)
             now = self.now()
             row, registry, lifecycle, state = self._read(unit, owner, vault, now)
             pending = state["pending"]
@@ -144,50 +150,7 @@ class VaultLifecycleService:
 
         def read(unit):
             row, registry, _, state = self._read(unit, owner, vault, self.now())
-            payload = legacy_archive.verify_legacy_archive_command(body["command"], row)
-            if payload["action"] != "archive_delete":
-                raise ContractError("malformed_request")
-            operation = payload["stableOperationId"]
-            fingerprint = signing_input_fingerprint(body["command"])
-            prior = state["operations"].get(operation)
-            withdrawn = state["withdrawn"].get(operation)
-            receipt = None
-            if prior:
-                if prior["receipt"]["commandFingerprint"] != fingerprint:
-                    raise ContractError("idempotency_conflict")
-                outcome, receipt = "deleted", prior["receipt"]
-            elif withdrawn:
-                if withdrawn["deletionCommandFingerprint"] != fingerprint:
-                    raise ContractError("idempotency_conflict")
-                outcome = "withdrawn"
-                receipt = state["operations"][withdrawn["stableOperationId"]]["receipt"]
-            else:
-                counters = {
-                    "expectedVaultVersion": row["version"],
-                    "expectedLifecycleVersion": state["version"],
-                    "expectedArchiveRevision": state["revision"],
-                    "registrySequence": registry.registry_sequence,
-                    "keyEpoch": registry.key_epoch,
-                }
-                if any(payload[key] > value for key, value in counters.items()):
-                    raise ContractError("version_conflict")
-                matches = all(payload[key] == value for key, value in counters.items())
-                matches = matches and payload["expectedArchiveDigest"] == state["digest"]
-                matches = matches and payload["checkpointDigest"] == registry.checkpoint_digest
-                outcome = "unresolved" if matches else "superseded"
-            value = {
-                "contractVersion": CONTRACT_VERSION,
-                "profile": legacy_archive.PROFILE,
-                "vaultId": vault,
-                "operationId": operation,
-                "commandFingerprint": fingerprint,
-                "outcome": outcome,
-                "vaultVersion": row["version"],
-                "lifecycleVersion": state["version"],
-                "receipt": receipt,
-            }
-            check_read_response(value)
-            return value
+            return legacy_archive.archive_deletion_outcome(row, registry, state, body["command"])
 
         return self.store.transact(read)
 
