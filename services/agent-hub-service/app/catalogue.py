@@ -33,7 +33,7 @@ from .api import Owner, Service, _invoke, transport
 from .catalogue_paths import FenceKeyHints
 from .fences import _state, fence_path
 from .signing import _EMAIL, get_signer, origin
-from .store import StoreUnavailable, document_path
+from .store import StoreUnavailable, document_path, private_resource_writer_fence_path
 from .vaults import _verify_row
 
 PROFILE = "folioview.owner-resource-discovery.v1"
@@ -637,11 +637,41 @@ def _response(result, now):
 
 
 class CatalogueService:
-    def __init__(self, vaults, sources):
-        self.vaults, self.sources = vaults, sources
+    def __init__(self, vaults, sources, *, user_vaults=None):
+        from .user_vault_authority import scoped_user_vaults
 
-    def context(self, uid, *, registry_cache=None):
-        return self._snapshot(uid, registry_cache=registry_cache)[0]
+        self.vaults, self.sources = vaults, sources
+        self.user_vaults = (
+            user_vaults if user_vaults is not None else scoped_user_vaults(vaults.store)
+        )
+
+    def context(self, uid, *, registry_cache=None, deadline=None):
+        scope = self.user_vaults.read(uid, deadline=deadline)
+        if scope is None:
+            return self._snapshot(uid, registry_cache=registry_cache)[0]
+
+        def transferred(unit):
+            scope.require_current(unit, self.vaults.now())
+            value = scope.authority
+            return {
+                "vault": {
+                    "id": value["vaultId"],
+                    "version": value["vaultVersion"],
+                    "registry": value["registry"],
+                    "sourcesDigest": value["sourcesDigest"],
+                    "transitionFingerprint": scope.writer_fence["transitionFingerprint"],
+                },
+                "sources": [
+                    {
+                        "ref": item["binding"]["ref"],
+                        "fence": {"state": "active", "sourceEpoch": item["binding"]["sourceEpoch"]},
+                    }
+                    for item in value["sources"]
+                    if item["binding"]["ref"]["kind"] == "holdings" and item["state"] == "active"
+                ],
+            }
+
+        return self.vaults.store.transact(transferred)
 
     def _snapshot(self, uid, *, registry_cache=None):
         owner = owner_key(uid)
@@ -656,6 +686,11 @@ class CatalogueService:
             return [vault_path, *known] if known is not None else [vault_path]
 
         def read(unit):
+            if (
+                owner == self.user_vaults.owner
+                and unit.get(private_resource_writer_fence_path(owner)) is not None
+            ):
+                raise ContractError("source_unavailable")
             row = unit.get(vault_path)
             if row is None:
                 return ({"vault": None, "sources": []}, None, False), None
@@ -708,7 +743,7 @@ class CatalogueService:
         try:
             stage_name = "before"
             stage = started
-            before = self.context(uid, registry_cache=registry_cache)
+            before = self.context(uid, registry_cache=registry_cache, deadline=deadline)
             timing["before"] = clock() - stage
             source_count = len(before["sources"])
             stage_name = None
@@ -725,7 +760,7 @@ class CatalogueService:
             # changed local authority/fence being presented as active discovery.
             stage_name = "after"
             stage = clock()
-            after = self.context(uid, registry_cache=registry_cache)
+            after = self.context(uid, registry_cache=registry_cache, deadline=deadline)
             timing["after"] = clock() - stage
             stage_name = None
             remaining(deadline, clock)
