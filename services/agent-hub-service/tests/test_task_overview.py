@@ -11,10 +11,8 @@ import test_task_routes as route_fixture
 from fixtures import OTHER_UID, UID
 from google.cloud.firestore_v1.types import Value
 
-from app import inbox as inbox_module
 from app import task_overview, vaults
 from app.api import require_owner
-from app.inbox import InboxService
 from app.main import app
 from app.native_transport import NativeConnectionOwnerService
 from app.persistent_results import PersistentOwnerResultService, result_id, result_path
@@ -27,7 +25,7 @@ from app.tasks import _paths
 from folioview_shared.encrypted.budgets import check_size
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
 from folioview_shared.encrypted.errors import ContractError
-from folioview_shared.encrypted.jsonutil import b64url_encode, canonical_json
+from folioview_shared.encrypted.jsonutil import canonical_json
 from folioview_shared.encrypted.persistent_content import digest
 
 
@@ -175,13 +173,7 @@ class TaskOverviewTests(unittest.TestCase):
             if kind == "commit"
             for write in kw["request"]["writes"]
         ]
-        self.assertTrue(
-            all(
-                "/hub_inbox_cursors/" in write.update.name
-                or "/hub_task_indexes/" in write.update.name
-                for write in writes
-            )
-        )
+        self.assertTrue(all("/hub_task_indexes/" in write.update.name for write in writes))
         return writes
 
     def test_one_two_four_packets_use_three_batches_and_one_current_history(self):
@@ -211,7 +203,7 @@ class TaskOverviewTests(unittest.TestCase):
                     [row["packet"] for row in value["packets"]["items"]], self.expected[:count]
                 )
                 self.assertEqual(verify.call_count, 1)
-                self.assertEqual([len(group) for group in self.reads()], [7, 5 + count, 2 + count])
+                self.assertEqual([len(group) for group in self.reads()], [5, 3 + count, 2 + count])
                 self.assertEqual(sum(kind == "begin" for kind, _ in self.rpc.calls), 1)
                 self.assertFalse(self.assert_no_business_writes())
 
@@ -220,8 +212,6 @@ class TaskOverviewTests(unittest.TestCase):
         persistent = PersistentOwnerResultService(self.store, clock=lambda: 1000).owner_list(
             UID, self.vault
         )
-        inbox = InboxService(self.store, clock=lambda: 1000)
-        foreground, archived = inbox.list(UID), inbox.list(UID, filter="archived")
         connections = NativeConnectionOwnerService(
             self.store, clock=lambda: 1000
         ).native_connections(UID)
@@ -229,10 +219,7 @@ class TaskOverviewTests(unittest.TestCase):
         value = self.query()
         self.assertEqual(value["tasks"], tasks)
         self.assertEqual(value["capabilities"], owner_capabilities(UID))
-        self.assertEqual(
-            value["feeds"],
-            {"persistent": persistent, "foreground": foreground, "archived": archived},
-        )
+        self.assertEqual(value["feeds"], {"persistent": persistent})
         self.assertEqual(value["connections"], connections)
         self.assertEqual(value["connections"]["connections"][0]["status"], "revoked")
         self.assertEqual(value["packets"], packets)
@@ -260,52 +247,33 @@ class TaskOverviewTests(unittest.TestCase):
             any(statement.startswith(("INSERT", "UPDATE", "DELETE")) for statement in sql)
         )
 
-    def test_both_foreground_cursors_work_independently_on_original_more_routes(self):
+    def test_only_persistent_paging_reads_metadata_even_with_older_foreground_rows(self):
         self.seed_reports(21, 42)
         value = self.query()
-        self.assertEqual([len(group) for group in self.reads()], [7, 49, 24])
+        self.assertEqual([len(group) for group in self.reads()], [5, 7, 24])
+        self.assertEqual(set(value["feeds"]), {"persistent"})
         self.assertEqual(len(value["feeds"]["persistent"]["items"]), 20)
         self.assertIsNotNone(value["feeds"]["persistent"]["nextCursor"])
-        inbox = InboxService(self.store, clock=lambda: 1000)
-        for name, query_filter in (("foreground", "all"), ("archived", "archived")):
-            page = value["feeds"][name]
-            self.assertEqual(len(page["items"]), 20)
-            self.assertIsNotNone(page["nextCursor"])
-            more = inbox.list(UID, limit=20, filter=query_filter, cursor=page["nextCursor"])
-            self.assertEqual(len(more["items"]), 1)
-            self.assertIsNone(more["nextCursor"])
-        collections = [write.update.name for write in self.assert_no_business_writes()]
-        self.assertEqual(sum("/hub_inbox_cursors/" in name for name in collections), 1)
+        self.assertFalse(self.assert_no_business_writes())
         more = PersistentOwnerResultService(self.store, clock=lambda: 1000).owner_list(
             UID, self.vault, cursor=value["feeds"]["persistent"]["nextCursor"]
         )
         self.assertEqual(len(more["items"]), 1)
 
-    def test_cursor_capacity_protects_both_returned_tokens_and_cannot_fake_room(self):
+    def test_corrupt_foreground_index_and_cursor_do_not_affect_persistent_overview(self):
         self.seed_reports(2, 42)
         path = self.name(document_path("hub_inbox_cursors", self.owner, self.vault))
-        self.rpc.documents[path] = {
-            "ownerSubject": self.owner,
-            "vaultId": self.vault,
-            "cursors": {
-                b64url_encode(n.to_bytes(24, "big")): {
-                    "snapshot": "a" * 64,
-                    "position": 20,
-                    "expiresAt": 3000,
-                    "limit": 20,
-                    "query": {"kind": "old", "filter": str(n)},
-                }
-                for n in range(32)
-            },
-        }
+        self.rpc.documents[path] = {"unexpected": "stale cursor"}
+        index = self.name(document_path("hub_result_indexes", self.owner))
+        self.rpc.documents[index] = {"resultIds": ["retired_marker"]}
+        row = self.name(foreground_path(self.owner, self.foreground_ids[0]))
+        self.rpc.documents[row]["ownerSubject"] = "foreign_owner"
         value = self.query()
-        tokens = [value["feeds"][name]["nextCursor"] for name in ("foreground", "archived")]
-        self.assertTrue(all(token in self.rpc.documents[path]["cursors"] for token in tokens))
-        self.assertEqual(len(self.rpc.documents[path]["cursors"]), 32)
-        self.rpc.documents.pop(path)
-        with patch.object(inbox_module, "MAX_CURSORS", 1), self.assertRaises(ContractError):
-            self.query()
-        self.assertNotIn(path, self.rpc.documents)
+        self.assertEqual(len(value["feeds"]["persistent"]["items"]), 2)
+        self.assertTrue(
+            {path, index, row}.isdisjoint(name for group in self.reads() for name in group)
+        )
+        self.assertFalse(self.assert_no_business_writes())
 
     def test_zero_limit_or_all_known_names_are_null_and_do_not_read_task_carriers(self):
         for changes in ({"packetLimit": 0}, {"knownPacketVersions": self.known(self.ids)}):
@@ -391,7 +359,7 @@ class TaskOverviewTests(unittest.TestCase):
 
     def test_retry_rereads_root_lifecycle_and_state_then_next_request_is_fresh(self):
         path = self.name(lifecycle_path(self.owner, self.vault))
-        result = self.name(foreground_path(self.owner, self.foreground_ids[0]))
+        result = self.name(result_path(self.owner, self.vault, self.persistent_ids[0]))
 
         def winner():
             self.rpc.documents[path] = {"version": 1, "tasks": {self.ids[0]: "trashed"}}
@@ -452,8 +420,8 @@ class TaskOverviewTests(unittest.TestCase):
                 self.query()
         with patch.object(task_overview, "MAX_READ_BYTES", 1), self.assertRaises(ContractError):
             self.query()
-        name = self.name(foreground_path(self.owner, self.foreground_ids[0]))
-        self.rpc.documents[name]["ownerSubject"] = "foreign_owner"
+        name = self.name(result_path(self.owner, self.vault, self.persistent_ids[0]))
+        self.rpc.documents[name]["context"]["ownerSubject"] = "foreign_owner"
         with self.assertRaises(StoreUnavailable):
             self.query()
 

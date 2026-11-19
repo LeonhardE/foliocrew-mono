@@ -1,4 +1,4 @@
-"""Bounded, metadata-only task history over new and existing result stores.
+"""Bounded, metadata-only task history over persistent result stores.
 
 Enrollment captures a legacy page boundary. One query examines at most one old
 page, so sparse legacy tasks remain pageable without unbounded scans or workers.
@@ -16,7 +16,6 @@ from folioview_shared.encrypted.jsonutil import (
 from folioview_shared.encrypted.persistent_content import digest
 from folioview_shared.encrypted.task_center import TASK_CENTER_PROFILE, validate_task_center_schema
 
-from .inbox import InboxService
 from .persistent_results import PAGE_SIZE, PersistentResultService, result_path, stored_result
 from .store import StoreUnavailable, document_path
 from .task_center import TaskCenterOwnerService, definition_row
@@ -91,6 +90,19 @@ class _Batch:
         return self.rows[path]
 
 
+def _history_page(items, following):
+    return {
+        "contractVersion": CONTRACT_VERSION,
+        "profile": TASK_CENTER_PROFILE,
+        "items": items,
+        "nextCursor": following,
+        "total": None,
+        "historyScanPending": following is not None,
+        "ordering": "new_assignments_then_legacy",
+        "nativeScheduleAttested": False,
+    }
+
+
 class TaskCenterResultService(TaskCenterOwnerService):
     def results(self, uid, vault, task, request):
         if type(request) is not dict or set(request) != {"limit", "cursor"}:
@@ -136,13 +148,14 @@ class TaskCenterResultService(TaskCenterOwnerService):
                 elif legacy is not None:
                     phase, ident, before = "legacy", legacy["pageId"], legacy["before"]
                 else:
-                    phase, ident, before = "foreground", None, None
+                    return _history_page([], None)
             else:
                 phase, ident, before = (selected[k] for k in ("phase", "page", "before"))
             if phase == "foreground":
+                # A previously issued terminal cursor must not read the retired inbox.
                 if before is not None or (ident is not None and type(ident) is not str):
                     raise ContractError("unsupported_query")
-                return {"foreground": ident, "scope": scope}
+                return _history_page([], None)
             page = (
                 stored_page(unit, owner, vault, task, ident)
                 if phase == "current"
@@ -192,56 +205,7 @@ class TaskCenterResultService(TaskCenterOwnerService):
             elif phase == "current" and legacy is not None:
                 following = encode("legacy", legacy["pageId"], legacy["before"])
             else:
-                following = encode("foreground", None, None)
-            return {
-                "contractVersion": CONTRACT_VERSION,
-                "profile": TASK_CENTER_PROFILE,
-                "items": items,
-                "nextCursor": following,
-                "total": None,
-                "historyScanPending": True,
-                "ordering": "new_assignments_then_legacy",
-                "nativeScheduleAttested": False,
-            }
+                following = None
+            return _history_page(items, following)
 
-        result = self.store.transact(read)
-        if "foreground" not in result:
-            return result
-        # Existing foreground history shares its current bounded metadata cache;
-        # this adapter supplies a single task feed without changing old storage.
-        old = InboxService(self.store, clock=self.clock).list(
-            uid, limit=limit, cursor=result["foreground"], task_id=task
-        )
-        self.store.transact(lambda unit: self._owner_task(unit, uid, vault, task))
-        following = (
-            None
-            if old["nextCursor"] is None
-            else b64url_encode(
-                canonical_json(
-                    {
-                        "scope": result["scope"],
-                        "phase": "foreground",
-                        "page": old["nextCursor"],
-                        "before": None,
-                    }
-                )
-            )
-        )
-        return {
-            "contractVersion": CONTRACT_VERSION,
-            "profile": TASK_CENTER_PROFILE,
-            "items": [
-                {
-                    "kind": "foreground",
-                    "metadata": item,
-                    "attribution": None,
-                    "triggerKind": "legacy_unknown",
-                }
-                for item in old["items"]
-            ],
-            "nextCursor": following,
-            "total": None,
-            "historyScanPending": following is not None,
-            "ordering": "new_assignments_then_legacy",
-            "nativeScheduleAttested": False,
-        }
+        return self.store.transact(read)

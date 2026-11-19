@@ -8,6 +8,8 @@ from fixtures import UID
 from test_oauth import TASK
 
 from app.task_center_results import TaskCenterResultService
+from folioview_shared.encrypted.jsonutil import b64url_encode, canonical_json
+from folioview_shared.encrypted.persistent_content import digest
 
 
 class TaskCenterHistoryTests(unittest.TestCase):
@@ -29,9 +31,19 @@ class TaskCenterHistoryTests(unittest.TestCase):
         self.assertIsNone(page["items"][0]["attribution"])
         self.assertEqual(page["items"][0]["triggerKind"], "legacy_unknown")
         self.assertIsNone(page["total"])
-        following = self.owner.results(
-            UID, self.f.vault, TASK, {"limit": 1, "cursor": page["nextCursor"]}
+        self.assertIsNone(page["nextCursor"])
+        self.assertFalse(page["historyScanPending"])
+        retired = b64url_encode(
+            canonical_json(
+                {
+                    "scope": digest([self.f.owner, self.f.vault, TASK]),
+                    "phase": "foreground",
+                    "page": None,
+                    "before": None,
+                }
+            )
         )
+        following = self.owner.results(UID, self.f.vault, TASK, {"limit": 1, "cursor": retired})
         self.assertEqual(following["items"], [])
         self.assertIsNone(following["nextCursor"])
         self.assertEqual(

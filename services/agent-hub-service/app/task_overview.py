@@ -4,7 +4,6 @@ import copy
 import re
 import secrets
 import time
-from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
@@ -19,15 +18,13 @@ from folioview_shared.http import PrivateRoute
 from folioview_shared.identity import owner_key
 
 from .api import Owner, _invoke, body
-from .inbox import InboxService
 from .native_transport import NativeConnectionOwnerService
 from .persistent_results import PersistentOwnerResultService
 from .persistent_results import result_path as persistent_result_path
 from .persistent_routes import control_transport
-from .results import result_path
 from .store import StoreUnavailable, document_path, get_store
 from .task_center_routes import owner_capabilities
-from .task_lifecycle import lifecycle_path, visible_metadata
+from .task_lifecycle import lifecycle_path
 from .tasks import PACKET_BATCH_PROFILE, TaskService, _head, _index, _paths, _protocol, _response
 from .vaults import _current, identifier
 
@@ -156,21 +153,17 @@ class TaskOverviewService:
             tasks = TaskService(self.store, clock=self.clock)
             now = tasks.now()
             reports = PersistentOwnerResultService(self.store, clock=lambda: now)
-            inbox = InboxService(self.store, clock=lambda: now)
             native = NativeConnectionOwnerService(self.store, clock=lambda: now)
             view = _OverviewSnapshot(unit)
             root_path = document_path("hub_vaults", owner)
             persistent_index = document_path("hub_persistent_result_indexes", owner, vault_id)
-            cursor_path = document_path("hub_inbox_cursors", owner, vault_id)
             view.fetch(
                 [
                     root_path,
                     document_path("hub_task_indexes", owner, vault_id),
                     persistent_index,
-                    document_path("hub_result_indexes", owner),
                     document_path("hub_oauth_owners", owner),
                     lifecycle_path(owner, vault_id),
-                    cursor_path,
                 ]
             )
             root = view.get(root_path)
@@ -190,8 +183,6 @@ class TaskOverviewService:
                 if known.get(row["taskId"])
                 != {key: row[key] for key in ("taskId", "taskVersion", "envelopeFingerprint")}
             ][: value["packetLimit"]]
-            anchor = inbox._anchor(view, owner)
-            foreground_ids = inbox._index(view, owner, anchor)
             connection_index = native._owner(view, uid)
             head = view.get(persistent_index)
             page_path = None
@@ -208,7 +199,6 @@ class TaskOverviewService:
                 )
             view.fetch(
                 ([page_path] if page_path else [])
-                + [result_path(owner, result) for result in foreground_ids]
                 + [
                     document_path("hub_oauth_connections", owner, ident)
                     for ident in connection_index["connectionIds"]
@@ -237,39 +227,13 @@ class TaskOverviewService:
                     )
             view.fetch(final_paths)
             persistent = reports._list(view, owner, vault_id, limit=20, selected=None)
-            rows = visible_metadata(
-                view, owner, vault_id, inbox._heads(view, uid, owner, anchor, foreground_ids)
-            )
-            saved = original_cursors = view.get(cursor_path)
-            feeds, protected = {}, set()
-            for name, query_filter in (("foreground", "all"), ("archived", "archived")):
-                chosen = inbox._select(rows, query_filter, None)
-                chosen.sort(
-                    key=lambda row: (datetime.fromisoformat(row["receivedAt"]), row["resultId"]),
-                    reverse=True,
-                )
-                feeds[name], saved = inbox._page_values(
-                    owner,
-                    vault_id,
-                    chosen,
-                    saved=saved,
-                    now=now,
-                    limit=20,
-                    cursor=None,
-                    query={"kind": "list", "filter": query_filter, "taskId": None},
-                    protected=protected,
-                )
-                if feeds[name]["nextCursor"] is not None:
-                    protected.add(feeds[name]["nextCursor"])
-            if saved != original_cursors and (original_cursors is not None or saved["cursors"]):
-                view.put(cursor_path, saved)
             result = {
                 "contractVersion": CONTRACT_VERSION,
                 "profile": PROFILE,
                 "vaultId": vault_id,
                 "tasks": task_page,
                 "capabilities": capabilities,
-                "feeds": {"persistent": persistent, **feeds},
+                "feeds": {"persistent": persistent},
                 "connections": native._native_connections(view, uid),
                 "packets": None,
             }
