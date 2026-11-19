@@ -63,6 +63,50 @@ class UserHubTrustConfigurationTests(unittest.TestCase):
                     document,
                 )
 
+    def test_pins_exact_web_workload_without_enabling_private_recovery(self):
+        from test_browser_origin_configuration import with_aliases
+
+        value = with_aliases()
+        subject = "999000111222333444555"
+        value["userHubTrust"]["ownerRecoveryWebSubject"] = subject
+        artifacts = profile.compile_user_hub_trust_artifacts(value)
+        deployment = artifacts["deployment-config.candidate.json"]
+        trust = deployment["userHubTrust"]
+        web = trust["webDeployment"]
+        configuration = trust["configuration"]
+        environment = configuration["environment"]
+        self.assertEqual(
+            configuration["webDeploymentSha256"],
+            profile.digest(profile.compile_target(value, "web")),
+        )
+        self.assertEqual(
+            environment["USER_PRIVATE_OWNER_AUDIENCE"], value["targets"]["user"]["origin"]
+        )
+        self.assertEqual(
+            json.loads(environment["USER_PRIVATE_OWNER_WEB_CALLER"]),
+            {
+                subject: (
+                    f"{web['runtimeAccountId']}@{value['project']['id']}.iam.gserviceaccount.com"
+                ),
+            },
+        )
+        self.assertNotIn("USER_PRIVATE_RECOVERY_READ", environment)
+        self.assertEqual(artifacts["terraform-inputs.candidate.json"]["hub_trust"], environment)
+        self.assertLessEqual(len(profile.canonical(deployment)), profile.MAX_TARGET_BYTES)
+        for mutate in (
+            lambda item: item["userHubTrust"].pop("webDeployment"),
+            lambda item: item["userHubTrust"]["configuration"]["environment"].update(
+                USER_PRIVATE_OWNER_WEB_CALLER='{"1":"wrong@example.invalid"}',
+            ),
+            lambda item: item["userHubTrust"]["configuration"].update(
+                ownerRecoveryWebSubject=configuration["hubSubject"],
+            ),
+        ):
+            candidate = copy.deepcopy(deployment)
+            mutate(candidate)
+            with self.assertRaises(profile.ProfileError):
+                profile.parse_target(profile.canonical(candidate))
+
     def test_enabled_document_pins_single_explicit_subject_and_derives_identity_and_audiences(self):
         value = selected()
         instance, hub, document, manifest = compiled(value)
@@ -566,12 +610,16 @@ class UserHubTrustConfigurationTests(unittest.TestCase):
             set(schema["properties"]["userHubTrust"]["properties"]), profile.USER_HUB_TRUST_OPTIONS
         )
         trust = json.loads((directory / "user-hub-trust.schema.json").read_text())
-        self.assertEqual(set(trust["properties"]), profile.USER_HUB_TRUST_FIELDS)
+        self.assertEqual(
+            set(trust["properties"]),
+            profile.USER_HUB_TRUST_FIELDS | profile.USER_RECOVERY_WEB_DOCUMENT_FIELDS,
+        )
         self.assertEqual(set(trust["required"]), profile.USER_HUB_TRUST_FIELDS)
         self.assertFalse(trust["additionalProperties"])
         self.assertEqual(
             set(trust["properties"]["environment"]["properties"]),
-            profile.USER_HUB_TRUST_ENVIRONMENT_FIELDS,
+            profile.USER_HUB_TRUST_ENVIRONMENT_FIELDS
+            | profile.USER_RECOVERY_WEB_ENVIRONMENT_FIELDS,
         )
         self.assertFalse(trust["properties"]["environment"]["additionalProperties"])
         example = profile.load_profile(directory / "example-v3.profile.json")

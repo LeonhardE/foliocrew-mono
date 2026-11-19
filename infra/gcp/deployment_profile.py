@@ -86,6 +86,21 @@ WEB_BUILD_FIELDS = {
     "_FIREBASE_APP_ID",
 }
 USER_HUB_TRUST_OPTIONS = {"enabled", "hubSubject"}
+USER_RECOVERY_WEB_ENVIRONMENT_FIELDS = {
+    "USER_PRIVATE_OWNER_AUDIENCE",
+    "USER_PRIVATE_OWNER_WEB_CALLER",
+}
+USER_RECOVERY_WEB_DOCUMENT_FIELDS = {"webDeploymentSha256", "ownerRecoveryWebSubject"}
+USER_RECOVERY_WEB_REFERENCE_FIELDS = {
+    "deploymentSha256",
+    "instanceId",
+    "project",
+    "region",
+    "serviceUid",
+    "runtimeAccountId",
+    "firebaseProjectId",
+    "userOrigin",
+}
 USER_HUB_TRUST_ENVIRONMENT_FIELDS = {
     "USER_SERVICE_AUDIENCE",
     "USER_DELEGATION_AUDIENCE",
@@ -387,7 +402,19 @@ def validate_profile(value):
                         )
         if version >= 3:
             trust = value["userHubTrust"]
-            fields(trust, USER_HUB_TRUST_OPTIONS)
+            optional = (
+                {"ownerRecoveryWebSubject"}
+                if version == 6 and "ownerRecoveryWebSubject" in trust
+                else set()
+            )
+            fields(trust, USER_HUB_TRUST_OPTIONS | optional)
+            if optional:
+                matches(HUB_SUBJECT, trust["ownerRecoveryWebSubject"])
+                require(trust["ownerRecoveryWebSubject"] != trust["hubSubject"])
+                user = value["targets"]["user"]
+                require(user["lifecycle"] == value["targets"]["web"]["lifecycle"] == "adopt")
+                require(user["origin"] == f"https://user-api-{number}.{region}.run.app")
+                require(firebase["enabled"])
             require(type(trust["enabled"]) is bool)
             if trust["enabled"]:
                 matches(HUB_SUBJECT, trust["hubSubject"])
@@ -589,7 +616,11 @@ def validate_target(value):
                 )
         if has_user_trust:
             trust = value["userHubTrust"]
-            fields(trust, {"configuration", "hubDeployment"})
+            fields(
+                trust,
+                {"configuration", "hubDeployment"}
+                | ({"webDeployment"} if "webDeployment" in trust else set()),
+            )
             base = {
                 name: item
                 for name, item in value.items()
@@ -598,7 +629,10 @@ def validate_target(value):
             configuration = trust["configuration"]
             require(type(configuration) is dict)
             require((configuration.get("hubSubject") is None) == (trust["hubDeployment"] is None))
-            validate_user_hub_trust(configuration, base, trust["hubDeployment"])
+            require(("ownerRecoveryWebSubject" in configuration) == ("webDeployment" in trust))
+            validate_user_hub_trust(
+                configuration, base, trust["hubDeployment"], trust.get("webDeployment")
+            )
         if has_web_owner:
             owner = value["webOwner"]
             fields(owner, {"server", "public"})
@@ -1007,23 +1041,32 @@ def compile_web_owner_artifacts(profile):
     }
 
 
-def validate_user_hub_trust(value, instance, hub_instance=None):
+def validate_user_hub_trust(value, instance, hub_instance=None, web_instance=None):
     """Closed future User-consumer document, never an active Terraform input."""
     try:
         require(type(instance) is dict and instance.get("target") == "user")
         require("userHubTrust" not in instance)
         instance = parse_target(canonical(instance))
-        fields(value, USER_HUB_TRUST_FIELDS)
+        has_web = bool(value.keys() & USER_RECOVERY_WEB_DOCUMENT_FIELDS)
+        fields(
+            value, USER_HUB_TRUST_FIELDS | (USER_RECOVERY_WEB_DOCUMENT_FIELDS if has_web else set())
+        )
+        require((web_instance is not None) == has_web)
         require(type(value["schemaVersion"]) is int and value["schemaVersion"] == 1)
         require(value["target"] == "user" and value["instanceId"] == instance["instanceId"])
         require(value["userDeploymentSha256"] == digest(instance))
         environment = value["environment"]
-        fields(environment, USER_HUB_TRUST_ENVIRONMENT_FIELDS)
+        fields(
+            environment,
+            USER_HUB_TRUST_ENVIRONMENT_FIELDS
+            | (USER_RECOVERY_WEB_ENVIRONMENT_FIELDS if has_web else set()),
+        )
+        hub_environment = {key: environment[key] for key in USER_HUB_TRUST_ENVIRONMENT_FIELDS}
         require(all(type(item) is str for item in environment.values()))
         subject = value["hubSubject"]
         if subject is None:
             require(value["hubDeploymentSha256"] is None)
-            require(all(item == "" for item in environment.values()))
+            require(all(item == "" for item in hub_environment.values()))
         else:
             matches(HUB_SUBJECT, subject)
             require(type(hub_instance) is dict and hub_instance.get("target") == "agent-hub")
@@ -1043,7 +1086,7 @@ def validate_user_hub_trust(value, instance, hub_instance=None):
                 + ".iam.gserviceaccount.com"
             )
             require(
-                environment
+                hub_environment
                 == {
                     "USER_SERVICE_AUDIENCE": audience,
                     "USER_DELEGATION_AUDIENCE": audience + "/internal/v2",
@@ -1051,16 +1094,68 @@ def validate_user_hub_trust(value, instance, hub_instance=None):
                     "USER_TRUSTED_HUB_CALLERS": canonical({subject: email}).decode("ascii"),
                 }
             )
+        if has_web:
+            web = web_instance
+            web_subject = value["ownerRecoveryWebSubject"]
+            require(web_subject != subject)
+            require(value["webDeploymentSha256"] == web["deploymentSha256"])
+            require(
+                {key: environment[key] for key in USER_RECOVERY_WEB_ENVIRONMENT_FIELDS}
+                == user_recovery_web_environment(instance, web, web_subject)
+            )
+            if subject is not None:
+                require(web["runtimeAccountId"] != hub["inputs"]["runtime_account_id"])
+                require(web["serviceUid"] != hub["adoption"]["serviceUid"])
         require(len(canonical(value)) <= MAX_TARGET_BYTES)
     except (KeyError, TypeError, ValueError, AttributeError, RecursionError):
         raise ProfileError from None
     return value
 
 
-def parse_user_hub_trust(data, *, instance, expected_sha256, hub_instance=None):
+def user_recovery_web_reference(web):
+    # Use only workload pins here. Cloud Build substitutions have a fixed size
+    # and the Web build also carries fields unrelated to User authentication.
+    return {
+        "deploymentSha256": digest(web),
+        **{key: web[key] for key in ("instanceId", "project", "region")},
+        "serviceUid": web["adoption"]["serviceUid"],
+        "runtimeAccountId": web["inputs"]["runtime_account_id"],
+        "firebaseProjectId": web["build"]["_FIREBASE_PROJECT_ID"],
+        "userOrigin": web["build"]["_USER_API_BASE_URL"],
+    }
+
+
+def user_recovery_web_environment(instance, web, subject):
+    matches(HUB_SUBJECT, subject)
+    fields(web, USER_RECOVERY_WEB_REFERENCE_FIELDS)
+    matches(re.compile(r"[a-f0-9]{64}\Z"), web["deploymentSha256"])
+    for key in ("instanceId", "project", "region"):
+        require(web[key] == instance[key])
+    uuid(web["serviceUid"])
+    require(web["serviceUid"] != instance["adoption"]["serviceUid"])
+    account = web["runtimeAccountId"]
+    matches(ACCOUNT, account)
+    require(account != instance["inputs"]["runtime_account_id"])
+    project, number, region = (
+        instance["project"]["id"],
+        instance["project"]["number"],
+        instance["region"],
+    )
+    audience = f"https://user-api-{number}.{region}.run.app"
+    require(web["userOrigin"] == audience)
+    require(web["firebaseProjectId"] == project)
+    return {
+        "USER_PRIVATE_OWNER_AUDIENCE": audience,
+        "USER_PRIVATE_OWNER_WEB_CALLER": canonical(
+            {subject: f"{account}@{project}.iam.gserviceaccount.com"}
+        ).decode("ascii"),
+    }
+
+
+def parse_user_hub_trust(data, *, instance, expected_sha256, hub_instance=None, web_instance=None):
     """Require canonical bytes, selected target anchors and an independently trusted hash."""
     value = parse_web_owner_document(data)
-    validate_user_hub_trust(value, instance, hub_instance)
+    validate_user_hub_trust(value, instance, hub_instance, web_instance)
     matches(re.compile(r"[a-f0-9]{64}\Z"), expected_sha256)
     require(digest(value) == expected_sha256)
     return value
@@ -1072,6 +1167,12 @@ def compile_user_hub_trust_artifacts(profile):
     instance = compile_target(profile, "user")
     trust = profile.get("userHubTrust", {"enabled": False, "hubSubject": None})
     hub = compile_target(profile, "agent-hub") if trust["enabled"] else None
+    web_subject = trust.get("ownerRecoveryWebSubject")
+    web = (
+        user_recovery_web_reference(compile_target(profile, "web"))
+        if web_subject is not None
+        else None
+    )
     document = {
         "schemaVersion": 1,
         "instanceId": instance["instanceId"],
@@ -1096,10 +1197,16 @@ def compile_user_hub_trust_artifacts(profile):
             "USER_DELEGATION_ISSUER": f"https://agent-hub-api-{number}.{region}.run.app",
             "USER_TRUSTED_HUB_CALLERS": canonical({trust["hubSubject"]: email}).decode("ascii"),
         }
+    if web is not None:
+        document.update(
+            webDeploymentSha256=web["deploymentSha256"], ownerRecoveryWebSubject=web_subject
+        )
+        document["environment"].update(user_recovery_web_environment(instance, web, web_subject))
     parse_user_hub_trust(
         canonical(document),
         instance=instance,
         hub_instance=hub,
+        web_instance=web,
         expected_sha256=digest(document),
     )
     # The explicit command also prepares the full managed projection. Legacy
@@ -1108,7 +1215,11 @@ def compile_user_hub_trust_artifacts(profile):
         canonical(
             {
                 **instance,
-                "userHubTrust": {"configuration": document, "hubDeployment": hub},
+                "userHubTrust": {
+                    "configuration": document,
+                    "hubDeployment": hub,
+                    **({"webDeployment": web} if web is not None else {}),
+                },
             }
         )
     )

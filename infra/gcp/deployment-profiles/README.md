@@ -459,6 +459,14 @@ permissions and reviewed trigger switch before releasing a provenance-checked
 image. Preserve its existing service UID, private IAM and named database; never
 reuse the first-provision path to update an existing service.
 
+### Optional Web identity for User recovery
+
+A v6 profile can set `userHubTrust.ownerRecoveryWebSubject` to the Google numeric
+subject of its reviewed Web runtime. The User artifact carries the exact same-project
+User audience and a single Web service account email bound to that subject. It pins
+the Web deployment digest in a compact reference, retaining the Cloud Build size limit.
+This configures expected identity only. Recovery activation is a separate User decision.
+
 ## INF-009 managed Web owner configuration
 
 `compile-web-owner-deployment` explicitly extends the selected Web target with a
