@@ -38,9 +38,11 @@ SOURCE_REGISTRATIONS = "user_private_source_registration_receipts"
 _MAX_REGISTRY_EXTENSION = 128
 
 
-def current_registry(cutover, uid, vault, now):
+def current_registry(cutover, uid, vault, now, *, allow_deleted=False):
     """Build authority only to the fixed current head returned by User."""
-    evidence = cutover.read_start(uid, vault, secrets.token_urlsafe(24), now=now)
+    evidence = cutover.read_start(
+        uid, vault, secrets.token_urlsafe(24), now=now, allow_deleted=allow_deleted
+    )
     scope = {key: evidence[key] for key in ("ownerSubject", "vaultId", "rootKeyId")}
     root = evidence["rootJwk"]
     target = evidence["registry"]

@@ -12,6 +12,7 @@ from folioview_shared.encrypted.jsonutil import canonical_json, strict_json_load
 from folioview_shared.encrypted.legacy_archive import (
     MAX_LIFECYCLE_OPERATIONS,
     advance_legacy_archive,
+    archive_deletion_outcome,
     legacy_archive_receipt,
     validate_passkey_archive,
     verify_legacy_archive_command,
@@ -73,7 +74,9 @@ class PrivateArchiveLifecycle:
         ):
             raise ContractError("authorization_unavailable")
         _, before, old_bundles = self.cutover.verifier.original_history(original, now)
-        evidence, registry, current_bundles = current_registry(self.cutover, uid, vault, now)
+        evidence, registry, current_bundles = current_registry(
+            self.cutover, uid, vault, now, allow_deleted=True
+        )
         if not _matches_current(head, evidence):
             raise ContractError("version_conflict")
         original_lifecycle = original["archiveLifecycle"]
@@ -201,7 +204,19 @@ class PrivateArchiveLifecycle:
             pass
         raise ContractError("authorization_unavailable")
 
-    def advance(self, uid, vault, operation, command, archive):
+    def check_removal(self, uid, vault, operation, command):
+        head, row, vault_info, cursor, state, _, _ = self._snapshot(uid, vault, int(self.clock()))
+        result = archive_deletion_outcome(vault_info, cursor.registry, state, command)
+        if result["operationId"] != operation:
+            raise ContractError("idempotency_conflict")
+        owner = owner_key(uid)
+        if self.cutover._read(((HEADS, owner), (ARCHIVE_RECORDS, owner))) != [head, row]:
+            raise ContractError("version_conflict")
+        return result
+
+    def advance(
+        self, uid, vault, operation, command, archive, *, removal_action=None, deletion=None
+    ):
         owner = owner_key(uid)
         try:
             now = int(self.clock())
@@ -210,8 +225,21 @@ class PrivateArchiveLifecycle:
             )
             payload = verify_legacy_archive_command(command, vault_info)
             action = payload["action"]
-            if action not in _MUTATIONS or (action == "archive_replace") != (archive is not None):
+            if (
+                (action not in _MUTATIONS if removal_action is None else action != removal_action)
+                or (action == "archive_replace") != (archive is not None)
+                or (action == "archive_delete_withdraw") != (deletion is not None)
+            ):
                 raise ContractError("malformed_request")
+            if deletion is not None:
+                original = verify_legacy_archive_command(deletion, vault_info)
+                if (
+                    original["action"] != "archive_delete"
+                    or original["stableOperationId"] != payload["deletionOperationId"]
+                    or original["expectedLifecycleVersion"] != payload["deletionLifecycleVersion"]
+                    or signing_input_fingerprint(deletion) != payload["deletionCommandFingerprint"]
+                ):
+                    raise ContractError("recipient_binding_mismatch")
             if payload["stableOperationId"] != operation:
                 raise ContractError("idempotency_conflict")
             if action == "archive_replace":
@@ -257,6 +285,8 @@ class PrivateArchiveLifecycle:
                     ):
                         raise ContractError("recipient_binding_mismatch")
                 current_archive = archive
+            elif action == "archive_delete":
+                current_archive = None
             after = advance_legacy_archive(state, payload, command, now)
             receipt = legacy_archive_receipt(vault_info, payload, after, command, now)
             retained = [] if lifecycle is None else lifecycle["history"]
