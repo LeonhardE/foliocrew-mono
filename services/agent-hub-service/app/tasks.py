@@ -34,9 +34,10 @@ from .api import Owner, _invoke, body, transport
 from .catalogue import CatalogueService, get_sources
 from .fences import require_current_bindings
 from .registry_reads import RegistryPrefixCache
-from .store import StoreUnavailable, document_path, get_store
+from .store import StoreUnavailable, document_path, get_store, private_resource_writer_fence_path
 from .task_lifecycle import lifecycle_index, require_visible
 from .task_upload_cancellations import TaskUploadCancellationService, operation_cancelled
+from .user_vault_authority import scoped_user_vaults
 from .vaults import VaultService, _current, _selection, identifier, positive
 
 MAX_TASKS = 32
@@ -336,8 +337,29 @@ def _response(unit, owner, vault_row, task_id, version):
 
 
 class TaskService:
-    def __init__(self, store, catalogue=None, *, clock=time.time):
+    def __init__(self, store, catalogue=None, *, clock=time.time, user_vaults=None):
         self.store, self.catalogue, self.clock = store, catalogue, clock
+        self.user_vaults = user_vaults if user_vaults is not None else scoped_user_vaults(store)
+
+    def _authority(self, unit, owner, now, scope, *, history=False):
+        if scope is None:
+            if (
+                owner == self.user_vaults.owner
+                and unit.get(private_resource_writer_fence_path(owner)) is not None
+            ):
+                raise ContractError("source_unavailable")
+            return _current(unit, owner, now)
+        scope.require_current(unit, now)
+        authority = scope.authority
+        if authority["ownerSubject"] != owner:
+            raise ContractError("source_unavailable")
+        row = {**authority, "version": authority["vaultVersion"]}
+        if history:
+            original, _ = _current(unit, owner, now, authority["vaultId"])
+            if original["rootKeyId"] != authority["rootKeyId"]:
+                raise ContractError("registry_conflict")
+            row["priorRegistryHistory"] = original["registryHistory"]
+        return row, scope.cursor.registry
 
     def now(self):
         value = self.clock()
@@ -404,9 +426,11 @@ class TaskService:
             }
         )
 
+        user_scope = self.user_vaults.read(uid, context["vaultId"])
+
         def state(unit, *, commit=False, fresh=False):
             now = self.now()
-            vault, registry = _current(unit, owner, now)
+            vault, registry = self._authority(unit, owner, now, user_scope)
             vault_id = vault["vaultId"]
             require_visible(unit, owner, vault_id, task_id)
             index = _index(unit, owner, vault_id)
@@ -436,6 +460,8 @@ class TaskService:
                 positive(version)
                 if current is None or version > current["taskVersion"]:
                     raise StoreUnavailable
+                if user_scope is not None:
+                    vault, _ = self._authority(unit, owner, now, user_scope, history=True)
                 original = _response(unit, owner, vault, task_id, version)
                 operation_type = {
                     "create": "create_task",
@@ -586,7 +612,10 @@ class TaskService:
             if needs_fresh and not fresh:
                 return {"replayed": False, "fresh": True}
             if needs_fresh or (mode == "update" and status == "active"):
-                require_current_bindings(unit, owner, resources)
+                if user_scope is None:
+                    require_current_bindings(unit, owner, resources)
+                else:
+                    user_scope.require_active_holdings(resources)
             metadata = {
                 "contractVersion": CONTRACT_VERSION,
                 "vaultId": vault_id,
@@ -655,6 +684,8 @@ class TaskService:
                 if recovered.get("replayed"):
                     return recovered["response"], True
                 raise
+        if user_scope is not None:
+            user_scope = self.user_vaults.read(uid, context["vaultId"])
         result = self.store.transact(lambda unit: state(unit, commit=True, fresh=True))
         return result["response"], result["replayed"]
 
@@ -674,9 +705,10 @@ class TaskService:
         if version is not None:
             positive(version)
         owner = owner_key(uid)
+        user_scope = self.user_vaults.read(uid)
 
         def read(unit):
-            vault, _ = _current(unit, owner, self.now())
+            vault, _ = self._authority(unit, owner, self.now(), user_scope, history=True)
             require_visible(unit, owner, vault["vaultId"], task_id)
             index = _index(unit, owner, vault["vaultId"])
             head = _head(unit, owner, vault["vaultId"], task_id, index)
@@ -698,9 +730,10 @@ class TaskService:
             raise ContractError("malformed_request")
         task_ids = list(task_ids)
         owner = owner_key(uid)
+        user_scope = self.user_vaults.read(uid)
 
         def read(unit):
-            vault, _ = _current(unit, owner, self.now())
+            vault, _ = self._authority(unit, owner, self.now(), user_scope, history=True)
             vault_id = vault["vaultId"]
             paths = [
                 document_path("hub_task_indexes", owner, vault_id),
@@ -759,9 +792,10 @@ class TaskService:
         identifier(task_id)
         validate_schema("OperationIdentifier", operation)
         owner = owner_key(uid)
+        user_scope = self.user_vaults.read(uid)
 
         def read(unit):
-            vault, _ = _current(unit, owner, self.now())
+            vault, _ = self._authority(unit, owner, self.now(), user_scope, history=True)
             vault_id = vault["vaultId"]
             require_visible(unit, owner, vault_id, task_id)
             index = _index(unit, owner, vault_id)
@@ -825,10 +859,11 @@ class TaskService:
                 raise ContractError("unsupported_query") from None
         owner = owner_key(uid)
         issued_token = secrets.token_urlsafe(24)
+        user_scope = self.user_vaults.read(uid)
 
         def read(unit):
             now = self.now()
-            vault, _ = _current(unit, owner, now)
+            vault, _ = self._authority(unit, owner, now, user_scope)
             return self._list(
                 unit, owner, vault, now=now, limit=limit, cursor=cursor, issued_token=issued_token
             )

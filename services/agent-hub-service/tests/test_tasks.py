@@ -6,15 +6,22 @@ import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from fixtures import BOOT, OTHER_UID, SOURCE, UID, VaultFixture
 from test_encrypted_envelope import EnvelopeFixture
 from test_encrypted_schema import wrapper
 
 from app.fences import FenceService
-from app.store import SQLiteHubStore, StoreUnavailable, document_path
+from app.store import (
+    SQLiteHubStore,
+    StoreUnavailable,
+    document_path,
+    private_resource_writer_fence_path,
+)
 from app.tasks import TaskService
+from app.user_vault_authority import CurrentUserVault, ScopedUserVaults
 from app.vaults import VaultService
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
 from folioview_shared.encrypted.crypto import (
@@ -215,6 +222,63 @@ class TaskTests(unittest.TestCase):
         )
         self.fixture.registry = self.fixture.verify(bundle, previous=self.fixture.registry)
         self.fixture.bundle = bundle
+
+    def test_transferred_tasks_use_user_writer_and_keep_original_history(self):
+        first, _ = self.save()
+        fixture = self.fixture
+        owner, vault = fixture.owner, fixture.vault
+        selected = {"ref": fixture.resource, "sourceEpoch": 1}
+        self.sources.bindings.append(selected)
+        task, operation = "new_user_authority_task", "synthetic_user_authority_task_001"
+        stale = fixture.body(task=task, operation=operation, resources=[selected])
+        bundle = fixture.make_bundle(previous=fixture.registry)
+        fixture.registry = fixture.verify(bundle, previous=fixture.registry)
+        fixture.bundle = bundle
+
+        marker = {
+            "ownerSubject": owner,
+            "vaultId": vault,
+            "state": "transferred",
+            "writerEpoch": 2,
+            "transitionFingerprint": "f" * 64,
+        }
+        path = private_resource_writer_fence_path(owner)
+        self.store.transact(lambda unit: unit.put(path, marker))
+
+        def proof(state):
+            return CurrentUserVault(
+                {
+                    "ownerSubject": owner,
+                    "vaultId": vault,
+                    "rootKeyId": fixture.root_id,
+                    "rootJwk": fixture.root_public,
+                    "vaultVersion": 2,
+                    "registryHistory": [bundle],
+                    "sources": [{"binding": selected, "state": state}],
+                },
+                SimpleNamespace(registry=fixture.registry),
+                marker,
+                self.clock + 8,
+            )
+
+        client = Mock()
+        client.read.return_value = proof("active")
+        self.service.user_vaults = ScopedUserVaults(self.store, owner=owner, client=client)
+        self.code("registry_conflict", lambda: self.save(stale, task=task, operation=operation))
+        data = fixture.body(task=task, operation=operation, resources=[selected])
+        client.read.side_effect = [proof("active"), proof("disconnected")]
+        self.code("version_conflict", lambda: self.save(data, task=task, operation=operation))
+        client.read.side_effect = None
+        with patch(
+            "app.tasks.require_current_bindings", side_effect=AssertionError("legacy source")
+        ):
+            saved, replayed = self.save(data, task=task, operation=operation)
+        self.assertFalse(replayed)
+        self.assertEqual(self.service.get(UID, task), saved)
+        self.assertEqual(self.service.get(UID, TASK), first)
+        self.assertEqual(self.service.operation(UID, TASK, OP), first)
+        self.assertEqual(self.service.operation(UID, task, operation), saved)
+        self.assertEqual(len(self.service.list(UID)["items"]), 2)
 
     def test_real_private_rules_roundtrip_and_history_are_ciphertext_only(self):
         first, replay = self.save()
