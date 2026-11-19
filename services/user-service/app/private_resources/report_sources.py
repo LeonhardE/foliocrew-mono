@@ -105,6 +105,8 @@ class ReportSourceAuthority:
                 raise ContractError("source_unavailable")
             if head["vaultId"] != vault:
                 raise ContractError("insufficient_scope")
+            if head.get("handover") is None:
+                raise ContractError("source_unavailable")
             states = []
             for binding in request["resources"]:
                 ref = binding["ref"]

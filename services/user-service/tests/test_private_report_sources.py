@@ -12,7 +12,7 @@ from test_private_recovery import OWNER, UID, VAULT, projection
 
 from app.main import app
 from app.private_resources.api import REPORT_DECISION_PATH, report_authority, report_verifier
-from app.private_resources.recovery import COLLECTION, RecoveryHeads
+from app.private_resources.recovery import COLLECTION, RecoveryHeads, current_recovery_evidence
 from app.private_resources.report_sources import (
     HOLDINGS_FENCES,
     ReportSourceAuthority,
@@ -31,13 +31,25 @@ from folioview_shared.encrypted.private_resources import (
 )
 
 
+def live_projection(head):
+    return {
+        **head,
+        "handover": {
+            "operationId": "synthetic_handover_operation_0001",
+            "baselineDigest": "c" * 64,
+            "writerEpoch": 1,
+        },
+    }
+
+
 class ReportSourceTests(unittest.TestCase):
     def setUp(self):
         local = tempfile.TemporaryDirectory()
         self.addCleanup(local.cleanup)
         store = SQLiteUserResourceStore(str(Path(local.name) / "user.sqlite3"))
         self.authority = ReportSourceAuthority(store)
-        RecoveryHeads(store).install(projection()[0], expected_version=0)
+        self.head, self.recovery_request = projection()
+        RecoveryHeads(store).install(live_projection(self.head), expected_version=0)
         SQLiteWatchlistStore(store.path).change(
             UID,
             "AAPL",
@@ -119,6 +131,27 @@ class ReportSourceTests(unittest.TestCase):
         )
         self.assertEqual(self.authority.decide(UID, later)["outcome"], "denied")
 
+    def test_shadow_head_cannot_authorize_a_report_or_promote_by_ordinary_install(self):
+        self.change_fence()
+        store = self.authority.store
+        heads = RecoveryHeads(store)
+        evidence = current_recovery_evidence(heads, UID, VAULT, self.recovery_request, 1000)
+        self.assertNotIn("handover", evidence)
+        shadow = self.head
+        with store.connection() as db:
+            db.execute(
+                f"UPDATE {COLLECTION} SET value=? WHERE owner=?",
+                (canonical_json(shadow).decode(), OWNER),
+            )
+        with self.assertRaisesRegex(ContractError, "source_unavailable"):
+            self.authority.decide(UID, self.request)
+        with self.assertRaisesRegex(ContractError, "version_conflict"):
+            RecoveryHeads(store).install(
+                {**live_projection(shadow), "vaultVersion": shadow["vaultVersion"] + 1},
+                expected_version=shadow["vaultVersion"],
+            )
+        self.assertIsNone(RecoveryHeads(store).read(OWNER).get("handover"))
+
     def test_coverage_cross_owner_and_failed_reads_never_permit(self):
         self.change_fence()
         for uid, request in (
@@ -139,7 +172,7 @@ class ReportSourceTests(unittest.TestCase):
         with self.authority.store.connection() as db:
             content, metadata = self.authority.store.pair(db, UID, "watchlist")
             rows = {
-                f"{COLLECTION}/{OWNER}": {"view": canonical_json(projection()[0])},
+                f"{COLLECTION}/{OWNER}": {"view": canonical_json(live_projection(self.head))},
                 f"{COLLECTIONS['watchlist']}/{OWNER}": content,
                 f"user_resource_versions/{version_key(UID, 'watchlist')}": metadata,
                 f"{HOLDINGS_FENCES}/{key}": self.authority.store.value(db, HOLDINGS_FENCES, key),
