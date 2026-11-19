@@ -1682,7 +1682,7 @@ test("Hub capability is independent and production never falls back to its legac
   h.unmount();
 });
 
-test("Hub owner catalogue, tasks, Inbox, connections and preparation use only closed same-origin routes", async () => {
+test("Hub owner catalogue, tasks, connections and preparation use only closed same-origin routes", async () => {
   const h = mountProvider({
     fetchOwnerConfig: async () => configResponse(true, true),
     env: encryptedEnv,
@@ -1702,13 +1702,6 @@ test("Hub owner catalogue, tasks, Inbox, connections and preparation use only cl
     ["/api/v2/tasks?" + new URLSearchParams({ limit: "50", cursor }), {}],
     ["/api/v2/tasks/task_A", {}],
     ["/api/v2/tasks/task_A/versions/50", {}],
-    ["/api/v2/results?limit=50&cursor=" + cursor + "&filter=unread&taskId=task_A", {}],
-    ["/api/v2/results/counts?taskId=task_A", {}],
-    ["/api/v2/results/result_A?revision=32&deliveryRevision=1", {}],
-    ["/api/v2/results/result_A?deliveryRevision=9007199254740991", {}],
-    ["/api/v2/results/result_A/revisions?limit=1&cursor=" + cursor, {}],
-    ["/api/v2/results/result_A/revisions/32/evidence", {}],
-    ["/api/v2/results/result_A/revisions/32/registries/32", {}],
     ["/api/v2/agent-connections", {}],
     ["/api/v2/agent-connections/connection_A/tasks/task_A/preparation-intent", {}],
     [
@@ -1719,10 +1712,6 @@ test("Hub owner catalogue, tasks, Inbox, connections and preparation use only cl
     [
       "/api/v2/tasks/task_A/transitions",
       { method: "POST", json: { ...versioned, transitionIntent: {} }, headers: signedHeaders },
-    ],
-    [
-      "/api/v2/results/result_A/state",
-      { method: "PATCH", json: { contractVersion: version, command: {} }, headers: signedHeaders },
     ],
     [
       "/api/v2/agent-connections/connection_A/revoke",
@@ -2395,9 +2384,14 @@ test("Hub proxy preserves pending-token account switch, logout, cancellation and
     });
     await settle();
     const controller = new AbortController();
-    const pending = h.actions.requestPrivate("agent-hub", "/api/v2/results/result_A", "a:1", {
-      signal: controller.signal,
-    });
+    const pending = h.actions.requestPrivate(
+      "agent-hub",
+      "/api/v2/persistent-results/vault_A/presult_A",
+      "a:1",
+      {
+        signal: controller.signal,
+      },
+    );
     const rejected = assert.rejects(pending, /account session changed/);
     if (transition === "switch") h.emitUser(user("b"));
     if (transition === "logout") await h.actions.signOut();
@@ -2418,7 +2412,11 @@ test("Hub proxy preserves pending-token account switch, logout, cancellation and
   });
   h.emitUser(user("a"));
   await settle();
-  const pending = h.actions.requestPrivate("agent-hub", "/api/v2/results/result_A", "a:1");
+  const pending = h.actions.requestPrivate(
+    "agent-hub",
+    "/api/v2/persistent-results/vault_A/presult_A",
+    "a:1",
+  );
   const rejected = assert.rejects(pending, /account session changed/);
   await settle();
   h.emitUser(user("b"));

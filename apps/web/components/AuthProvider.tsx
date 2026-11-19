@@ -275,24 +275,6 @@ function hubOwnerRule(path: string, method: PrivateMethod): EncryptedRule | null
       rule = { method };
     } else if (matches(`/api/v2/tasks/${id}`)) rule = { method };
     else if (matches(`/api/v2/tasks/${id}/versions/(?:[1-9]|[1-4][0-9]|50)`)) rule = { method };
-    else if (pathname === "/api/v2/results") {
-      queryKeys = ["limit", "cursor", "filter", "taskId"];
-      rule = { method };
-    } else if (pathname === "/api/v2/results/counts") {
-      queryKeys = ["taskId"];
-      rule = { method };
-    } else if (matches(`/api/v2/results/${id}`)) {
-      queryKeys = ["revision", "deliveryRevision"];
-      rule = { method };
-    } else if (matches(`/api/v2/results/${id}/revisions`)) {
-      queryKeys = ["limit", "cursor"];
-      rule = { method };
-    } else if (
-      matches(
-        `/api/v2/results/${id}/revisions/(?:[1-9]|[12][0-9]|3[0-2])/(?:evidence|registries/(?:[1-9]|[12][0-9]|3[0-2]))`,
-      )
-    )
-      rule = { method };
   } else if (method === "POST" && pathname === "/api/v2/vaults") {
     rule = {
       method,
@@ -400,14 +382,6 @@ function hubOwnerRule(path: string, method: PrivateMethod): EncryptedRule | null
       idempotent: true,
       author: true,
     };
-  } else if (method === "PATCH" && matches(`/api/v2/results/${id}/state`)) {
-    rule = {
-      method,
-      keys: ["contractVersion", "command"],
-      idempotent: true,
-      author: true,
-      maxBytes: 65536,
-    };
   } else if (
     method === "PUT" &&
     matches(`/api/v2/agent-connections/${id}/tasks/${id}/preparation/objects/${id}`)
@@ -439,15 +413,9 @@ function hubOwnerRule(path: string, method: PrivateMethod): EncryptedRule | null
           ).test(value)
         )
           return null;
-      } else if (name === "filter") {
-        if (!["all", "unread", "starred", "archived"].includes(value)) return null;
-      } else if (name === "taskId") {
-        if (!new RegExp(`^${id}$`).test(value)) return null;
       } else {
-        const max =
-          name === "deliveryRevision" ? Number.MAX_SAFE_INTEGER : name === "revision" ? 32 : 50;
         const number = Number(value);
-        if (!/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(number) || number > max)
+        if (!/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(number) || number > 50)
           return null;
       }
     }

@@ -51,7 +51,7 @@ function catalogue(flow) {
   };
 }
 
-test("one signed browser session crosses both actual Next forwarders from CSV ciphertext through prepared resources to decrypted Inbox", async (t) => {
+test("one signed browser session crosses both actual Next forwarders from CSV ciphertext through prepared resources while retired result routes stay closed", async (t) => {
   const crypto = await createHarness();
   t.after(() => crypto.close());
   const flow = await fullFlow(crypto, {
@@ -75,16 +75,6 @@ test("one signed browser session crosses both actual Next forwarders from CSV ci
     status: "committed",
     objects: flow.prepared.metadata.objects,
   };
-  const statePacket = await flow.f.session.signResultState({
-    metadata: flow.result.result.metadata,
-    changes: { read: true, starred: true },
-  });
-  const updatedState = {
-    ...flow.result.result.metadata,
-    read: true,
-    starred: true,
-    stateVersion: flow.result.result.metadata.stateVersion + 1,
-  };
   boundary.setUpstream((url, init) => {
     const path = new URL(url).pathname;
     if (init.body)
@@ -101,16 +91,6 @@ test("one signed browser session crosses both actual Next forwarders from CSV ci
     if (path === preparationPath + "/commit") return response(committed);
     if (path.startsWith(preparationPath + "/objects/"))
       return response(committed.objects.find((row) => row.objectId === path.split("/").at(-1)));
-    if (path === "/api/v2/results")
-      return response({
-        contractVersion: CONTRACT,
-        items: [flow.result.result.metadata],
-        nextCursor: null,
-      });
-    if (path === `/api/v2/results/${resultId}/state`) return response(updatedState);
-    if (path === `/api/v2/results/${resultId}/revisions/1/evidence`)
-      return response(flow.result.evidence);
-    if (path === `/api/v2/results/${resultId}`) return response(flow.result.result);
     assert.fail("Unselected synthetic producer route " + path);
   });
 
@@ -164,30 +144,18 @@ test("one signed browser session crosses both actual Next forwarders from CSV ci
     json: commitPacket.body,
   });
   assert.deepEqual(await commit.json(), committed);
-  const index = await (
-    await request(owner, "agent-hub", "/api/v2/results?filter=unread&limit=50")
-  ).json();
-  assert.equal(index.items[0].resultId, resultId);
-  const result = await (
-    await request(owner, "agent-hub", `/api/v2/results/${resultId}?revision=1&deliveryRevision=1`)
-  ).json();
-  const evidence = await (
-    await request(owner, "agent-hub", `/api/v2/results/${resultId}/revisions/1/evidence`)
-  ).json();
+  const oldReportPath = `/api/v2/results/${resultId}`;
+  const beforeRetiredRead = boundary.producerCalls().length;
+  await assert.rejects(request(owner, "agent-hub", oldReportPath), /Invalid private API path/);
+  assert.equal(boundary.producerCalls().length, beforeRetiredRead);
   assert.deepEqual(
     await flow.f.session.openResult({
-      result,
-      evidence,
+      result: flow.result.result,
+      evidence: flow.result.evidence,
       registryBundles: flow.result.registryBundles,
     }),
     flow.content,
   );
-  const marked = await request(owner, "agent-hub", `/api/v2/results/${resultId}/state`, {
-    method: "PATCH",
-    headers: write(statePacket),
-    json: { contractVersion: CONTRACT, command: statePacket.command },
-  });
-  assert.deepEqual(await marked.json(), updatedState);
 
   const ownerToken = await boundary.token(flow.f.uid);
   for (const call of boundary.producerCalls()) {
@@ -210,7 +178,6 @@ test("one signed browser session crosses both actual Next forwarders from CSV ci
       envelope: row.envelope,
     })),
     commitPacket.body,
-    { contractVersion: CONTRACT, command: statePacket.command },
   ];
   assert.equal(writes.length, expected.length);
   assert.deepEqual(
@@ -225,7 +192,6 @@ test("one signed browser session crosses both actual Next forwarders from CSV ci
       flow.task.pending.operationId,
       ...flow.prepared.sealed.objects.map((row) => row.operationId),
       commitPacket.operationId,
-      statePacket.operationId,
     ],
   );
   const encryptedWire = JSON.stringify(
@@ -272,15 +238,8 @@ test("shared real forwarders keep two owners distinct while a canceled or late r
     if (delayA && uid === "synthetic_boundary_A") return delayed.promise;
     return response({
       contractVersion: CONTRACT,
-      profile: "folioview.owner-result-counts.v1",
-      asOf: "2026-10-30T12:00:00Z",
-      counts: {
-        all: uid.endsWith("A") ? 1 : 2,
-        unread: 0,
-        starred: 0,
-        archived: 0,
-        total: uid.endsWith("A") ? 1 : 2,
-      },
+      items: [],
+      nextCursor: uid.endsWith("A") ? "owner_a_cursor" : "owner_b_cursor",
     });
   });
   const samePath = `/api/v2/holdings/sources/${importedA.source.resourceRef.resourceId}/snapshots/${importedA.pending.snapshotId}`;
@@ -315,16 +274,16 @@ test("shared real forwarders keep two owners distinct while a canceled or late r
     "A shared service-token flight does not replace either owner's Firebase identity",
   );
   assert.equal(
-    (await (await request(a, "agent-hub", "/api/v2/results/counts")).json()).counts.total,
-    1,
+    (await (await request(a, "agent-hub", "/api/v2/tasks")).json()).nextCursor,
+    "owner_a_cursor",
   );
   assert.equal(
-    (await (await request(b, "agent-hub", "/api/v2/results/counts")).json()).counts.total,
-    2,
+    (await (await request(b, "agent-hub", "/api/v2/tasks")).json()).nextCursor,
+    "owner_b_cursor",
   );
   delayA = true;
   const oldKey = a.value.sessionKey;
-  const pending = request(a, "agent-hub", "/api/v2/results/counts");
+  const pending = request(a, "agent-hub", "/api/v2/tasks");
   const rejected = assert.rejects(pending, { name: "SessionChangedError" });
   await settle();
   await a.login("synthetic_boundary_B");
@@ -334,21 +293,21 @@ test("shared real forwarders keep two owners distinct while a canceled or late r
   assert.equal(a.value.profile.uid, "synthetic_boundary_B");
   assert.notEqual(a.value.sessionKey, oldKey);
   assert.equal(
-    (await (await request(a, "agent-hub", "/api/v2/results/counts")).json()).counts.total,
-    2,
+    (await (await request(a, "agent-hub", "/api/v2/tasks")).json()).nextCursor,
+    "owner_b_cursor",
   );
   const pendingToken = deferred();
   a.auth.currentUser.getIdToken = () => pendingToken.promise;
   const before = boundary.producerCalls().length;
   const controller = new AbortController();
-  const canceled = request(a, "agent-hub", "/api/v2/results/counts", { signal: controller.signal });
+  const canceled = request(a, "agent-hub", "/api/v2/tasks", { signal: controller.signal });
   const canceledAssertion = assert.rejects(canceled, { name: "SessionChangedError" });
   controller.abort();
   pendingToken.resolve(await boundary.token("synthetic_boundary_B"));
   await canceledAssertion;
   assert.equal(boundary.producerCalls().length, before);
   await a.value.signOut();
-  await assert.rejects(a.value.requestPrivate("agent-hub", "/api/v2/results/counts", oldKey), {
+  await assert.rejects(a.value.requestPrivate("agent-hub", "/api/v2/tasks", oldKey), {
     name: "SessionChangedError",
   });
   assert.equal(a.value.profile, null);
@@ -444,11 +403,11 @@ test("IAM, malformed upstream and version conflicts stay service failures, prese
   assert.equal(conflicted.status, 409);
   assert.equal((await conflicted.json()).error.code, "version_conflict");
   scenario = "plainLeak";
-  const privateReply = await request(owner, "agent-hub", "/api/v2/results");
+  const privateReply = await request(owner, "agent-hub", "/api/v2/tasks");
   assert.equal(privateReply.status, 503);
   assert.ok(!(await privateReply.text()).includes("PRIVATE_UNEXPECTED_REPORT"));
   scenario = "healthy";
-  assert.equal((await request(owner, "agent-hub", "/api/v2/results")).status, 200);
+  assert.equal((await request(owner, "agent-hub", "/api/v2/tasks")).status, 200);
   assert.equal(owner.value.profile.uid, f.uid);
   assert.equal(boundary.logs.length, 0);
 });

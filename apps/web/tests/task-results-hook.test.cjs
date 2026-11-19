@@ -378,11 +378,11 @@ test("lock and owner changes mask private titles/details immediately and ignore 
   assert.equal(m.detail, null);
   h.close();
 });
-test("legacy report links resolve the owning visible task before opening a modal", async () => {
+test("persistent report bookmarks resolve the owning visible task before opening a modal", async () => {
   const h = harness();
   await h.ready();
   h.model.selected = { taskId: "task_B", taskVersion: 1 };
-  h.link("#inbox/result/presult_A");
+  h.link("#inbox/result/presult_A/revisions/1");
   const m = await h.ready();
   assert.equal(h.model.selected.taskId, "task_A");
   assert.equal(m.detail.row.metadata.resultId, "presult_A");

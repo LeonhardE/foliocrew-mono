@@ -479,6 +479,12 @@ function aggregate(value: unknown) {
   );
 }
 
+// A compatible rollback can still return older overview fields. Validate
+// that embedded page without exposing a standalone foreground endpoint.
+export function retiredResultMetadataPage(value: unknown) {
+  return formal("ResultMetadataPage", value);
+}
+
 export function hubResponse(
   path: string,
   method: string,
@@ -490,9 +496,6 @@ export function hubResponse(
   // This named producer returns a descriptor, not a fabricated contract wrapper.
   if (method === "PUT" && /\/preparation\/objects\//.test(path))
     return descriptor(body, true) && record(body) && body.objectId === path.split("/").at(-1);
-  // Formal ResultMetadata is the original state ACK and has no contractVersion field.
-  if (method === "PATCH" && /^\/api\/v2\/results\/[^/]+\/state$/.test(path))
-    return formal("ResultMetadata", body);
   if (!record(body) || body.contractVersion !== CONTRACT) return false;
   const renewalPath =
     /^\/api\/v2\/vaults\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})\/(key-renewal-state|key-renewals|key-renewal-operations\/([A-Za-z0-9_-]{22,128}))$/.exec(
@@ -632,60 +635,6 @@ export function hubResponse(
     }
   }
   if (path.startsWith("/api/v2/tasks")) return formal("EncryptedTask", body);
-  if (path === "/api/v2/results/counts")
-    return (
-      fields(body, ["contractVersion", "profile", "asOf", "counts"]) &&
-      body.profile === "folioview.owner-result-counts.v1" &&
-      date(body.asOf) &&
-      fields(body.counts, ["all", "unread", "starred", "archived", "total"]) &&
-      Object.values(body.counts).every((v) => integer(v, 0))
-    );
-  if (path === "/api/v2/results" || /^\/api\/v2\/results\/[^/]+\/revisions$/.test(path))
-    return formal("ResultMetadataPage", body);
-  if (path.startsWith("/api/v2/results/")) {
-    if (path.endsWith("/state")) return formal("ResultMetadata", body);
-    if (/\/registries\//.test(path)) return formal("RegistryBundle", body);
-    if (path.endsWith("/evidence"))
-      return (
-        fields(body, [
-          "contractVersion",
-          "profile",
-          "run",
-          "manifest",
-          "manifestFingerprint",
-          "receipt",
-          "agentKeyGrant",
-          "authorizationExpiresAt",
-          "provenance",
-          "authorProof",
-          "registryProofs",
-        ]) &&
-        body.profile === "folioview.owner-result-evidence.v1" &&
-        formal("RunDescriptor", body.run) &&
-        formal("ManifestDescriptor", body.manifest) &&
-        formal("ResultReceipt", body.receipt) &&
-        signedObject(body.agentKeyGrant) &&
-        digest(body.manifestFingerprint) &&
-        integer(body.authorizationExpiresAt, 1) &&
-        record(body.provenance) &&
-        fields(body.authorProof, ["registrySequence", "verifiedAt"]) &&
-        integer(body.authorProof.registrySequence, 1) &&
-        integer(body.authorProof.verifiedAt, 0) &&
-        Array.isArray(body.registryProofs) &&
-        body.registryProofs.length <= 32 &&
-        body.registryProofs.every(
-          (v) =>
-            fields(v, ["registrySequence", "checkpointDigest", "path"]) &&
-            integer(v.registrySequence, 1) &&
-            digest(v.checkpointDigest) &&
-            typeof v.path === "string" &&
-            /^\/api\/v2\/results\/[A-Za-z0-9_-]+\/revisions\/[1-9][0-9]?\/registries\/[1-9][0-9]?$/.test(
-              v.path,
-            ),
-        )
-      );
-    return formal("EncryptedResult", body);
-  }
   if (path === "/api/v2/vaults/current/authority-token")
     return (
       fields(body, ["contractVersion", "token", "expiresAt"]) &&

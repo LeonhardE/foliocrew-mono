@@ -1,3 +1,4 @@
+import { metadataPage as retiredMetadataPage } from "./inbox-types";
 /** Task-page display transport only; packets still require the existing Owner Worker. */
 import type { TaskMetadata } from "./encrypted-types";
 import {
@@ -90,10 +91,10 @@ export function parseTaskOverview(
     c.nativeScheduleAttested !== false
   )
     throw Error("invalid_response");
-  resultPage("persistent", v.feeds.persistent);
+  resultPage(v.feeds.persistent);
   if ("foreground" in v.feeds) {
-    resultPage("foreground", v.feeds.foreground);
-    resultPage("foreground", v.feeds.archived);
+    retiredMetadataPage(v.feeds.foreground);
+    retiredMetadataPage(v.feeds.archived);
   }
   readReportProviders(v.connections, vault);
   const ids = packetLimit === 4 ? overviewPacketIds(tasks, known) : [];

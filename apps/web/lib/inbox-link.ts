@@ -11,11 +11,6 @@ export function readInboxResultLink(hash: string): InboxResultLink | null {
   return revision === undefined ? { resultId: match[1] } : { resultId: match[1], revision };
 }
 
-export function inboxResultHref(resultId: string, revision?: number): string | null {
-  const href = `#inbox/result/${resultId}${revision === undefined ? "" : `/revisions/${revision}`}`;
-  return readInboxResultLink(href) ? href : null;
-}
-
 export function isAgentConsentHandoff(search: string): boolean {
   const query = new URLSearchParams(search);
   return query.has("native_request") || query.has("native_nonce");
