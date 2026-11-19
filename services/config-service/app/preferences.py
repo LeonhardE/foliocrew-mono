@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import sqlite3
+from collections.abc import Callable
 from contextlib import closing, contextmanager
 from functools import lru_cache
 from pathlib import Path
@@ -28,6 +29,7 @@ from folioview_shared.valuation import (
 UNAVAILABLE = "Your preferences are temporarily unavailable. Please try again later."
 MAX_BODY_BYTES = 1024
 MAX_VERSION = 9007199254740991
+_MALFORMED = object()
 
 
 class PreferencesUnavailable(Exception):
@@ -175,7 +177,61 @@ def next_currency(current, update):
         raise PreferencesUnavailable from None
 
 
+def preference_keys(uid: str) -> tuple[str, str, str]:
+    return owner_key(uid), language_owner(uid), currency_owner(uid)
+
+
+def _part(value, checked: Callable, missing: Callable) -> dict:
+    if value is _MALFORMED:
+        return {"state": "unavailable"}
+    try:
+        return {"state": "available", **(missing() if value is None else checked(value))}
+    except PreferencesUnavailable:
+        return {"state": "unavailable"}
+
+
+def unified_snapshot(ui_value, language_value, currency_value) -> dict:
+    ui = _part(ui_value, checked_snapshot, lambda: checked_snapshot(None))
+    language = _part(language_value, checked_language_record, empty_language)
+    currency = _part(currency_value, checked_currency_record, empty_currency)
+    ui_saved = ui.get("preferences") or {}
+    currency_saved = currency.get("preferences") or {}
+    ui_available, currency_available = ui["state"] == "available", currency["state"] == "available"
+    effective_language = None
+    if language["state"] == "available":
+        if language["preferences"] is not None:
+            effective_language = language["preferences"]["language"]
+        elif ui_available:
+            effective_language = ui_saved.get("language", "en")
+    return {
+        "ui": ui,
+        "language": language,
+        "currency": currency,
+        "effective": {
+            "theme": ui_saved.get("theme", "light") if ui_available else None,
+            "defaultChartRange": ui_saved.get("defaultChartRange", "1m") if ui_available else None,
+            "defaultPortfolioCurrency": (
+                currency_saved.get("defaultPortfolioCurrency", "USD")
+                if currency_available
+                else None
+            ),
+            "language": effective_language,
+        },
+    }
+
+
+def _sqlite_document(raw):
+    try:
+        value = json.loads(raw)
+    except (ValueError, TypeError, RecursionError):
+        return _MALFORMED
+    return value if type(value) is dict else _MALFORMED
+
+
 class PreferencesStore:
+    def get_unified(self, uid: str) -> dict:
+        raise NotImplementedError
+
     def get_language(self, uid: str) -> dict:
         raise NotImplementedError
 
@@ -227,6 +283,15 @@ class SQLitePreferencesStore(PreferencesStore):
     def get(self, uid: str) -> dict:
         with self.connection() as db:
             return self.read(db, owner_key(uid))
+
+    def get_unified(self, uid: str) -> dict:
+        keys = preference_keys(uid)
+        with self.connection() as db:
+            rows = db.execute(
+                "SELECT owner, value FROM user_preferences WHERE owner IN (?, ?, ?)", keys
+            ).fetchall()
+        values = {key: _sqlite_document(raw) for key, raw in rows}
+        return unified_snapshot(*(values.get(key) for key in keys))
 
     def save(self, uid: str, preferences: dict, expected_version: int) -> dict:
         checked = checked_preferences({"version": 1, "preferences": preferences})
@@ -303,6 +368,26 @@ class FirestorePreferencesStore(PreferencesStore):
             return checked_snapshot(self.document(uid).get(timeout=4, retry=None).to_dict())
         except Exception as error:
             raise PreferencesUnavailable from error
+
+    def get_unified(self, uid: str) -> dict:
+        try:
+            references = [self.collection.document(key) for key in preference_keys(uid)]
+            names = [reference._document_path for reference in references]
+            expected, values = set(names), {}
+            for row in self.client.get_all(references, timeout=4, retry=None):
+                name = row.reference._document_path
+                if name not in expected or name in values:
+                    raise PreferencesUnavailable
+                if not row.exists:
+                    values[name] = None
+                    continue
+                value = row.to_dict()
+                values[name] = value if type(value) is dict else _MALFORMED
+            if values.keys() != expected:
+                raise PreferencesUnavailable
+        except Exception as error:
+            raise PreferencesUnavailable from error
+        return unified_snapshot(*(values[name] for name in names))
 
     def save(self, uid: str, preferences: dict, expected_version: int) -> dict:
         checked = checked_preferences({"version": 1, "preferences": preferences})
@@ -466,6 +551,18 @@ router = APIRouter(
 )
 User = Annotated[CurrentUser, Depends(require_google_user)]
 Store = Annotated[PreferencesStore, Depends(get_preferences_store)]
+
+unified_router = APIRouter(
+    prefix="/api/v2/preferences", tags=["preferences"], route_class=PrivatePreferencesRoute
+)
+
+
+@unified_router.get("")
+def get_unified_preferences(user: User, store: Store) -> dict:
+    try:
+        return store.get_unified(user.uid)
+    except PreferencesUnavailable as error:
+        raise HTTPException(503, UNAVAILABLE) from error
 
 
 @router.get("", response_model=PreferencesResponse)

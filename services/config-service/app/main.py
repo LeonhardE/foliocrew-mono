@@ -2,7 +2,7 @@
 
 from folioview_shared.http import create_app
 
-from .preferences import currency_router, language_router, router
+from .preferences import currency_router, language_router, router, unified_router
 
 app = create_app(
     "FolioView Config API",
@@ -11,6 +11,7 @@ app = create_app(
     description="Private account preferences with version-fenced writes.",
 )
 app.include_router(router)
+app.include_router(unified_router)
 app.include_router(currency_router)
 app.include_router(language_router)
 
