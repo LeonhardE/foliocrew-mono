@@ -79,6 +79,7 @@ import {
   type VaultManagementSummary,
   type RecoveryVerification,
   type VaultLifecycleState,
+  type UserVaultProof,
   type VaultLifecyclePin,
   type RecoveryKitExport,
   type ArchiveChangePacket,
@@ -1859,6 +1860,30 @@ export class VaultCore {
     } finally {
       this.vault = old;
     }
+    const transitionArchive = vault.userAuthority
+      ? (await verified(vault.userAuthority.signedTransition, vault.rootJwk)).archive
+      : undefined;
+    const pin = await this.verifiedLifecycleChain(
+      vault,
+      state,
+      registry,
+      owner,
+      transitionArchive,
+      prior,
+    );
+    this.pin = (await this.publicVaultPin(vault, registry)).pin;
+    this.lifecyclePin = pin;
+    return pin;
+  }
+
+  private async verifiedLifecycleChain(
+    vault: Vault,
+    state: VaultLifecycleState,
+    registry: Registry,
+    owner: string,
+    transitionArchive?: UserVaultProof["archive"],
+    prior?: VaultLifecyclePin,
+  ) {
     exact(state, [
       "contractVersion",
       "profile",
@@ -2011,6 +2036,8 @@ export class VaultCore {
       const currentIndex = vault.userAuthority
         ? p.registrySequence - vault.userAuthority.registryStart.registrySequence
         : p.registrySequence - 1;
+      if (transitionArchive && currentIndex < 0 !== index < transitionArchive.version - 1)
+        throw new VaultError("untrusted_lifecycle");
       const bundle = vault.registryHistory[currentIndex];
       const cp =
         original.get(p.registrySequence) ??
@@ -2181,6 +2208,12 @@ export class VaultCore {
     if (!equal(state.pendingAuthorization, expectedPending))
       throw new VaultError("untrusted_lifecycle");
     if (!archiveStates.length) archiveStates.push({ digest, revision });
+    if (
+      transitionArchive &&
+      (archiveStates[transitionArchive.version - 1]?.digest !== transitionArchive.digest ||
+        state.lifecycleVersion + 1 !== vault.userAuthority!.archive.version)
+    )
+      throw new VaultError("untrusted_lifecycle");
     const pin: VaultLifecyclePin = {
       ownerSubject: owner,
       vaultId: vault.vaultId,
@@ -2207,8 +2240,6 @@ export class VaultCore {
       )
         throw new VaultError("rollback_detected");
     }
-    this.pin = (await this.publicVaultPin(vault, registry)).pin;
-    this.lifecyclePin = pin;
     return pin;
   }
   private restrictToArchiveDeletion() {
@@ -3483,6 +3514,7 @@ export class VaultCore {
       "archive",
       "sourcesDigest",
       "sources",
+      ...(Object.hasOwn(proof, "archiveLifecycle") ? ["archiveLifecycle"] : []),
     ]);
     exact(proof.archive, ["state", "version", "digest"]);
     if (
@@ -3537,6 +3569,10 @@ export class VaultCore {
     positive(change.previousVaultVersion);
     positive(change.issuedAt, 0);
     const start = proof.registryStart;
+    const originalArchive = change.archive;
+    exact(originalArchive, ["state", "version", "digest"]);
+    validate("Digest", originalArchive.digest);
+    positive(originalArchive.version);
     if (
       change.contractVersion !== CONTRACT ||
       change.profile !== "folioview.owner-registry-transition.v1" ||
@@ -3551,7 +3587,10 @@ export class VaultCore {
       change.nextVaultVersion > vault.version ||
       change.issuedAt > this.now() ||
       !equal(change.nextHead, start) ||
-      !equal(change.archive, proof.archive)
+      originalArchive.state !== "active" ||
+      (proof.archiveLifecycle
+        ? proof.archive.version <= originalArchive.version
+        : !equal(originalArchive, proof.archive))
     )
       throw new VaultError("registry_conflict");
     const first = await verify(
@@ -3577,7 +3616,7 @@ export class VaultCore {
       !["device_sig", "device_enc", "recovery_enc"].every((role) => roles.has(role))
     )
       throw new VaultError("key_revoked");
-    return { first, prior };
+    return { first, prior, originalArchive };
   }
 
   private originalBridgePage(bridge: OriginalRegistryBridge): {
@@ -3749,6 +3788,29 @@ export class VaultCore {
     const epoch = user ? 2 : 1;
     if (user && !equal(privateRegistryHead(registry!, epoch), vault.userAuthority!.registry))
       throw new VaultError("registry_conflict");
+    if (user && vault.userAuthority) {
+      const { archive, archiveLifecycle } = vault.userAuthority;
+      if (Object.hasOwn(vault.userAuthority, "archiveLifecycle")) {
+        if (!archiveLifecycle) throw new VaultError("untrusted_lifecycle");
+        exact(archiveLifecycle, ["state", "originalCheckpoints"]);
+        if (Object.hasOwn(archiveLifecycle.state, "originalCheckpoints"))
+          throw new VaultError("untrusted_lifecycle");
+        await this.verifiedLifecycleChain(
+          vault,
+          { ...archiveLifecycle.state, originalCheckpoints: archiveLifecycle.originalCheckpoints },
+          registry!,
+          owner,
+          user.originalArchive,
+        );
+      } else if (
+        this.lifecyclePin &&
+        (this.lifecyclePin.lifecycleVersion + 1 > archive.version ||
+          (this.lifecyclePin.lifecycleVersion + 1 === archive.version &&
+            this.lifecyclePin.archiveDigest !== archive.digest))
+      ) {
+        throw new VaultError("rollback_detected");
+      }
+    }
     if (this.vault?.userAuthority && !user) throw new VaultError("rollback_detected");
     if (
       pin &&

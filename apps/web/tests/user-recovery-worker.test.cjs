@@ -525,6 +525,97 @@ test("the current Worker verifies original archive lifecycle controls against th
   });
 });
 
+test("a cold User vault verifies a new Passkey against its signed archive continuation", async () => {
+  await browser.withDatabase(async (db) => {
+    const { session, uid, h, material, vault, state } = await initialize(db);
+    await session.verifyLifecycle(vault, state);
+    const review = await session.reviewUserRegistryTransition(state);
+    const handover = await session.stageUserHandover(vault, review, material());
+    const { nextHead, archive } = decoded(handover.signedTransition);
+    const original = {
+      ...vault,
+      version: vault.version + 1,
+      registryHistory: [handover.firstBundle],
+      userAuthority: {
+        signedTransition: handover.signedTransition,
+        registryStart: nextHead,
+        registry: nextHead,
+        archive,
+        sources: [],
+        sourcesDigest: await h.core.sha(h.core.canonical([])),
+      },
+    };
+    const lifecycle = await lifecycleState(h, { vault: original });
+    const secret = new Uint8Array(32).fill(17);
+    const updatedMaterial = () => ({
+      credentialId: h.core.b64(new Uint8Array(32).fill(18)),
+      prfSalt: h.core.b64(new Uint8Array(32).fill(19)),
+      secret: secret.slice().buffer,
+    });
+    const writer = new h.core.VaultCore(uid, () => 1000);
+    await writer.unlock(original, material());
+    const { packet } = await writer.prepareArchiveChange(
+      original,
+      lifecycle,
+      updatedMaterial(),
+      "passkey_change",
+    );
+    const command = decoded(packet.command);
+    const receipt = {
+      profile: lifecycle.profile,
+      ownerSubject: vault.archive.ownerSubject,
+      vaultId: vault.vaultId,
+      rootKeyId: vault.rootKeyId,
+      operationId: packet.operationId,
+      action: "archive_replace",
+      lifecycleVersion: 1,
+      archiveRevision: 1,
+      archiveDigest: command.newArchiveDigest,
+      commandFingerprint: await h.core.signingFingerprint(packet.command),
+      acceptedAt: 1000,
+    };
+    const changed = {
+      ...lifecycle,
+      archive: packet.archive,
+      archiveDigest: command.newArchiveDigest,
+      archiveRevision: 1,
+      lifecycleVersion: 1,
+      history: [{ command: packet.command, receipt }],
+    };
+    const current = {
+      ...original,
+      archive: packet.archive,
+      userAuthority: {
+        ...original.userAuthority,
+        archive: { state: "active", version: 2, digest: command.newArchiveDigest },
+        archiveLifecycle: { state: changed, originalCheckpoints: [] },
+      },
+    };
+    const reader = new h.core.VaultCore(uid, () => 1000);
+    await reader.unlockForResults(current, updatedMaterial());
+    assert.equal(
+      (await reader.verifyLifecycle(current, { ...changed, originalCheckpoints: [] }))
+        .archiveDigest,
+      command.newArchiveDigest,
+    );
+    await assert.rejects(reader.verifyLifecycle(original, lifecycle), /rollback_detected/);
+    const currentProof = current.userAuthority;
+    const withoutHistory = structuredClone(current);
+    delete withoutHistory.userAuthority.archiveLifecycle;
+    await assert.rejects(
+      new h.core.VaultCore(uid, () => 1000).unlockForResults(withoutHistory, updatedMaterial()),
+      /registry_conflict/,
+    );
+    const altered = structuredClone(current);
+    altered.userAuthority.archiveLifecycle.state.history[0].receipt.archiveRevision = 2;
+    await assert.rejects(
+      new h.core.VaultCore(uid, () => 1000).unlockForResults(altered, updatedMaterial()),
+      /untrusted_lifecycle/,
+    );
+    assert.equal(currentProof.archiveLifecycle.state.history[0].receipt.archiveRevision, 1);
+  });
+});
+
 test("an uncertain handover resumes the original signed packet after lock", async () => {
   await browser.withDatabase(async (db) => {
     const { session, storage, state, uid, vault, material, h } = await initialize(db);

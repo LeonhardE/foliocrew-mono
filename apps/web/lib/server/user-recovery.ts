@@ -101,11 +101,17 @@ function validRequest(
     );
   if (rule.profile === REGISTRY_START_PROFILE) return matches(value.nonce, NONCE);
   if (rule.profile === OWNER_CURRENT_PROFILE) return matches(value.nonce, NONCE);
-  if (rule.profile === USER_ARCHIVE_LIFECYCLE_PROFILE)
-    return (
-      matches(value.nonce, NONCE) &&
-      (value.operationId === null || matches(value.operationId, NONCE))
-    );
+  if (rule.profile === USER_ARCHIVE_LIFECYCLE_PROFILE) {
+    if (!matches(value.nonce, NONCE)) return false;
+    if (rule.keys.includes("command"))
+      return (
+        matches(value.operationId, NONCE) &&
+        signedObject(value.command) &&
+        (value.archive === null ||
+          archiveEnvelope(value.archive, value.ownerSubject, value.vaultId))
+      );
+    return value.operationId === null || matches(value.operationId, NONCE);
+  }
   if (rule.profile === REGISTRY_UPDATE_PROFILE)
     return (
       matches(value.operationId, NONCE) &&
@@ -291,6 +297,47 @@ function validRegistryStart(value: Json, input: Json) {
   );
 }
 
+function archiveEnvelope(value: unknown, owner: unknown, vault: unknown): value is Json {
+  return (
+    fields(value, [
+      "profile",
+      "ownerSubject",
+      "vaultId",
+      "rootKeyId",
+      "credentialId",
+      "prfSalt",
+      "iv",
+      "ciphertext",
+    ]) &&
+    value.profile === "folioview.passkey-vault.v1" &&
+    value.ownerSubject === owner &&
+    value.vaultId === vault &&
+    matches(value.rootKeyId, KEY) &&
+    matches(value.credentialId, OPAQUE) &&
+    String(value.credentialId).length <= 2048 &&
+    matches(value.prfSalt, KEY) &&
+    matches(value.iv, /^[A-Za-z0-9_-]{16}$/) &&
+    matches(value.ciphertext, OPAQUE) &&
+    String(value.ciphertext).length <= 450_000
+  );
+}
+
+function validArchiveLifecycle(state: unknown, original: unknown, scope: Json): state is Json {
+  return (
+    record(state) &&
+    state.contractVersion === CONTRACT &&
+    state.profile === "folioview.vault-lifecycle.v1" &&
+    state.vaultId === scope.vaultId &&
+    state.rootKeyId === scope.rootKeyId &&
+    Array.isArray(state.history) &&
+    state.history.length <= 32 &&
+    state.lifecycleVersion === state.history.length &&
+    Array.isArray(original) &&
+    original.length <= 32 &&
+    original.every(signedObject)
+  );
+}
+
 function validReply(body: unknown, input: Json, expectedDigest: string) {
   if (input.profile === OWNER_CURRENT_PROFILE) {
     if (
@@ -319,26 +366,9 @@ function validReply(body: unknown, input: Json, expectedDigest: string) {
       body.vault.registryHistory.length < 1 ||
       body.vault.registryHistory.length > 129 ||
       !body.vault.registryHistory.every(registryBundle) ||
-      !fields(body.vault.archive, [
-        "profile",
-        "ownerSubject",
-        "vaultId",
-        "rootKeyId",
-        "credentialId",
-        "prfSalt",
-        "iv",
-        "ciphertext",
-      ]) ||
-      body.vault.archive.profile !== "folioview.passkey-vault.v1" ||
-      body.vault.archive.ownerSubject !== input.ownerSubject ||
-      body.vault.archive.vaultId !== body.vault.vaultId ||
+      !archiveEnvelope(body.vault.archive, input.ownerSubject, body.vault.vaultId) ||
       body.vault.archive.rootKeyId !== body.vault.rootKeyId ||
-      !matches(body.vault.archive.credentialId, OPAQUE) ||
-      String(body.vault.archive.credentialId).length > 2048 ||
-      !matches(body.vault.archive.prfSalt, KEY) ||
-      !matches(body.vault.archive.iv, /^[A-Za-z0-9_-]{16}$/) ||
-      !matches(body.vault.archive.ciphertext, OPAQUE) ||
-      String(body.vault.archive.ciphertext).length > 450_000 ||
+      !record(body.proof) ||
       !fields(body.proof, [
         "registry",
         "registryStart",
@@ -346,9 +376,23 @@ function validReply(body: unknown, input: Json, expectedDigest: string) {
         "archive",
         "sourcesDigest",
         "sources",
+        ...(Object.hasOwn(body.proof, "archiveLifecycle") ? ["archiveLifecycle"] : []),
       ])
     )
       return false;
+    if (Object.hasOwn(body.proof, "archiveLifecycle")) {
+      const continuation = body.proof.archiveLifecycle;
+      if (
+        !fields(continuation, ["state", "originalCheckpoints"]) ||
+        !validArchiveLifecycle(continuation.state, continuation.originalCheckpoints, body.vault) ||
+        !fields(body.proof.archive, ["state", "version", "digest"]) ||
+        Number(continuation.state.lifecycleVersion) + 1 !== body.proof.archive.version ||
+        continuation.state.archiveDigest !== body.proof.archive.digest ||
+        !record(continuation.state.archive) ||
+        canonicalize(continuation.state.archive) !== canonicalize(body.vault.archive)
+      )
+        return false;
+    }
     return (
       head(body.proof.registry) &&
       head(body.proof.registryStart) &&
@@ -424,20 +468,14 @@ function validReply(body: unknown, input: Json, expectedDigest: string) {
         body.receipt.operationId === input.operationId &&
         body.receipt.ownerSubject === input.ownerSubject &&
         body.receipt.vaultId === input.vaultId &&
-        body.receipt.rootKeyId === body.rootKeyId
+        body.receipt.rootKeyId === body.rootKeyId &&
+        (!record(input.command) ||
+          body.receipt.commandFingerprint ===
+            digest(input.command.protected + "." + input.command.payload))
       );
     return (
       fields(body, [...scope, "state", "originalCheckpoints"]) &&
-      record(body.state) &&
-      body.state.contractVersion === CONTRACT &&
-      body.state.profile === "folioview.vault-lifecycle.v1" &&
-      body.state.vaultId === input.vaultId &&
-      body.state.rootKeyId === body.rootKeyId &&
-      Array.isArray(body.state.history) &&
-      body.state.history.length <= 32 &&
-      Array.isArray(body.originalCheckpoints) &&
-      body.originalCheckpoints.length <= 32 &&
-      body.originalCheckpoints.every(signedObject)
+      validArchiveLifecycle(body.state, body.originalCheckpoints, body)
     );
   }
   if (!fieldsBelongToRequest(body, input)) return false;

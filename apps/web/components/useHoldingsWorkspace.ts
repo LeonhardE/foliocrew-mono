@@ -906,7 +906,8 @@ export function useHoldingsWorkspace() {
           `/api/v2/vaults/${vault.vaultId}/archive`,
           signal,
         )) as VaultLifecycleState;
-      const value = await readUserArchive(vault, signal, null);
+      const value =
+        vault.userAuthority.archiveLifecycle ?? (await readUserArchive(vault, signal, null));
       if (!value || !record(value.state) || !Array.isArray(value.originalCheckpoints))
         throw new WorkspaceError("invalid_response");
       return {
@@ -932,6 +933,46 @@ export function useHoldingsWorkspace() {
       return value.receipt;
     },
     [api, readUserArchive],
+  );
+
+  const writeArchiveLifecycle = useCallback(
+    async (
+      vault: Vault,
+      legacyPath: string,
+      operationId: string,
+      command: ArchiveChangePacket["command"],
+      archive: ArchiveChangePacket["archive"] | null,
+      signal: AbortSignal,
+    ) => {
+      if (!vault.userAuthority) {
+        await api("agent-hub", legacyPath, signal, {
+          method: archive === null ? "POST" : "PUT",
+          json: { contractVersion: CONTRACT, command, ...(archive === null ? {} : { archive }) },
+          headers: { "Idempotency-Key": operationId },
+        });
+        return;
+      }
+      if (!vault.archive) throw new WorkspaceError("invalid_response");
+      await api(
+        "user",
+        `/api/v3/private-resources/vaults/${vault.vaultId}/archive-lifecycle/advance`,
+        signal,
+        {
+          method: "POST",
+          json: {
+            contractVersion: CONTRACT,
+            profile: USER_ARCHIVE_LIFECYCLE_PROFILE,
+            ownerSubject: vault.archive.ownerSubject,
+            vaultId: vault.vaultId,
+            nonce: crypto.randomUUID().replace(/-/g, ""),
+            operationId,
+            command,
+            archive,
+          },
+        },
+      );
+    },
+    [api],
   );
 
   const liveSession = useCallback(
@@ -1688,13 +1729,14 @@ export function useHoldingsWorkspace() {
                   }
                 : await instance.unlock(vault, material!);
             assertActive();
-            const lifecycle = vault.userAuthority ? null : await readLifecycle(vault, signal);
+            const lifecycle =
+              !vault.userAuthority ||
+              vault.userAuthority.archiveLifecycle ||
+              (await instance.hasPendingArchiveWork())
+                ? await readLifecycle(vault, signal)
+                : null;
             if (lifecycle) await instance.verifyLifecycle(vault, lifecycle);
-            else {
-              if (await instance.hasPendingArchiveWork())
-                throw new WorkspaceError("archive_session_stale");
-              await instance.acceptResultVault(vault);
-            }
+            else await instance.acceptResultVault(vault);
             assertActive();
             const archiveChange = lifecycle
               ? await instance.getArchiveChange(vault, lifecycle)
@@ -3882,23 +3924,24 @@ export function useHoldingsWorkspace() {
       if (state === "conflict") throw new WorkspaceError("version_conflict");
       if (state !== "applied") {
         if (packet.authorization) {
-          await api(
-            "agent-hub",
+          await writeArchiveLifecycle(
+            vault,
             `/api/v2/vaults/${vault.vaultId}/recovery-authorizations`,
+            packet.authorization.operationId,
+            packet.authorization.command,
+            null,
             signal,
-            {
-              method: "POST",
-              json: { contractVersion: CONTRACT, command: packet.authorization.command },
-              headers: { "Idempotency-Key": packet.authorization.operationId },
-            },
           );
           assertActive();
         }
-        await api("agent-hub", `/api/v2/vaults/${vault.vaultId}/archive`, signal, {
-          method: "PUT",
-          json: { contractVersion: CONTRACT, archive: packet.archive, command: packet.command },
-          headers: { "Idempotency-Key": packet.operationId },
-        });
+        await writeArchiveLifecycle(
+          vault,
+          `/api/v2/vaults/${vault.vaultId}/archive`,
+          packet.operationId,
+          packet.command,
+          packet.archive,
+          signal,
+        );
         assertActive();
       }
       await readArchiveReceipt(vault, packet.operationId, signal);
@@ -3921,7 +3964,7 @@ export function useHoldingsWorkspace() {
         keyNotice: "archive_change_saved",
       }));
     },
-    [api, owner, readArchiveReceipt, readCurrent, readLifecycle, terminate],
+    [owner, readArchiveReceipt, readCurrent, readLifecycle, terminate, writeArchiveLifecycle],
   );
 
   const reviewArchiveDeletion = useCallback(
@@ -4419,11 +4462,14 @@ export function useHoldingsWorkspace() {
             command.action === "recovery_authorize"
               ? `/api/v2/vaults/${fresh.vault.vaultId}/recovery-authorizations`
               : `/api/v2/vaults/${fresh.vault.vaultId}/recovery-authorizations/${command.authorizationId}/revoke`;
-          await api("agent-hub", path, signal, {
-            method: "POST",
-            json: { contractVersion: CONTRACT, command: command.command },
-            headers: { "Idempotency-Key": command.operationId },
-          });
+          await writeArchiveLifecycle(
+            fresh.vault,
+            path,
+            command.operationId,
+            command.command,
+            null,
+            signal,
+          );
           assertActive();
         }
         const saved = await readCurrent(signal);
@@ -4444,7 +4490,6 @@ export function useHoldingsWorkspace() {
         }));
       }),
     [
-      api,
       completeArchiveChange,
       liveSession,
       owner,
@@ -4452,6 +4497,7 @@ export function useHoldingsWorkspace() {
       readCurrent,
       readLifecycle,
       terminate,
+      writeArchiveLifecycle,
     ],
   );
 
