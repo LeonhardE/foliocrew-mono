@@ -15,7 +15,9 @@ from folioview_shared.encrypted.legacy_archive import (
     legacy_archive_receipt,
     verify_legacy_archive_command,
     verify_legacy_archive_history,
+    verify_transferred_archive_history,
 )
+from folioview_shared.encrypted.private_resources import PrivateRegistryCursor
 
 
 def digest(value):
@@ -115,6 +117,30 @@ class LegacyArchiveTests(unittest.TestCase):
                 self.assertRaisesRegex(ContractError, "authorization_unavailable"),
             ):
                 verify_legacy_archive_history(candidate, self.registry, history)
+
+    def test_transfer_verifier_accepts_retained_receipts_beyond_the_legacy_limit(self):
+        item = self.apply(
+            "recovery_authorize",
+            1000,
+            authorizationId="old_recovery_approval",
+            newArchiveDigest="a" * 64,
+        )
+        vault = deepcopy(self.vault)
+        registry = self.registry
+        for _ in range(31):
+            bundle = self.f.make_bundle(previous=registry)
+            registry = self.f.verify(bundle, previous=registry)
+            vault["registryHistory"].append(bundle)
+        cursor = PrivateRegistryCursor(registry, 2)
+        with self.assertRaisesRegex(ContractError, "authorization_unavailable"):
+            verify_legacy_archive_history(vault, registry, self.row)
+        checked = verify_transferred_archive_history(vault, cursor, self.row)
+        self.assertEqual(checked["operations"][item["receipt"]["operationId"]], item)
+        with self.assertRaisesRegex(ContractError, "authorization_unavailable"):
+            verify_transferred_archive_history(vault, PrivateRegistryCursor(registry, 1), self.row)
+        vault["registryHistory"][16] = vault["registryHistory"][15]
+        with self.assertRaisesRegex(ContractError, "authorization_unavailable"):
+            verify_transferred_archive_history(vault, cursor, self.row)
 
     def test_absent_initial_archive_cannot_be_reported_as_a_verified_deletion(self):
         vault = {**self.vault, "archive": None}
