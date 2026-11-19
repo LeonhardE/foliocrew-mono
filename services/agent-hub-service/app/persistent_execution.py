@@ -19,7 +19,7 @@ from folioview_shared.encrypted.persistent_content import (
 from folioview_shared.encrypted.schema import safe_https_url, validate_schema
 from folioview_shared.identity import owner_key
 
-from .persistent_agents import snapshot
+from .persistent_agents import linked_connection, snapshot
 from .persistent_publications import (
     PersistentPublicationService,
     source_path,
@@ -95,18 +95,43 @@ class PersistentExecutionService(PersistentPublicationService):
 
     verify_request = staticmethod(verify_persistent_request)
 
-    def authenticate(self, unit, owner, vault, connection, proof, path, request):
-        if type(owner) is not str or re.fullmatch(r"[a-f0-9]{64}", owner) is None:
-            raise ContractError("malformed_request")
-        for value in (vault, connection):
-            validate_schema("Identifier", value)
+    @staticmethod
+    def _owner_uid(unit, owner):
         indexed = unit.get(document_path("hub_oauth_owners", owner))
         if indexed is None:
             raise ContractError("not_found")
         uid = indexed.get("ownerUid")
         if type(uid) is not str or owner_key(uid) != owner:
             raise StoreUnavailable
-        actual_owner, v, registry, conn, identity = self.live(unit, uid, vault, connection)
+        return uid
+
+    def _request_user_scope(self, owner, vault, connection):
+        if self.user_vaults.owner is None or owner != self.user_vaults.owner:
+            return None
+        for value in (vault, connection):
+            validate_schema("Identifier", value)
+
+        def lookup(unit):
+            uid = self._owner_uid(unit, owner)
+            conn = linked_connection(unit, owner, vault, connection, active=True)
+            if conn["clientId"] not in self.client_ids:
+                raise ContractError("key_authorization_required")
+            return uid
+
+        uid = self.store.transact(lookup)
+        return self.user_vaults.read(uid, vault)
+
+    def authenticate(
+        self, unit, owner, vault, connection, proof, path, request, *, user_scope=None
+    ):
+        if type(owner) is not str or re.fullmatch(r"[a-f0-9]{64}", owner) is None:
+            raise ContractError("malformed_request")
+        for value in (vault, connection):
+            validate_schema("Identifier", value)
+        uid = self._owner_uid(unit, owner)
+        actual_owner, v, registry, conn, identity = self.live(
+            unit, uid, vault, connection, user_scope=user_scope
+        )
         if (
             actual_owner != owner
             or conn["clientId"] not in self.client_ids
@@ -156,7 +181,18 @@ class PersistentExecutionService(PersistentPublicationService):
         return row
 
     def publication(
-        self, unit, owner, vault, connection, identity, registry, root, publication, *, sources=None
+        self,
+        unit,
+        owner,
+        vault,
+        connection,
+        identity,
+        registry,
+        root,
+        publication,
+        *,
+        sources=None,
+        user_scope=None,
     ):
         row = stored_publication(unit, owner, vault, publication)
         if row is None:
@@ -194,6 +230,7 @@ class PersistentExecutionService(PersistentPublicationService):
                 registry=registry,
                 context=c,
                 sources=sources,
+                user_scope=user_scope,
             )
             fields = ("ref", "sourceEpoch", "sourceRevision", "permissionId", "permissionEpoch")
         verified = verify_persistent_carrier(
@@ -221,9 +258,11 @@ class PersistentExecutionService(PersistentPublicationService):
         if request != {}:
             raise ContractError("malformed_request")
 
+        user_scope = self._request_user_scope(owner, vault, connection)
+
         def read(unit):
             _, v, registry, conn, identity = self.authenticate(
-                unit, owner, vault, connection, proof, path, request
+                unit, owner, vault, connection, proof, path, request, user_scope=user_scope
             )
             policy = stored_consent(unit, owner, vault, connection)
             result = {
@@ -261,8 +300,12 @@ class PersistentExecutionService(PersistentPublicationService):
         operation = request["operationId"]
         validate_schema("OperationIdentifier", operation)
 
+        user_scope = self._request_user_scope(owner, vault, connection)
+
         def read(unit):
-            self.authenticate(unit, owner, vault, connection, proof, path, request)
+            self.authenticate(
+                unit, owner, vault, connection, proof, path, request, user_scope=user_scope
+            )
             saved = unit.get(consent_operation_path(owner, vault, operation))
             if saved is None or saved.get("connectionId") != connection:
                 raise ContractError("not_found")
@@ -279,11 +322,13 @@ class PersistentExecutionService(PersistentPublicationService):
         if request != {}:
             raise ContractError("malformed_request")
 
+        user_scope = self._request_user_scope(owner, vault, connection)
+
         def read(unit):
             from .tasks import _index
 
             _, _, _, _, identity = self.authenticate(
-                unit, owner, vault, connection, proof, path, request
+                unit, owner, vault, connection, proof, path, request, user_scope=user_scope
             )
             from .task_lifecycle import lifecycle_index
 
@@ -306,6 +351,8 @@ class PersistentExecutionService(PersistentPublicationService):
                     continue
                 try:
                     self._task_scope(unit, owner, vault, connection, meta)
+                    if user_scope is not None:
+                        self._require_bindings(unit, owner, meta["resourceBindings"], user_scope)
                     from .task_center import current_assignment
 
                     current_assignment(
@@ -341,9 +388,11 @@ class PersistentExecutionService(PersistentPublicationService):
             raise ContractError("malformed_request")
         validate_schema("Identifier", request["taskId"])
 
+        user_scope = self._request_user_scope(owner, vault, connection)
+
         def read(unit):
             _, v, registry, _, identity = self.authenticate(
-                unit, owner, vault, connection, proof, path, request
+                unit, owner, vault, connection, proof, path, request, user_scope=user_scope
             )
             a = self.task_authority(unit, owner, vault, connection, identity, request["taskId"])
             carrier, _ = self.publication(
@@ -398,9 +447,12 @@ class PersistentExecutionService(PersistentPublicationService):
             trigger_id=request["triggerId"],
         )
         intent = digest(request)
+        user_scope = self._request_user_scope(owner, vault, connection)
 
         def existing(unit):
-            uid, *_ = self.authenticate(unit, owner, vault, connection, proof, path, request)
+            uid, *_ = self.authenticate(
+                unit, owner, vault, connection, proof, path, request, user_scope=user_scope
+            )
             saved = unit.get(run_operation_path(owner, vault, connection, request["operationId"]))
             if saved is not None:
                 if saved != {"intentDigest": intent, "runId": run}:
@@ -415,10 +467,12 @@ class PersistentExecutionService(PersistentPublicationService):
         if prior is not None:
             return prior
         sources = source_versions(self.catalogue, uid)
+        if user_scope is not None:
+            user_scope = self.user_vaults.read(uid, vault)
 
         def write(unit):
             uid, v, registry, conn, identity = self.authenticate(
-                unit, owner, vault, connection, proof, path, request
+                unit, owner, vault, connection, proof, path, request, user_scope=user_scope
             )
             saved = unit.get(run_path(owner, vault, run))
             if saved is not None:
@@ -451,6 +505,7 @@ class PersistentExecutionService(PersistentPublicationService):
                     v["rootJwk"],
                     head["publicationId"],
                     sources=sources,
+                    user_scope=user_scope,
                 )
                 if (source["sourceRevision"], source["sourceEpoch"]) != (
                     current["revision"],
@@ -528,7 +583,9 @@ class PersistentExecutionService(PersistentPublicationService):
             self.quota(unit, owner, connection)
             # The source/crypto work may outlive the short request proof. Its
             # acceptance window must still hold at the committing write.
-            self.authenticate(unit, owner, vault, connection, proof, path, request)
+            self.authenticate(
+                unit, owner, vault, connection, proof, path, request, user_scope=user_scope
+            )
             from .persistent_plans import observe_execution
 
             observe_execution(unit, manifest)
@@ -553,8 +610,12 @@ class PersistentExecutionService(PersistentPublicationService):
             raise ContractError("malformed_request")
         validate_schema("Identifier", request["runId"])
 
+        user_scope = self._request_user_scope(owner, vault, connection)
+
         def read(unit):
-            self.authenticate(unit, owner, vault, connection, proof, path, request)
+            self.authenticate(
+                unit, owner, vault, connection, proof, path, request, user_scope=user_scope
+            )
             row, manifest = stored_run(unit, owner, vault, request["runId"])
             if manifest["connectionId"] != connection:
                 raise ContractError("not_found")
@@ -575,9 +636,10 @@ class PersistentExecutionService(PersistentPublicationService):
         sources,
         *,
         report_source_check=None,
+        user_scope=None,
     ):
         uid, v, registry, conn, identity = self.authenticate(
-            unit, owner, vault, connection, proof, path, request
+            unit, owner, vault, connection, proof, path, request, user_scope=user_scope
         )
         row, m = stored_run(unit, owner, vault, run)
         if m["connectionId"] != connection or any(m[k] != identity[k] for k in BINDING_FIELDS):
@@ -634,6 +696,7 @@ class PersistentExecutionService(PersistentPublicationService):
                 },
                 sources=sources,
                 local_source_fence=report_source_check is None,
+                user_scope=user_scope,
             )
         return row, m, v, registry, identity
 
@@ -642,14 +705,30 @@ class PersistentExecutionService(PersistentPublicationService):
             raise ContractError("malformed_request")
         validate_schema("Identifier", request["runId"])
         validate_schema("OperationIdentifier", request["publicationId"])
-        uid = self.store.transact(
-            lambda u: self.authenticate(u, owner, vault, connection, proof, path, request)[0]
-        )
+        user_scope = self._request_user_scope(owner, vault, connection)
+
+        def caller(unit):
+            return self.authenticate(
+                unit, owner, vault, connection, proof, path, request, user_scope=user_scope
+            )[0]
+
+        uid = self.store.transact(caller)
         sources = source_versions(self.catalogue, uid)
+        if user_scope is not None:
+            user_scope = self.user_vaults.read(uid, vault)
 
         def read(unit):
             _, m, v, registry, identity = self.current_run(
-                unit, owner, vault, connection, proof, path, request, request["runId"], sources
+                unit,
+                owner,
+                vault,
+                connection,
+                proof,
+                path,
+                request,
+                request["runId"],
+                sources,
+                user_scope=user_scope,
             )
             item = next(
                 (i for i in m["inputs"] if i["publicationId"] == request["publicationId"]), None
@@ -666,6 +745,7 @@ class PersistentExecutionService(PersistentPublicationService):
                 v["rootJwk"],
                 item["publicationId"],
                 sources=sources,
+                user_scope=user_scope,
             )
             saved = stored_publication(unit, owner, vault, item["publicationId"])
             if saved["fingerprint"] != item["publicationFingerprint"] or any(

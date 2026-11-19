@@ -459,8 +459,12 @@ class ManualAgentService(TaskCenterAgentService):
         if type(request) is not dict or set(request) != {"taskId"}:
             raise ContractError("malformed_request")
 
+        user_scope = self._request_user_scope(owner, vault, connection)
+
         def read(unit):
-            *_, identity = self.authenticate(unit, owner, vault, connection, proof, path, request)
+            *_, identity = self.authenticate(
+                unit, owner, vault, connection, proof, path, request, user_scope=user_scope
+            )
             authority = self.task_authority(
                 unit, owner, vault, connection, identity, request["taskId"]
             )
@@ -515,8 +519,12 @@ class ManualAgentService(TaskCenterAgentService):
         for key in ("manualIntentId", "operationId"):
             validate_schema("OperationIdentifier", request[key])
 
+        user_scope = self._request_user_scope(owner, vault, connection)
+
         def write(unit):
-            *_, identity = self.authenticate(unit, owner, vault, connection, proof, path, request)
+            *_, identity = self.authenticate(
+                unit, owner, vault, connection, proof, path, request, user_scope=user_scope
+            )
             task = request["taskId"]
             authority = self.task_authority(unit, owner, vault, connection, identity, task)
             d, a, _ = current_assignment(

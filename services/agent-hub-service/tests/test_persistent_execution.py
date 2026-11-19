@@ -3,15 +3,18 @@
 import copy
 import unittest
 from concurrent.futures import ThreadPoolExecutor
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import test_persistent_identity_store as identities
 import test_persistent_publications as publications
 from fixtures import UID
 from test_oauth import TASK, OAuthFixture
 
+from app.native_transport import USER_AUTHORITY_TRANSITION
 from app.persistent_execution import PersistentExecutionService, run_path
-from app.store import document_path
+from app.store import document_path, private_resource_writer_fence_path
+from app.user_vault_authority import CurrentUserVault, ScopedUserVaults
 from folioview_shared.encrypted.constants import (
     CONTRACT_VERSION,
     MAX_READ_BYTES,
@@ -107,6 +110,67 @@ class PersistentExecutionTests(unittest.TestCase):
 
     def rejects(self, code, action):
         self.fx.rejects(code, action)
+
+    def transferred_scope(self):
+        owner, vault = self.f.owner, self.f.vault
+        path = document_path("hub_oauth_connections", owner, identities.CONNECTION)
+        marker = {
+            "ownerSubject": owner,
+            "vaultId": vault,
+            "state": "transferred",
+            "writerEpoch": 2,
+            "transitionFingerprint": "d" * 64,
+        }
+
+        def install(unit):
+            connection = unit.get(path)
+            unit.put(
+                path, {**connection, USER_AUTHORITY_TRANSITION: marker["transitionFingerprint"]}
+            )
+            unit.put(private_resource_writer_fence_path(owner), marker)
+
+        self.fx.store.transact(install)
+        client = Mock()
+        authority = {
+            "ownerSubject": owner,
+            "vaultId": vault,
+            "vaultVersion": 17,
+            "rootJwk": self.f.root_public,
+            "registryHistory": [self.f.bundle],
+            "sources": [{"binding": {"ref": self.f.resource, "sourceEpoch": 1}, "state": "active"}],
+        }
+        client.read.return_value = CurrentUserVault(
+            authority, SimpleNamespace(registry=self.f.registry), marker, self.fx.now + 8
+        )
+        return ScopedUserVaults(self.fx.store, owner=owner, client=client)
+
+    def test_transferred_execution_reads_the_user_authority_and_rechecks_input(self):
+        scopes = self.transferred_scope()
+        self.service.user_vaults = scopes
+        with patch("app.persistent_agents._current", side_effect=AssertionError("legacy registry")):
+            session = self.service.session(*self.args("session", {}))
+            self.assertEqual(session["registryHistory"], [self.f.bundle])
+            self.assertEqual(len(self.service.tasks(*self.args("tasks", {}))["tasks"]), 1)
+            run = self.begin()
+            manifest = run["manifest"]
+            request = {
+                "runId": manifest["runId"],
+                "publicationId": manifest["inputs"][0]["publicationId"],
+            }
+            self.assertEqual(
+                self.service.input(*self.args("runs/input", request))["manifestFingerprint"],
+                run["manifestFingerprint"],
+            )
+            scopes.client.read.return_value.authority["sources"] = []
+            self.assertEqual(self.service.tasks(*self.args("tasks", {}))["tasks"], [])
+            self.rejects(
+                "version_conflict", lambda: self.service.input(*self.args("runs/input", request))
+            )
+            self.assertEqual(self.begin(), run)
+            scopes.client.read.side_effect = ContractError("source_unavailable")
+            self.rejects(
+                "source_unavailable", lambda: self.service.session(*self.args("session", {}))
+            )
 
     def test_freeze_uses_expanded_budget_for_already_verified_registry_history(self):
         # Grow real, Root-signed history through the normal bounded vault API.

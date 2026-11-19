@@ -520,8 +520,12 @@ class TaskCenterAgentService(PersistentExecutionService):
             raise ContractError("malformed_request")
         validate_schema("Identifier", request["taskId"])
 
+        user_scope = self._request_user_scope(owner, vault, connection)
+
         def read(unit):
-            *_, identity = self.authenticate(unit, owner, vault, connection, proof, path, request)
+            *_, identity = self.authenticate(
+                unit, owner, vault, connection, proof, path, request, user_scope=user_scope
+            )
             a = self.task_authority(unit, owner, vault, connection, identity, request["taskId"])
             current = current_assignment(
                 unit, owner, vault, request["taskId"], connection, a["fingerprint"]
@@ -562,8 +566,12 @@ class TaskCenterAgentService(PersistentExecutionService):
             validate_schema("OperationIdentifier", request[field])
         validate_schema("Digest", request["taskPublicationFingerprint"])
 
+        user_scope = self._request_user_scope(owner, vault, connection)
+
         def write(unit):
-            *_, identity = self.authenticate(unit, owner, vault, connection, proof, path, request)
+            *_, identity = self.authenticate(
+                unit, owner, vault, connection, proof, path, request, user_scope=user_scope
+            )
             task = request["taskId"]
             authority = self.task_authority(unit, owner, vault, connection, identity, task)
             current = current_assignment(
@@ -643,9 +651,11 @@ class TaskCenterAgentService(PersistentExecutionService):
         ):
             raise ContractError("malformed_request")
 
+        user_scope = self._request_user_scope(owner, vault, connection)
+
         def write(unit):
             _, _, registry, conn, identity = self.authenticate(
-                unit, owner, vault, connection, proof, path, request
+                unit, owner, vault, connection, proof, path, request, user_scope=user_scope
             )
             op = document_path(
                 "hub_center_plan_operations", owner, vault, connection, request["operationId"]
@@ -694,7 +704,9 @@ class TaskCenterAgentService(PersistentExecutionService):
                 "authority": "agent_statement",
                 "nativeScheduleAttested": False,
             }
-            self.authenticate(unit, owner, vault, connection, proof, path, request)
+            self.authenticate(
+                unit, owner, vault, connection, proof, path, request, user_scope=user_scope
+            )
             unit.put(
                 document_path(
                     "hub_center_plans", owner, vault, request["taskId"], a["assignmentId"]
