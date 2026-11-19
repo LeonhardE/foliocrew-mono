@@ -8,6 +8,8 @@ export const HANDOVER_PROFILE = "folioview.owner-handover.v1";
 export const REGISTRY_START_PROFILE = "folioview.owner-registry-start-evidence.v1";
 export const REGISTRY_UPDATE_PROFILE = "folioview.owner-registry-update.v1";
 export const HOLDINGS_REGISTRATION_PROFILE = "folioview.owner-holdings-registration.v1";
+export const OWNER_CURRENT_PROFILE = "folioview.owner-current-user-vault.v1";
+export const OWNER_CURRENT_PATH = "/api/v3/private-resources/vaults/current/read";
 
 const SCOPE = ["contractVersion", "profile", "ownerSubject", "vaultId"];
 export const RECOVERY_KEYS = [
@@ -40,6 +42,14 @@ const HOLDINGS_ROUTE =
   /^\/api\/v3\/private-resources\/vaults\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})\/holdings-sources\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})$/;
 
 export function userRecoveryRoute(path: string) {
+  if (path === OWNER_CURRENT_PATH)
+    return {
+      vault: null,
+      source: null,
+      profile: OWNER_CURRENT_PROFILE,
+      keys: ["contractVersion", "profile", "ownerSubject", "nonce"],
+      maxRequestBytes: USER_RECOVERY_MAX_REQUEST,
+    };
   const holdings = HOLDINGS_ROUTE.exec(path);
   if (holdings?.[0] === path)
     return {

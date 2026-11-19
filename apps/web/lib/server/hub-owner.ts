@@ -164,6 +164,7 @@ type Rule = {
     | "deletion-withdrawal"
     | "control"
     | "small"
+    | "portfolio-user-authority"
     | "task-create"
     | "task-update"
     | "task-transition"
@@ -341,6 +342,11 @@ function route(
     rule = { kind: "control", max: 66560, operation: true, author: true };
   else if (request.method === "POST" && path === "/api/v2/vaults/current/authority-token")
     rule = { kind: "small", max: 1024 };
+  else if (
+    request.method === "POST" &&
+    new RegExp(`^/api/v2/vaults/${ID}/portfolio-authority-tokens$`).test(path)
+  )
+    rule = { kind: "portfolio-user-authority", max: 1024 };
   else if (request.method === "POST" && path === "/api/v2/tasks")
     rule = { kind: "task-create", max: 589824, operation: true, author: true };
   else if (request.method === "PUT" && new RegExp(`^/api/v2/tasks/${ID}$`).test(path))
@@ -407,6 +413,14 @@ function validBody(body: unknown, kind: Rule["kind"], vaultId?: string) {
       return credentialApprovalRequest(body);
     case "small":
       return fields(body, ["contractVersion"]);
+    case "portfolio-user-authority":
+      return (
+        fields(body, ["contractVersion", "sourceId", "nonce", "minimumRegistryEpoch"]) &&
+        identifier(body.sourceId) &&
+        typeof body.nonce === "string" &&
+        /^[A-Za-z0-9_-]{22,128}$/.test(body.nonce) &&
+        integer(body.minimumRegistryEpoch, 2)
+      );
     case "control":
       return fields(body, ["contractVersion", "command"]) && signedObject(body.command);
     case "lifecycle-control":

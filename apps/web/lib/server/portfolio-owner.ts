@@ -36,7 +36,15 @@ const OPERATION = "[A-Za-z0-9_-]{22,128}";
 const SOURCE = `/api/v2/holdings/sources/${ID}`;
 type Config = { project: string; origin: string; audience: string };
 type Rule = {
-  kind: "view" | "read" | "snapshot" | "mutation" | "authority" | "synchronize" | "cancellation";
+  kind:
+    | "view"
+    | "read"
+    | "snapshot"
+    | "mutation"
+    | "authority"
+    | "synchronize"
+    | "revision"
+    | "cancellation";
   max: number;
   cancel?: { slot: string; id?: string };
 };
@@ -116,6 +124,11 @@ function ruleFor(
     return { path, rule: { kind: "synchronize", max: 1024 } };
   if (request.method === "POST" && new RegExp(`^${SOURCE}/authority-sync$`).test(path))
     return { path, rule: { kind: "authority", max: 1024 } };
+  if (
+    request.method === "POST" &&
+    new RegExp(`^${SOURCE}/operations/${OPERATION}/synchronize-revision$`).test(path)
+  )
+    return { path, rule: { kind: "revision", max: 1024 } };
   return fail();
 }
 
@@ -139,6 +152,7 @@ async function transport(request: Request, rule: Rule, signal: AbortSignal) {
           : rule.kind !== "read" &&
             rule.kind !== "view" &&
             rule.kind !== "synchronize" &&
+            rule.kind !== "revision" &&
             name !== "x-folioview-authority-delegation";
     if (allowed) {
       if (
@@ -168,7 +182,20 @@ async function transport(request: Request, rule: Rule, signal: AbortSignal) {
   } else if (rule.kind === "cancellation") {
     if (!cancellationRequest("holdings", body, rule.cancel!.slot, headers.get("idempotency-key")!))
       fail();
-  } else if (rule.kind === "authority" || rule.kind === "synchronize") {
+  } else if (
+    rule.kind === "authority" &&
+    fields(body, ["contractVersion", "vaultId", "nonce", "minimumRegistryEpoch"])
+  ) {
+    if (
+      body.contractVersion !== CONTRACT ||
+      typeof body.vaultId !== "string" ||
+      !new RegExp(`^${ID}$`).test(body.vaultId) ||
+      typeof body.nonce !== "string" ||
+      !new RegExp(`^${OPERATION}$`).test(body.nonce) ||
+      !integer(body.minimumRegistryEpoch, 2)
+    )
+      fail();
+  } else if (rule.kind === "authority" || rule.kind === "synchronize" || rule.kind === "revision") {
     if (!fields(body, ["contractVersion"]) || body.contractVersion !== CONTRACT) fail();
   } else if (rule.kind === "snapshot") {
     if (
@@ -233,6 +260,37 @@ function synchronizedReceipt(value: unknown, path: string) {
   );
 }
 
+function confirmedRevision(value: unknown, path: string) {
+  const parts = path.split("/");
+  return (
+    fields(value, [
+      "contractVersion",
+      "vaultId",
+      "resourceRef",
+      "snapshotId",
+      "revision",
+      "sourceEpoch",
+      "stableOperationId",
+      "envelopeFingerprint",
+    ]) &&
+    value.contractVersion === CONTRACT &&
+    value.stableOperationId === parts[7] &&
+    integer(value.revision, 1) &&
+    integer(value.sourceEpoch, 1) &&
+    [value.vaultId, value.snapshotId].every(
+      (id) => typeof id === "string" && new RegExp(`^${ID}$`).test(id),
+    ) &&
+    fields(value.resourceRef, ["kind", "sourceService", "resourceId", "incarnation"]) &&
+    value.resourceRef.resourceId === parts[5] &&
+    value.resourceRef.kind === "holdings" &&
+    value.resourceRef.sourceService === "portfolio" &&
+    typeof value.resourceRef.incarnation === "string" &&
+    new RegExp(`^${ID}$`).test(value.resourceRef.incarnation) &&
+    typeof value.envelopeFingerprint === "string" &&
+    /^[a-f0-9]{64}$/.test(value.envelopeFingerprint)
+  );
+}
+
 export function createPortfolioProxy(options: Options = {}) {
   const env = options.env ?? process.env;
   const send = options.fetch ?? fetch;
@@ -269,7 +327,10 @@ export function createPortfolioProxy(options: Options = {}) {
         signal,
       );
       if (
-        (rule.kind === "view" || rule.kind === "synchronize" || rule.cancel) &&
+        (rule.kind === "view" ||
+          rule.kind === "synchronize" ||
+          rule.kind === "revision" ||
+          rule.cancel) &&
         response.status < 400 &&
         response.status !== 200
       )
@@ -298,7 +359,9 @@ export function createPortfolioProxy(options: Options = {}) {
                   )
               : rule.kind === "synchronize"
                 ? (value) => synchronizedReceipt(value, path)
-                : undefined,
+                : rule.kind === "revision"
+                  ? (value) => confirmedRevision(value, path)
+                  : undefined,
         ),
         started,
       );

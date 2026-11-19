@@ -26,6 +26,18 @@ export type Vault = {
   registryHistory: RegistryBundle[];
   archive: Archive | null;
   version: number;
+  userAuthority?: UserVaultProof;
+};
+export type UserVaultProof = {
+  registry: import("./encrypted-user-recovery").PrivateRegistryHead;
+  registryStart: import("./encrypted-user-recovery").PrivateRegistryHead;
+  signedTransition: Signed;
+  archive: { state: "active"; version: number; digest: string };
+  sourcesDigest: string;
+  sources: {
+    binding: { ref: Source["resourceRef"]; sourceEpoch: number };
+    state: "active" | "disconnected" | "revoking";
+  }[];
 };
 export type Source = {
   resourceRef: {

@@ -25,7 +25,8 @@ const HANDOVER = VAULT + "/handover";
 const START = VAULT + "/registry-start/read";
 const ADVANCE = VAULT + "/registry/advance";
 const REGISTER = VAULT + "/holdings-sources/holdings_A";
-const PATHS = [EVIDENCE, PAGE, CHECK, HANDOVER, START, ADVANCE, REGISTER];
+const CURRENT = routes.OWNER_CURRENT_PATH;
+const PATHS = [EVIDENCE, PAGE, CHECK, HANDOVER, START, ADVANCE, REGISTER, CURRENT];
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const OWNER = digest("owner_A");
 const HEAD = {
@@ -347,6 +348,65 @@ test("User writes bind the original registry receipt and the generated holdings 
       ),
   });
   assert.equal((await other.proxy(request(REGISTER, REGISTER_BODY))).status, 503);
+});
+
+test("selected Owner startup binds the User reply to the fresh nonce and fails closed", async () => {
+  const header = { "X-FolioView-Contract": CONTRACT };
+  const input = {
+    contractVersion: CONTRACT,
+    profile: routes.OWNER_CURRENT_PROFILE,
+    ownerSubject: OWNER,
+    nonce: "n".repeat(32),
+  };
+  const rootKeyId = "r".repeat(43);
+  const value = {
+    ...input,
+    vault: {
+      vaultId: "vault_A",
+      rootKeyId,
+      rootJwk: { kty: "EC", crv: "P-256", x: "x".repeat(43), y: "y".repeat(43) },
+      version: 2,
+      archive: {
+        profile: "folioview.passkey-vault.v1",
+        ownerSubject: OWNER,
+        vaultId: "vault_A",
+        rootKeyId,
+        credentialId: "synthetic_credential",
+        prfSalt: "p".repeat(43),
+        iv: "i".repeat(16),
+        ciphertext: "synthetic_sealed_ciphertext",
+      },
+      registryHistory: [BUNDLE],
+    },
+    proof: {
+      registry: NEXT_HEAD,
+      registryStart: NEXT_HEAD,
+      signedTransition: PROOF,
+      archive: { state: "active", version: 1, digest: "a".repeat(64) },
+      sourcesDigest: "b".repeat(64),
+      sources: [],
+    },
+  };
+  const env = { ...ENV, FOLIOVIEW_USER_CURRENT_OWNER: OWNER };
+  const ok = fixture({ env, reply: () => Response.json(value, { headers: header }) });
+  assert.equal((await ok.proxy(request(CURRENT, input))).status, 200);
+  const stale = fixture({
+    env,
+    reply: () => Response.json({ ...value, nonce: "old" }, { headers: header }),
+  });
+  assert.equal((await stale.proxy(request(CURRENT, input))).status, 503);
+  const absent = fixture({
+    env,
+    reply: () =>
+      Response.json(
+        { contractVersion: CONTRACT, error: { code: "not_found" } },
+        { status: 404, headers: header },
+      ),
+  });
+  assert.equal((await absent.proxy(request(CURRENT, input))).status, 503);
+  const other = fixture({ env: { ...env, FOLIOVIEW_USER_CURRENT_OWNER: "f".repeat(64) } });
+  assert.equal((await other.proxy(request(CURRENT, input))).status, 404);
+  assert.equal(other.calls.length, 1);
 });
 
 test("the three handover requests use fixed scope and signed-input receipt identity", async () => {

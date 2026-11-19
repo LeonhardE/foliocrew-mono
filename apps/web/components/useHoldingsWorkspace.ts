@@ -36,6 +36,12 @@ import {
 } from "@/lib/resource-display";
 import { EncryptedVaultSession } from "@/lib/encrypted-vault";
 import {
+  HOLDINGS_REGISTRATION_PROFILE,
+  OWNER_CURRENT_PATH,
+  OWNER_CURRENT_PROFILE,
+  REGISTRY_UPDATE_PROFILE,
+} from "@/lib/user-recovery-route";
+import {
   createVaultPasskey,
   replaceVaultPasskey,
   unlockVaultPasskey,
@@ -63,6 +69,7 @@ import type {
   AgentGrantArgs,
   AgentPreparationArgs,
   Vault,
+  UserVaultProof,
   VaultManagementSummary,
   DeviceChangePacket,
   VaultLifecycleState,
@@ -726,7 +733,7 @@ export function useHoldingsWorkspace() {
 
   const api = useCallback(
     async (
-      service: "portfolio" | "agent-hub",
+      service: "portfolio" | "agent-hub" | "user",
       path: string,
       signal: AbortSignal,
       options: {
@@ -792,9 +799,45 @@ export function useHoldingsWorkspace() {
   );
 
   const readCurrent = useCallback(
-    async (signal: AbortSignal) =>
-      aggregate(await api("agent-hub", "/api/v2/vaults/current", signal)),
-    [api],
+    async (signal: AbortSignal) => {
+      if (uid && auth.ownerCapabilities?.userVault) {
+        const ownerSubject = Array.from(
+          new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(uid))),
+          (byte) => byte.toString(16).padStart(2, "0"),
+        ).join("");
+        const nonce = crypto.randomUUID().replace(/-/g, "");
+        const current = await api("user", OWNER_CURRENT_PATH, signal, {
+          method: "POST",
+          allowMissing: true,
+          json: { contractVersion: CONTRACT, profile: OWNER_CURRENT_PROFILE, ownerSubject, nonce },
+        });
+        if (current !== null) {
+          if (
+            !record(current) ||
+            current.contractVersion !== CONTRACT ||
+            current.profile !== OWNER_CURRENT_PROFILE ||
+            current.nonce !== nonce ||
+            current.ownerSubject !== ownerSubject ||
+            !record(current.vault) ||
+            !record(current.proof) ||
+            !Array.isArray(current.proof.sources)
+          )
+            throw new WorkspaceError("invalid_response");
+          const proof = current.proof as UserVaultProof;
+          return aggregate({
+            contractVersion: CONTRACT,
+            vault: { ...current.vault, userAuthority: proof },
+            sources: proof.sources.flatMap((item) =>
+              item.state === "active"
+                ? [{ resourceRef: item.binding.ref, sourceEpoch: item.binding.sourceEpoch }]
+                : [],
+            ),
+          });
+        }
+      }
+      return aggregate(await api("agent-hub", "/api/v2/vaults/current", signal));
+    },
+    [api, auth.ownerCapabilities?.userVault, uid],
   );
 
   const readLifecycle = useCallback(
@@ -849,11 +892,28 @@ export function useHoldingsWorkspace() {
   );
 
   const sync = useCallback(
-    async (source: Source, signal: AbortSignal) => {
-      const token = await api("agent-hub", "/api/v2/vaults/current/authority-token", signal, {
-        method: "POST",
-        json: { contractVersion: CONTRACT },
-      });
+    async (source: Source, signal: AbortSignal, vault = stateRef.current.vault) => {
+      const user = vault?.userAuthority;
+      const nonce = user ? crypto.randomUUID().replace(/-/g, "") : null;
+      const floor = user?.registry.registryEpoch;
+      const token = await api(
+        "agent-hub",
+        user
+          ? `/api/v2/vaults/${vault!.vaultId}/portfolio-authority-tokens`
+          : "/api/v2/vaults/current/authority-token",
+        signal,
+        {
+          method: "POST",
+          json: user
+            ? {
+                contractVersion: CONTRACT,
+                sourceId: source.resourceRef.resourceId,
+                nonce,
+                minimumRegistryEpoch: floor,
+              }
+            : { contractVersion: CONTRACT },
+        },
+      );
       if (
         !record(token) ||
         token.contractVersion !== CONTRACT ||
@@ -867,7 +927,14 @@ export function useHoldingsWorkspace() {
         signal,
         {
           method: "POST",
-          json: { contractVersion: CONTRACT },
+          json: user
+            ? {
+                contractVersion: CONTRACT,
+                vaultId: vault!.vaultId,
+                nonce,
+                minimumRegistryEpoch: floor,
+              }
+            : { contractVersion: CONTRACT },
           headers: { "X-FolioView-Authority-Delegation": token.token },
         },
       );
@@ -878,6 +945,86 @@ export function useHoldingsWorkspace() {
         !positive(result.authorityVersion)
       )
         throw new WorkspaceError("invalid_response");
+    },
+    [api],
+  );
+
+  const registerSource = useCallback(
+    (vault: Vault, packet: SourceCreationPacket, signal: AbortSignal) => {
+      if (vault.userAuthority) {
+        return api(
+          "user",
+          `/api/v3/private-resources/vaults/${vault.vaultId}/holdings-sources/${packet.sourceId}`,
+          signal,
+          {
+            method: "POST",
+            json: {
+              contractVersion: CONTRACT,
+              profile: HOLDINGS_REGISTRATION_PROFILE,
+              ownerSubject: requireArchive(vault.archive).ownerSubject,
+              vaultId: vault.vaultId,
+              sourceId: packet.sourceId,
+              operationId: packet.operationId,
+              command: packet.command,
+            },
+          },
+        );
+      }
+      return api(
+        "agent-hub",
+        `/api/v2/vaults/${vault.vaultId}/holdings-sources/${packet.sourceId}`,
+        signal,
+        {
+          method: "POST",
+          json: { contractVersion: CONTRACT, command: packet.command },
+          headers: {
+            "Idempotency-Key": packet.operationId,
+            "X-FolioView-Author-Key": packet.authorKeyId,
+          },
+        },
+      );
+    },
+    [api],
+  );
+
+  const advanceRegistry = useCallback(
+    (
+      vault: Vault,
+      update: {
+        operationId: string;
+        expectedVersion: number;
+        registryBundle: Vault["registryHistory"][number];
+      },
+      signal: AbortSignal,
+    ) => {
+      if (vault.userAuthority) {
+        return api(
+          "user",
+          `/api/v3/private-resources/vaults/${vault.vaultId}/registry/advance`,
+          signal,
+          {
+            method: "POST",
+            json: {
+              contractVersion: CONTRACT,
+              profile: REGISTRY_UPDATE_PROFILE,
+              ownerSubject: requireArchive(vault.archive).ownerSubject,
+              vaultId: vault.vaultId,
+              operationId: update.operationId,
+              expectedVaultVersion: update.expectedVersion,
+              registryBundle: update.registryBundle,
+            },
+          },
+        );
+      }
+      return api("agent-hub", `/api/v2/vaults/${vault.vaultId}/registry`, signal, {
+        method: "PUT",
+        json: {
+          contractVersion: CONTRACT,
+          expectedVersion: update.expectedVersion,
+          registryBundle: update.registryBundle,
+        },
+        headers: { "Idempotency-Key": update.operationId },
+      });
     },
     [api],
   );
@@ -966,7 +1113,7 @@ export function useHoldingsWorkspace() {
       );
       assertActive();
       if (!prepared && metadata.state !== "revoking") {
-        await sync(source, signal);
+        await sync(source, signal, vault);
         assertActive();
         metadata = sourceMetadata(
           await api(
@@ -1343,12 +1490,19 @@ export function useHoldingsWorkspace() {
                   }
                 : await instance.unlock(vault, material!);
             assertActive();
-            const lifecycle = await readLifecycle(vault, signal);
-            await instance.verifyLifecycle(vault, lifecycle);
+            const lifecycle = vault.userAuthority ? null : await readLifecycle(vault, signal);
+            if (lifecycle) await instance.verifyLifecycle(vault, lifecycle);
+            else {
+              if (await instance.hasPendingArchiveWork())
+                throw new WorkspaceError("archive_session_stale");
+              await instance.acceptResultVault(vault);
+            }
             assertActive();
-            const archiveChange = await instance.getArchiveChange(vault, lifecycle);
+            const archiveChange = lifecycle
+              ? await instance.getArchiveChange(vault, lifecycle)
+              : null;
             assertActive();
-            if (archiveChange) {
+            if (archiveChange && lifecycle) {
               if (archiveChange.state === "applied") {
                 await instance.finishArchiveChange(
                   vault,
@@ -1496,10 +1650,16 @@ export function useHoldingsWorkspace() {
         const access = await instance.resumeUnlock(displayVault);
         assertActive();
         if (access) {
-          const lifecycle = await readLifecycle(displayVault, signal);
-          await instance.verifyLifecycle(displayVault, lifecycle);
-          const archiveChange = await instance.getArchiveChange(displayVault, lifecycle);
-          if (archiveChange) throw new WorkspaceError("archive_session_stale");
+          if (displayVault.userAuthority) {
+            if (await instance.hasPendingArchiveWork())
+              throw new WorkspaceError("archive_session_stale");
+            await instance.acceptResultVault(displayVault);
+          } else {
+            const lifecycle = await readLifecycle(displayVault, signal);
+            await instance.verifyLifecycle(displayVault, lifecycle);
+            if (await instance.getArchiveChange(displayVault, lifecycle))
+              throw new WorkspaceError("archive_session_stale");
+          }
           const keyManagement = await instance.deviceManagement(displayVault);
           const deviceChange = await instance.loadDeviceChange(displayVault);
           const sourceCreation = await instance.loadSourceCreation();
@@ -1852,19 +2012,7 @@ export function useHoldingsWorkspace() {
           const packet = await instance.prepareSourceCreation(id("holdings"));
           assertActive();
           setState((previous) => ({ ...previous, sourceCreationId: packet.sourceId }));
-          await api(
-            "agent-hub",
-            `/api/v2/vaults/${refreshed.vault.vaultId}/holdings-sources/${packet.sourceId}`,
-            signal,
-            {
-              method: "POST",
-              json: { contractVersion: CONTRACT, command: packet.command },
-              headers: {
-                "Idempotency-Key": packet.operationId,
-                "X-FolioView-Author-Key": packet.authorKeyId,
-              },
-            },
-          );
+          await registerSource(refreshed.vault, packet, signal);
           const updated = await readCurrent(signal);
           assertActive();
           if (!updated.vault) throw new WorkspaceError("invalid_response");
@@ -1897,7 +2045,7 @@ export function useHoldingsWorkspace() {
             throw new WorkspaceError("source_mutation_pending");
           assertActive();
         }
-        await sync(source, signal);
+        await sync(source, signal, refreshed.vault);
         assertActive();
         if (creationPacket) {
           await instance.finishSourceCreation(creationPacket, source, signal);
@@ -2035,7 +2183,7 @@ export function useHoldingsWorkspace() {
         await readSaved(source, signal, assertActive);
         setState((previous) => ({ ...previous, notice: "saved" }));
       }),
-    [api, liveSession, owner, perform, readCurrent, readSaved, sync],
+    [api, liveSession, owner, perform, readCurrent, readSaved, registerSource, sync],
   );
 
   const checkPending = useCallback(
@@ -2052,11 +2200,17 @@ export function useHoldingsWorkspace() {
         if (confirmedOperation !== null && confirmedOperation !== upload.operationId)
           throw new WorkspaceError("version_conflict");
         pending.current = upload;
+        const transferred = Boolean(stateRef.current.vault?.userAuthority);
         const receipt = await api(
           "portfolio",
-          `/api/v2/holdings/sources/${source.resourceRef.resourceId}/operations/${upload.operationId}`,
+          `/api/v2/holdings/sources/${source.resourceRef.resourceId}/operations/${upload.operationId}${transferred ? "/synchronize-revision" : ""}`,
           signal,
-          { allowMissing: true },
+          {
+            allowMissing: true,
+            ...(transferred
+              ? { method: "POST" as const, json: { contractVersion: CONTRACT } }
+              : {}),
+          },
         );
         assertActive();
         if (receipt !== null) {
@@ -2125,7 +2279,7 @@ export function useHoldingsWorkspace() {
       if (refreshAuthority && metadata.state !== "revoking") {
         await instance.acceptVault(fresh.vault);
         assertActive();
-        await sync(source, signal);
+        await sync(source, signal, fresh.vault);
         metadata = sourceMetadata(
           await api(
             "portfolio",
@@ -2540,25 +2694,13 @@ export function useHoldingsWorkspace() {
         if (!fresh.vault) throw new WorkspaceError("invalid_response");
         let source = fresh.sources.find((item) => item.resourceRef.resourceId === packet.sourceId);
         if (!source) {
-          await api(
-            "agent-hub",
-            `/api/v2/vaults/${fresh.vault.vaultId}/holdings-sources/${packet.sourceId}`,
-            signal,
-            {
-              method: "POST",
-              json: { contractVersion: CONTRACT, command: packet.command },
-              headers: {
-                "Idempotency-Key": packet.operationId,
-                "X-FolioView-Author-Key": packet.authorKeyId,
-              },
-            },
-          );
+          await registerSource(fresh.vault, packet, signal);
           fresh = await readCurrent(signal);
           assertActive();
           source = fresh.sources.find((item) => item.resourceRef.resourceId === packet.sourceId);
         }
         if (!source || !fresh.vault) throw new WorkspaceError("invalid_response");
-        await sync(source, signal);
+        await sync(source, signal, fresh.vault);
         assertActive();
         await instance.finishSourceCreation(packet, source, signal);
         assertActive();
@@ -2575,7 +2717,7 @@ export function useHoldingsWorkspace() {
         await readSaved(source, signal, assertActive);
         setState((previous) => ({ ...previous, notice: "source_created" }));
       }),
-    [api, liveSession, perform, readCurrent, readSaved, sync],
+    [liveSession, perform, readCurrent, readSaved, registerSource, sync],
   );
 
   const discardSourceCreation = useCallback(
@@ -2624,7 +2766,7 @@ export function useHoldingsWorkspace() {
         assertActive();
         // Explicit preparation of this known first-epoch source is bounded and may
         // fail closed if Portfolio already has a pending fence. It never creates a source.
-        await sync(source, signal);
+        await sync(source, signal, fresh.vault);
         assertActive();
         setState((previous) => ({ ...previous, vault: fresh.vault, sources: fresh.sources }));
         await readSaved(source, signal, assertActive);
@@ -2738,11 +2880,12 @@ export function useHoldingsWorkspace() {
       assertInboxSession(instance, generation);
       // Agent actions supply their cancellable admission-aware GET transport.
       // Keep the same bounded parser, Owner fences and Worker verification here.
-      const refreshed = readCurrentResponse
-        ? aggregate(
-            await api("agent-hub", "/api/v2/vaults/current", signal, {}, readCurrentResponse),
-          )
-        : await readCurrent(signal);
+      const refreshed =
+        readCurrentResponse && !auth.ownerCapabilities?.userVault
+          ? aggregate(
+              await api("agent-hub", "/api/v2/vaults/current", signal, {}, readCurrentResponse),
+            )
+          : await readCurrent(signal);
       assertInboxSession(instance, generation);
       if (signal.aborted || !refreshed.vault) throw new WorkspaceError("invalid_response");
       const privateDisplayVault = resourceDisplaySnapshot(refreshed.vault);
@@ -2791,7 +2934,14 @@ export function useHoldingsWorkspace() {
       }));
       return displayVault;
     },
-    [api, assertInboxSession, liveSession, readCurrent, proveResourceDisplay],
+    [
+      api,
+      assertInboxSession,
+      auth.ownerCapabilities?.userVault,
+      liveSession,
+      readCurrent,
+      proveResourceDisplay,
+    ],
   );
 
   const openResult = useCallback(
@@ -3242,15 +3392,7 @@ export function useHoldingsWorkspace() {
           }));
         }
         if (next.keyManagement.pendingChange?.state !== "applied") {
-          await api("agent-hub", `/api/v2/vaults/${fresh.vault.vaultId}/registry`, signal, {
-            method: "PUT",
-            json: {
-              contractVersion: CONTRACT,
-              expectedVersion: packet.expectedVersion,
-              registryBundle: packet.registryBundle,
-            },
-            headers: { "Idempotency-Key": packet.operationId },
-          });
+          await advanceRegistry(fresh.vault, packet, signal);
         }
         assertActive();
         assertKeySession(instance, managementGeneration);
@@ -3282,7 +3424,7 @@ export function useHoldingsWorkspace() {
         }));
       }),
     [
-      api,
+      advanceRegistry,
       assertKeySession,
       keySnapshot,
       liveSession,
@@ -3376,15 +3518,7 @@ export function useHoldingsWorkspace() {
           });
           assertActive();
           assertKeySession(instance, managementGeneration);
-          await api("agent-hub", `/api/v2/vaults/${fresh.vault.vaultId}/registry`, signal, {
-            method: "PUT",
-            json: {
-              contractVersion: CONTRACT,
-              expectedVersion: update.expectedVersion,
-              registryBundle: update.registryBundle,
-            },
-            headers: { "Idempotency-Key": update.operationId },
-          });
+          await advanceRegistry(fresh.vault, update, signal);
           saved = await readCurrent(signal);
         }
         assertActive();
@@ -3426,7 +3560,7 @@ export function useHoldingsWorkspace() {
           );
       }),
     [
-      api,
+      advanceRegistry,
       assertKeySession,
       keySnapshot,
       liveSession,
