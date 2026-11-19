@@ -55,6 +55,10 @@ function compile(file, imports = {}, globals = {}) {
       if (["@/lib/holdings-publication", "./holdings-publication"].includes(name))
         return compile("../lib/holdings-publication.ts", { "./resource-library": contracts });
       if (name === "@/lib/workspace-cache") return compile("../lib/workspace-cache.ts");
+      if (name === "@/lib/account-preference-reads")
+        return compile("../lib/account-preference-reads.ts", {
+          "./workspace-cache": compile("../lib/workspace-cache.ts"),
+        });
       if (["@/lib/holdings-facts", "./holdings-facts"].includes(name))
         return compile("../lib/holdings-facts.ts");
       assert.ok(Object.hasOwn(imports, name), name);

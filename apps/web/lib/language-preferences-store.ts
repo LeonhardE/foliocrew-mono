@@ -1,3 +1,4 @@
+import type { PreferenceReadMode } from "./account-preference-reads";
 import {
   LANGUAGE_PREFERENCES_PATH,
   effectiveLanguage,
@@ -17,7 +18,12 @@ export type LanguagePreferenceState = Readonly<{
 }>;
 type Request = (
   path: string,
-  options: { method: "GET" | "PUT"; signal: AbortSignal; json?: unknown },
+  options: {
+    method: "GET" | "PUT";
+    signal: AbortSignal;
+    json?: unknown;
+    preferenceRead?: PreferenceReadMode;
+  },
 ) => Promise<Response>;
 
 /** One account/session. Unknown writes are read back before any further save. */
@@ -30,6 +36,7 @@ export class LanguagePreferenceStore {
   #running = false;
   #intent: UiLanguage | null = null;
   #needsRead = true;
+  #readMode: PreferenceReadMode = "cached";
   #conflicts = 0;
   #controller: AbortController | null = null;
   #timeout: number;
@@ -85,6 +92,7 @@ export class LanguagePreferenceStore {
   retry() {
     if (!this.#active || this.#running || !this.#state.error) return;
     this.#needsRead = true;
+    this.#readMode = "fresh";
     this.#conflicts = 0;
     this.#emit({ error: null });
     this.#run();
@@ -108,6 +116,7 @@ export class LanguagePreferenceStore {
           const response = await this.#request(LANGUAGE_PREFERENCES_PATH, {
             method,
             signal: controller.signal,
+            ...(method === "GET" ? { preferenceRead: this.#readMode } : {}),
             ...(json === undefined ? {} : { json }),
           });
           if (!this.#active || controller.signal.aborted)
@@ -167,6 +176,7 @@ export class LanguagePreferenceStore {
           });
           if (reply.status === 409) {
             if (++this.#conflicts > 2) throw new Error("Language conflict");
+            this.#readMode = "fresh";
             await this.#load();
             continue;
           }

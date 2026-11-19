@@ -6,12 +6,18 @@ import {
   type LanguagePreferenceState,
 } from "@/lib/language-preferences-store";
 import type { UiLanguage } from "@/lib/language-preferences";
+import type { PreferenceReadMode } from "@/lib/account-preference-reads";
 
 type RequestPrivate = (
   service: "config",
   path: string,
   owner: string,
-  options: { method: "GET" | "PUT"; signal: AbortSignal; json?: unknown },
+  options: {
+    method: "GET" | "PUT";
+    signal: AbortSignal;
+    json?: unknown;
+    preferenceRead?: PreferenceReadMode;
+  },
 ) => Promise<Response>;
 
 /** The optional v2 choice never changes or rewrites legacy preference snapshots. */

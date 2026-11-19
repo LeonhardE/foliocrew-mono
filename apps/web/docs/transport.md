@@ -103,6 +103,19 @@ contract headers, rejects arbitrary destinations and identity-header overrides, 
 responses when an account changes. Bodies, bearer/delegation tokens, PRF output and private keys
 are not placed in URLs, localStorage, analytics or error messages.
 
+## Account preferences
+
+UI, language, and currency start from one authenticated `GET /api/v2/preferences`
+to Config. The three stores share the in-flight request and reuse the result for
+up to one minute in the current verified session. The response is bounded before
+parsing. Each store still checks the corresponding versioned response, so one
+unavailable part leaves the other preferences usable.
+
+Account changes clear the shared read and discard late responses. A preference
+write invalidates the shared snapshot and updates the changed setting from its
+own response. Explicit retries and write-conflict recovery request a fresh batch.
+The existing per-setting writes retain their path, schema, and version fences.
+
 ## Personal Agent authorization
 
 See [Agent integration](agent-integration.md#persistent-owner-flow) for the current Owner
