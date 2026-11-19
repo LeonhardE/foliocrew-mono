@@ -25,6 +25,8 @@ from folioview_shared.service_identity import (
 
 from ..resource_api import ResourceRoute, body, configured_verifier, require_v2
 from ..resources import FirestoreUserResourceStore, get_resource_store
+from .archive_lifecycle import PROFILE as ARCHIVE_LIFECYCLE_PROFILE
+from .archive_lifecycle import PrivateArchiveLifecycle
 from .authority_cutover import UserAuthorityCutover
 from .authority_views import OWNER_CURRENT_PROFILE, PrivateAuthorityViews
 from .directory import DIRECTORY_PROFILE, PrivateResourceDirectory
@@ -434,6 +436,36 @@ async def read_registry_start(
         vault_id,
         value.nonce,
         now=int(time.time()),
+    )
+    _uncached_private(response)
+    return result
+
+
+class OwnerArchiveLifecycleRead(CutoverScope):
+    profile: Literal[ARCHIVE_LIFECYCLE_PROFILE]
+    nonce: OperationId
+    operationId: OperationId | None
+
+
+def owner_archive_lifecycle() -> PrivateArchiveLifecycle:
+    if os.getenv("USER_PRIVATE_OWNER_CURRENT") != "true":
+        raise ContractError("not_found")
+    return PrivateArchiveLifecycle(get_resource_store())
+
+
+@router.post("/{vault_id}/archive-lifecycle/read")
+async def read_owner_archive_lifecycle(
+    vault_id: str,
+    request: Request,
+    response: Response,
+    user: Annotated[CurrentUser, Depends(require_google_user)],
+    lifecycle: Annotated[PrivateArchiveLifecycle, Depends(owner_archive_lifecycle)],
+    _: Annotated[None, Depends(require_owner_proxy)],
+):
+    value = await body(request, OwnerArchiveLifecycleRead, maximum=4096)
+    _cutover_scope(value.model_dump(), user.uid, vault_id)
+    result = await run_in_threadpool(
+        lifecycle.read, user.uid, vault_id, value.nonce, value.operationId
     )
     _uncached_private(response)
     return result

@@ -52,6 +52,10 @@ class UserRegistryTransition:
         self.history = RegistryHistory(RecoveryHeads(store))
 
     def _previous(self, baseline, now):
+        cursor, _, _ = self.original_history(baseline, now)
+        return cursor
+
+    def original_history(self, baseline, now):
         scope = {key: baseline[key] for key in ("ownerSubject", "vaultId", "rootKeyId")}
         head = baseline["registry"]
         sequence = head["registrySequence"]
@@ -94,7 +98,7 @@ class UserRegistryTransition:
             }
         ):
             raise ContractError("key_authorization_required")
-        return cursor
+        return cursor, state, bundles
 
     def verify_candidate(self, uid, vault, baseline_digest, packet, *, now):
         return self.prepare(uid, vault, baseline_digest, transition_packet(packet), now=now).receipt
