@@ -21,6 +21,17 @@ interpreted as absent content. Found rows still pass the original content/versio
 identity, digest, source epoch and initialization-receipt validators. A complete
 confirmed missing document retains its existing uninitialized meaning.
 
+## In-process list metadata
+
+The User runtime exposes `read_list_catalogue` and `read_list_bindings` in
+`app.resources` for authorized local callers. Both take the authenticated account
+UID and reuse the validated list snapshot. The catalogue reads a set of requested
+kinds. Binding reads also check every exact current incarnation and preserve the
+requested order. The legacy delegated routes use these same functions during
+migration. The catalogue read performs no self-directed User HTTP request and
+shares no list content. Explicit initialization retains the existing operation
+receipts and version checks.
+
 Every conflict retry and subsequent request reads current rows again. No User
 permission or document cache is added, and no-op/replay writes retain their old
 behavior. SDK calls keep four-second bounds, no SDK retry chain, and the existing

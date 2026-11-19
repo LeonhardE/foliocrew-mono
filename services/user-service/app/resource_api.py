@@ -2,7 +2,6 @@
 
 import asyncio
 import os
-import time
 from functools import lru_cache
 from typing import Annotated, Literal
 from uuid import uuid4
@@ -26,15 +25,17 @@ from folioview_shared.encrypted.budgets import require_contract
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import strict_json_loads
 from folioview_shared.http import PrivateRoute
-from folioview_shared.instruments import iso_time
 from folioview_shared.service_identity import GoogleCallerVerifier
 
 from .resource_versions import KINDS
 from .resources import (
     InitializationLimit,
+    ResourceBindingMissing,
     ResourceUnavailable,
     UserResourceStore,
     get_resource_store,
+    read_list_bindings,
+    read_list_catalogue,
 )
 
 MAX_BODY_BYTES = 131_072
@@ -315,11 +316,9 @@ def catalogue(request: Request, principal: Principal, store: Store):
     kind = query_kind(request)
     selected = (kind,) if kind else tuple(sorted(principal.resource_kinds))
     try:
-        items = store.read(principal.owner_uid, selected)
         return {
             "contractVersion": CONTRACT_VERSION,
-            "items": list(items.values()),
-            "readAt": iso_time(time.time()),
+            **read_list_catalogue(store, principal.owner_uid, selected),
         }
     except ResourceUnavailable as error:
         raise HTTPException(503) from error
@@ -337,16 +336,14 @@ async def read_current_metadata(request, principal, store, *, states=False):
     if kind is not None and set(selected) != {kind}:
         raise HTTPException(403)
     try:
-        current = await run_in_threadpool(store.read, principal.owner_uid, selected)
+        items, observed = await run_in_threadpool(
+            read_list_bindings, store, principal.owner_uid, refs
+        )
+    except ResourceBindingMissing as error:
+        raise HTTPException(404) from error
     except ResourceUnavailable as error:
         raise HTTPException(503) from error
-    # Each ref/incarnation is compared against the current signed-owner store;
-    # foreign owner and absent/old-incarnation requests share one failure.
-    if any(current[ref["kind"]]["ref"] != ref for ref in refs):
-        raise HTTPException(404)
-    items = [current[ref["kind"]] for ref in refs]
     if states:
-        observed = iso_time(time.time())
         items = [
             {
                 "ref": item["ref"],

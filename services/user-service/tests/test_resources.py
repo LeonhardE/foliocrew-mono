@@ -25,11 +25,14 @@ from app.resources import (
     MAX_INITIALIZATION_OPERATIONS,
     FirestoreUserResourceStore,
     InitializationLimit,
+    ResourceBindingMissing,
     ResourceUnavailable,
     SQLiteUserResourceStore,
     create_resource_store,
     get_resource_store,
     initialization_key,
+    read_list_bindings,
+    read_list_catalogue,
 )
 from app.watchlist import SQLiteWatchlistStore, WatchlistUnavailable
 from folioview_shared.auth import CurrentUser, require_google_user
@@ -121,6 +124,24 @@ class ResourceStoreTests(unittest.TestCase):
         self.assertEqual(
             self.resources.read(UID, ("channel_follows",))["channel_follows"]["revision"], 1
         )
+
+    def test_local_metadata_reads_match_current_owner_and_exact_incarnations(self):
+        kinds = ("channel_follows", "watchlist")
+        self.seed_legacy()
+        before = read_list_catalogue(self.resources, UID, kinds)
+        self.assertEqual([item["state"] for item in before["items"]], ["uninitialized"] * 2)
+        self.assertTrue(all(item["ref"] is None for item in before["items"]))
+        rows = [self.resources.initialize(UID, kind, "operation_local_read") for kind in kinds]
+        refs = [row["ref"] for row in rows]
+        with patch.object(self.resources, "read", wraps=self.resources.read) as read:
+            items, observed = read_list_bindings(self.resources, UID, refs)
+        read.assert_called_once_with(UID, kinds)
+        self.assertEqual(items, rows)
+        self.assertTrue(observed.endswith("Z"))
+        with self.assertRaises(ResourceBindingMissing):
+            read_list_bindings(self.resources, OTHER, refs)
+        with self.assertRaises(ResourceBindingMissing):
+            read_list_bindings(self.resources, UID, [{**refs[0], "incarnation": "retired"}])
 
     def test_watchlist_mutations_preserve_wire_shape_and_only_actual_changes_advance(self):
         self.assertEqual(self.watchlist.change(UID, "AAPL", watch_item()), [watch_item()])
