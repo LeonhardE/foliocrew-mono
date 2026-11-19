@@ -36,6 +36,10 @@ const RULES = {
     profile: USER_ARCHIVE_LIFECYCLE_PROFILE,
     keys: [...SCOPE, "nonce", "operationId"],
   },
+  "archive-lifecycle/advance": {
+    profile: USER_ARCHIVE_LIFECYCLE_PROFILE,
+    keys: [...SCOPE, "nonce", "operationId", "command", "archive"],
+  },
   "registry/advance": {
     profile: REGISTRY_UPDATE_PROFILE,
     keys: [...SCOPE, "operationId", "expectedVaultVersion", "registryBundle"],
@@ -51,7 +55,7 @@ const RULES = {
 } as const;
 
 const ROUTE =
-  /^\/api\/v3\/private-resources\/vaults\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})\/(recovery-evidence|registry-pages\/read|handover\/check|handover|registry-start\/read|registry\/advance|display-names\/(?:read|write)|archive-lifecycle\/read)$/;
+  /^\/api\/v3\/private-resources\/vaults\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})\/(recovery-evidence|registry-pages\/read|handover\/check|handover|registry-start\/read|registry\/advance|display-names\/(?:read|write)|archive-lifecycle\/(?:read|advance))$/;
 const HOLDINGS_ROUTE =
   /^\/api\/v3\/private-resources\/vaults\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})\/holdings-sources\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})$/;
 
@@ -88,6 +92,8 @@ export function userRecoveryRoute(path: string) {
           ? 131_072 + 2_048
           : name === "display-names/write"
             ? 12_288 + 2_048
-            : USER_RECOVERY_MAX_REQUEST,
+            : name === "archive-lifecycle/advance"
+              ? 65_536
+              : USER_RECOVERY_MAX_REQUEST,
   };
 }
