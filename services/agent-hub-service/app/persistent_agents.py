@@ -26,8 +26,15 @@ from folioview_shared.encrypted.persistent_agents import (
 from folioview_shared.encrypted.schema import validate_schema
 from folioview_shared.identity import owner_key
 
+from .native_transport import USER_AUTHORITY_TRANSITION
 from .oauth import MAX_CONNECTIONS, _row
-from .store import StoreUnavailable, document_path, require_legacy_private_writer
+from .store import (
+    StoreUnavailable,
+    document_path,
+    private_resource_writer_fence_path,
+    require_legacy_private_writer,
+)
+from .user_vault_authority import scoped_user_vaults
 from .vaults import _current, identifier
 
 MAX_IDENTITY_OPERATIONS = 2  # One enrollment and one terminal revocation.
@@ -195,8 +202,9 @@ def linked_connection(unit, owner, vault, connection, *, active=False):
 
 
 class PersistentAgentService:
-    def __init__(self, store, *, client_ids=(), clock=time.time):
+    def __init__(self, store, *, client_ids=(), clock=time.time, user_vaults=None):
         self.store, self.client_ids, self.clock = store, frozenset(client_ids), clock
+        self.user_vaults = user_vaults if user_vaults is not None else scoped_user_vaults(store)
 
     def now(self):
         value = self.clock()
@@ -208,18 +216,51 @@ class PersistentAgentService:
             raise StoreUnavailable
         return int(value)
 
-    def _context(self, unit, uid, vault_id, connection, *, active=False):
+    def _vault_registry(self, unit, owner, vault_id, user_scope):
+        if user_scope is None:
+            if (
+                owner == self.user_vaults.owner
+                and unit.get(private_resource_writer_fence_path(owner)) is not None
+            ):
+                raise ContractError("source_unavailable")
+            return _current(unit, owner, self.now(), vault_id)
+        user_scope.require_current(unit, self.now())
+        authority = user_scope.authority
+        if (authority["ownerSubject"], authority["vaultId"]) != (owner, vault_id):
+            raise ContractError("source_unavailable")
+        return {**authority, "version": authority["vaultVersion"]}, user_scope.cursor.registry
+
+    def _context(self, unit, uid, vault_id, connection, *, active=False, user_scope=None):
         owner = owner_key(uid)
-        vault, registry = _current(unit, owner, self.now(), vault_id)
+        vault, registry = self._vault_registry(unit, owner, vault_id, user_scope)
         conn = linked_connection(unit, owner, vault_id, connection, active=active)
+        if (
+            user_scope is not None
+            and conn.get(USER_AUTHORITY_TRANSITION)
+            != user_scope.writer_fence["transitionFingerprint"]
+        ):
+            raise ContractError("key_authorization_required")
         return owner, vault, registry, conn
+
+    def _receipt_owner(self, unit, uid, vault_id, connection):
+        owner = owner_key(uid)
+        if owner == self.user_vaults.owner:
+            # A receipt was committed by the original authority. Its exact
+            # stored operation and the Owner connection index bind this read.
+            linked_connection(unit, owner, vault_id, connection)
+        else:
+            self._context(unit, uid, vault_id, connection)
+        return owner
 
     def state(self, uid, vault_id, connection):
         identifier(vault_id)
         identifier(connection)
+        user_scope = self.user_vaults.read(uid, vault_id)
 
         def read(unit):
-            owner, _, _, conn = self._context(unit, uid, vault_id, connection)
+            owner, _, _, conn = self._context(
+                unit, uid, vault_id, connection, user_scope=user_scope
+            )
             row = stored_identity(unit, owner, vault_id, connection)
             return {
                 "contractVersion": CONTRACT_VERSION,
@@ -238,7 +279,7 @@ class PersistentAgentService:
         validate_schema("OperationIdentifier", operation)
 
         def read(unit):
-            owner, _, _, _ = self._context(unit, uid, vault_id, connection)
+            owner = self._receipt_owner(unit, uid, vault_id, connection)
             saved = unit.get(operation_path(owner, vault_id, operation))
             if saved is None or saved["connectionId"] != connection:
                 raise ContractError("not_found")

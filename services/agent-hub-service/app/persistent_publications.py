@@ -18,6 +18,7 @@ from folioview_shared.encrypted.persistent_content import (
 )
 from folioview_shared.encrypted.resource_consents import check_resource_consent
 from folioview_shared.encrypted.schema import validate_schema
+from folioview_shared.identity import owner_key
 
 from .fences import require_current_bindings
 from .persistent_agents import snapshot
@@ -215,7 +216,7 @@ class PersistentPublicationService(ResourceConsentService):
         validate_schema("OperationIdentifier", operation)
 
         def read(unit):
-            owner, _, _, _ = self._context(unit, uid, vault, connection)
+            owner = self._receipt_owner(unit, uid, vault, connection)
             saved = stored_publication(unit, owner, vault, operation)
             if saved is None or saved["context"]["connectionId"] != connection:
                 raise ContractError("not_found")
@@ -229,14 +230,11 @@ class PersistentPublicationService(ResourceConsentService):
     def task_state(self, uid, vault, task):
         identifier(vault)
         identifier(task)
+        user_scope = self.user_vaults.read(uid, vault)
 
         def read(unit):
-            from folioview_shared.identity import owner_key
-
-            from .vaults import _current
-
             owner = owner_key(uid)
-            _current(unit, owner, self.now(), vault)
+            self._vault_registry(unit, owner, vault, user_scope)
             return stored_task_state(unit, owner, vault, task)
 
         return self.store.transact(read)

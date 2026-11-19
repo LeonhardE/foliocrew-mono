@@ -2,13 +2,18 @@
 
 import copy
 import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import test_persistent_identity_store as identities
 from fixtures import OTHER_UID, UID
 
 from app.fences import FenceService
+from app.native_transport import USER_AUTHORITY_TRANSITION
+from app.persistent_publications import PersistentPublicationService
 from app.resource_consents import ResourceConsentService, consent_path, operation_path
-from app.store import StoreUnavailable
+from app.store import StoreUnavailable, document_path, private_resource_writer_fence_path
+from app.user_vault_authority import CurrentUserVault, ScopedUserVaults
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.resource_consents import (
@@ -60,6 +65,70 @@ class ResourceConsentStoreTests(unittest.TestCase):
 
     def state(self):
         return self.service.state(UID, self.f.vault, identities.CONNECTION)
+
+    def test_transferred_state_uses_current_proof_and_exact_local_receipt_survives_outage(self):
+        original = self.command(resources=[self.proposal()])
+        committed = self.apply(original)
+        owner, vault = self.identity["ownerSubject"], self.f.vault
+        connection = identities.CONNECTION
+        marker = {
+            "ownerSubject": owner,
+            "vaultId": vault,
+            "state": "transferred",
+            "writerEpoch": 2,
+            "rootKeyId": self.identity["rootKeyId"],
+            "transitionFingerprint": "d" * 64,
+        }
+        marker_path = private_resource_writer_fence_path(owner)
+        connection_path = document_path("hub_oauth_connections", owner, connection)
+        self.store.transact(lambda unit: unit.put(marker_path, marker))
+        authority = CurrentUserVault(
+            {"ownerSubject": owner, "vaultId": vault, "vaultVersion": 18},
+            SimpleNamespace(registry=self.f.registry),
+            marker,
+            self.now + 5,
+        )
+        client = Mock()
+        client.read.return_value = authority
+        scopes = ScopedUserVaults(self.store, owner=owner, client=client)
+        self.service.user_vaults = scopes
+        self.identities.user_vaults = scopes
+        self.rejects("key_authorization_required", self.state)
+
+        def stamp(unit):
+            before = unit.get(connection_path)
+            unit.put(
+                connection_path,
+                {**before, USER_AUTHORITY_TRANSITION: marker["transitionFingerprint"]},
+            )
+
+        self.store.transact(stamp)
+        client.reset_mock()
+        with patch("app.persistent_agents._current", side_effect=AssertionError("legacy registry")):
+            self.assertEqual(self.state()["consent"], committed["consent"])
+            self.assertEqual(
+                self.identities.state(UID, vault, connection)["identity"], self.identity
+            )
+            publications = PersistentPublicationService(
+                self.store, clock=lambda: self.now, user_vaults=scopes
+            )
+            self.assertIsNone(publications.task_state(UID, vault, "task_missing")["authority"])
+            self.assertEqual(client.read.call_count, 3)
+            client.read.side_effect = ContractError("source_unavailable")
+            with self.assertRaises(ContractError):
+                self.state()
+            receipt = self.service.receipt(UID, vault, connection, committed["operationId"])
+            self.assertEqual(receipt["fingerprint"], committed["fingerprint"])
+            self.assertEqual(client.read.call_count, 4)
+
+        def stale_read(*_):
+            self.store.transact(
+                lambda unit: unit.put(marker_path, {**marker, "transitionFingerprint": "a" * 64})
+            )
+            return authority
+
+        client.read.side_effect = stale_read
+        self.rejects("source_unavailable", self.state)
 
     def proposal(self, *, ref=None, ident="permission_A", floor=3, epoch=0):
         return {
