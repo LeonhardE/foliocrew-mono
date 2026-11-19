@@ -2,6 +2,7 @@ export const USER_RECOVERY_PROXY = "/api/private/user";
 export const USER_RECOVERY_MAX_REQUEST = 4096;
 export const RECOVERY_PROFILE = "folioview.owner-recovery-evidence.v1";
 export const REGISTRY_PAGE_PROFILE = "folioview.owner-registry-page.v1";
+export const ORIGINAL_REGISTRY_HEAD_PROFILE = "folioview.owner-original-registry-head.v1";
 export const REGISTRY_START_PROFILE = "folioview.owner-registry-start-evidence.v1";
 export const REGISTRY_UPDATE_PROFILE = "folioview.owner-registry-update.v1";
 export const HOLDINGS_REGISTRATION_PROFILE = "folioview.owner-holdings-registration.v1";
@@ -24,6 +25,10 @@ export const REGISTRY_PAGE_KEYS = [...SCOPE, "base", "target"];
 const RULES = {
   "recovery-evidence": { profile: RECOVERY_PROFILE, keys: RECOVERY_KEYS },
   "registry-pages/read": { profile: REGISTRY_PAGE_PROFILE, keys: REGISTRY_PAGE_KEYS },
+  "original-registry-head/read": {
+    profile: ORIGINAL_REGISTRY_HEAD_PROFILE,
+    keys: [...SCOPE, "target"],
+  },
   "registry-start/read": { profile: REGISTRY_START_PROFILE, keys: [...SCOPE, "nonce"] },
   "key-renewals/read": {
     profile: USER_KEY_RENEWAL_PROFILE,
@@ -68,7 +73,7 @@ const RULES = {
 } as const;
 
 const ROUTE =
-  /^\/api\/v3\/private-resources\/vaults\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})\/(recovery-evidence|registry-pages\/read|registry-start\/read|registry\/advance|display-names\/(?:read|write)|archive-lifecycle\/(?:read|advance|removal)|key-renewals\/(?:read|apply))$/;
+  /^\/api\/v3\/private-resources\/vaults\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})\/(recovery-evidence|registry-pages\/read|original-registry-head\/read|registry-start\/read|registry\/advance|display-names\/(?:read|write)|archive-lifecycle\/(?:read|advance|removal)|key-renewals\/(?:read|apply))$/;
 const HOLDINGS_ROUTE =
   /^\/api\/v3\/private-resources\/vaults\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})\/holdings-sources\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})$/;
 

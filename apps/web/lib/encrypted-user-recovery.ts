@@ -2,6 +2,7 @@ import type {
   RegistryBundle,
   Signed,
   CONTRACT,
+  OWNER_ORIGINAL_REGISTRY_HEAD_PROFILE,
   OWNER_RECOVERY_PROFILE,
   OWNER_REGISTRY_PAGE_PROFILE,
 } from "./encrypted-types";
@@ -26,6 +27,11 @@ export type OwnerRecoveryRequest = RecoveryScope & {
 export type OwnerRegistryPageRequest = RecoveryScope & {
   profile: typeof OWNER_REGISTRY_PAGE_PROFILE;
   base: PrivateRegistryHead | null;
+  target: PrivateRegistryHead;
+};
+
+export type OriginalRegistryHeadRequest = RecoveryScope & {
+  profile: typeof OWNER_ORIGINAL_REGISTRY_HEAD_PROFILE;
   target: PrivateRegistryHead;
 };
 

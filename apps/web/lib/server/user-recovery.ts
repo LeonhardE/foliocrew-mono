@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { displayNameResponse } from "../display-name-contract";
 import {
   HOLDINGS_REGISTRATION_PROFILE,
+  ORIGINAL_REGISTRY_HEAD_PROFILE,
   OWNER_CURRENT_PROFILE,
   PRIVATE_DISPLAY_NAME_PROFILE,
   RECOVERY_PROFILE,
@@ -92,6 +93,8 @@ function validRequest(
     return false;
 
   if (rule.profile === REGISTRY_START_PROFILE) return matches(value.nonce, NONCE);
+  if (rule.profile === ORIGINAL_REGISTRY_HEAD_PROFILE)
+    return head(value.target) && value.target.registryEpoch === 1;
   if (rule.profile === OWNER_CURRENT_PROFILE) return matches(value.nonce, NONCE);
   if (rule.profile === USER_KEY_RENEWAL_PROFILE) {
     if (!matches(value.nonce, NONCE)) return false;
@@ -559,6 +562,12 @@ function validReply(body: unknown, input: Json, expectedDigest: string) {
       return validEvidence(body, expectedDigest);
     case REGISTRY_START_PROFILE:
       return validRegistryStart(body, input);
+    case ORIGINAL_REGISTRY_HEAD_PROFILE:
+      return (
+        fields(body, [...SCOPE_FIELDS, "target", "bundle"]) &&
+        sameHead(body.target, input.target) &&
+        registryBundle(body.bundle)
+      );
     default:
       return validPage(body, input);
   }
@@ -617,6 +626,7 @@ export function createUserRecoveryProxy(options: Options = {}) {
       if (input.ownerSubject !== digest(uid)) fail("not_found");
       if (
         rule.profile === OWNER_CURRENT_PROFILE ||
+        rule.profile === ORIGINAL_REGISTRY_HEAD_PROFILE ||
         rule.profile === PRIVATE_DISPLAY_NAME_PROFILE ||
         rule.profile === USER_ARCHIVE_LIFECYCLE_PROFILE ||
         rule.profile === USER_KEY_RENEWAL_PROFILE
@@ -652,6 +662,8 @@ export function createUserRecoveryProxy(options: Options = {}) {
         fail("authorization_unavailable");
       if (rule.profile === OWNER_CURRENT_PROFILE && response.status === 404)
         fail("authorization_unavailable");
+      if (rule.profile === ORIGINAL_REGISTRY_HEAD_PROFILE && response.status === 404)
+        fail("not_found");
       // These closed evidence fields are ASCII strings. Sorting the top-level
       // keys gives the exact UTF-8 canonical input hashed by User.
       const expectedDigest =
