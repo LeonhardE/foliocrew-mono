@@ -5,8 +5,10 @@ from pydantic import ValidationError
 from folioview_shared.encrypted.budgets import check_read_response
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
 from folioview_shared.encrypted.errors import ContractError
-from folioview_shared.encrypted.jsonutil import canonical_json
+from folioview_shared.encrypted.jsonutil import canonical_json, strict_json_loads
+from folioview_shared.encrypted.legacy_archive import validate_passkey_archive
 from folioview_shared.encrypted.private_resources import (
+    PRIVATE_AUTHORITY_PROFILE,
     private_authority_lookup,
     source_index_digest,
 )
@@ -19,6 +21,8 @@ from .recovery import COLLECTION as HEADS
 from .report_sources import HOLDINGS_FENCES, HoldingsFence, holdings_fence_key
 from .source_invalidations import SOURCE_INDEX
 from .source_registrations import _matches_current, current_registry
+
+OWNER_CURRENT_PROFILE = "folioview.owner-current-user-vault.v1"
 
 
 def _recipient_keys(registry, now):
@@ -48,6 +52,69 @@ def _recipient_keys(registry, now):
 class PrivateAuthorityViews:
     def __init__(self, store):
         self.cutover = UserAuthorityCutover(store)
+
+    def owner_current(self, uid, nonce, *, now):
+        """Read the original sealed archive together with only current authority."""
+        self.cutover._named_store()
+        owner = owner_key(uid)
+        head = self.cutover._read(((HEADS, owner),))[0]
+        if head is None or head.get("handover") is None:
+            raise ContractError("not_found")
+        vault_id = head["vaultId"]
+        lookup = self.lookup(
+            uid,
+            {
+                "contractVersion": CONTRACT_VERSION,
+                "profile": PRIVATE_AUTHORITY_PROFILE,
+                "consumer": "hub",
+                "ownerSubject": owner,
+                "vaultId": vault_id,
+                "sourceId": None,
+                "minimumRegistryEpoch": head["registryStart"]["registryEpoch"],
+                "nonce": nonce,
+            },
+            now=now,
+        )["authority"]
+        baseline = self.cutover.verifier.baselines.read(
+            owner, vault_id, head["handover"]["baselineDigest"]
+        )
+        if baseline is None:
+            raise ContractError("source_unavailable")
+        original = strict_json_loads(baseline)
+        archive = original["archive"]
+        root = lookup["rootKeyId"]
+        validate_passkey_archive(archive, owner=owner, vault=vault_id, root=root)
+        if lookup["archive"] != original["archiveBoundary"] or lookup["archive"]["digest"] != _sha(
+            canonical_json(archive)
+        ):
+            raise ContractError("source_unavailable")
+        result = {
+            "contractVersion": CONTRACT_VERSION,
+            "profile": OWNER_CURRENT_PROFILE,
+            "ownerSubject": owner,
+            "nonce": nonce,
+            "vault": {
+                "vaultId": vault_id,
+                "rootKeyId": root,
+                "rootJwk": lookup["rootJwk"],
+                "version": lookup["vaultVersion"],
+                "archive": archive,
+                "registryHistory": lookup["registryHistory"],
+            },
+            "proof": {
+                key: lookup[key]
+                for key in (
+                    "registry",
+                    "registryStart",
+                    "signedTransition",
+                    "archive",
+                    "sourcesDigest",
+                    "sources",
+                )
+            },
+        }
+        check_read_response(result)
+        return result
 
     def lookup(self, uid, request, *, now):
         checked = private_authority_lookup(request)
