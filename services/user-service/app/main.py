@@ -9,6 +9,7 @@ from folioview_shared.http import create_app
 
 from .channel_follows import router as channel_follows_router
 from .fx_follows import router as fx_follows_router
+from .private_resources.api import internal as private_resource_internal_router
 from .private_resources.api import router as private_resources_router
 from .resource_api import V2MetadataErrors
 from .resource_api import internal as metadata_router
@@ -28,6 +29,7 @@ app.include_router(fx_follows_router)
 app.include_router(initialization_router)
 app.include_router(metadata_router)
 app.include_router(private_resources_router)
+app.include_router(private_resource_internal_router)
 
 
 @app.get("/health")

@@ -49,3 +49,18 @@ epoch and sequence. An import stages immutable bundles before publishing the
 recovery head. An exact replay leaves the original bytes intact. The head issuer
 must verify that the complete required prefix has been staged before publishing
 its target. Exempt the opaque `entry` field from indexing on the destination.
+
+## Report source decisions
+
+The internal report decision route verifies the two Hub credentials against the
+exact report attempt. In one bounded User transaction it reads the current
+account vault, current watchlist and channel metadata pairs, and the exact
+holdings fences referenced by the attempt. The response contains only the
+private resource contract's decision and its attempt digest.
+
+`USER_REPORT_SOURCE_DECISIONS=true` enables the route. In Cloud Run it also
+requires the named `user-data` database. Configure a distinct
+`USER_REPORT_DELEGATION_AUDIENCE` ending in
+`/internal/v2/private-resources/report-source-decisions`. Enable after the
+authenticated holdings authority writer and revocation workflow update the
+same fences, and after verifying migration parity and rollback.

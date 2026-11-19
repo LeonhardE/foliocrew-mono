@@ -1,8 +1,13 @@
 """Small same-transaction batches; no cache or permission decision reuse."""
 
 
-def read_documents(client, transaction, references):
-    if type(references) not in {tuple, list} or not 1 <= len(references) <= 4:
+def read_documents(client, transaction, references, *, maximum=4):
+    if (
+        type(maximum) is not int
+        or not 1 <= maximum <= 13
+        or type(references) not in {tuple, list}
+        or not 1 <= len(references) <= maximum
+    ):
         raise ValueError("Invalid bounded read")
     names = [reference._document_path for reference in references]
     if any(type(name) is not str or not name for name in names) or len(set(names)) != len(names):
