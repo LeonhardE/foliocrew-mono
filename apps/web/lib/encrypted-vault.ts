@@ -8,10 +8,12 @@ import type {
   OwnerRecoveryProgress,
   OwnerRecoveryRequest,
   OwnerRecoveryTransport,
+  RegistryHandoverReceipt,
   RegistryTransitionPacket,
   RegistryTransitionReview,
 } from "./encrypted-user-recovery";
 import {
+  CONTRACT,
   VaultError,
   requireArchive,
   type ArchiveDeletionPacket,
@@ -537,6 +539,7 @@ export class EncryptedVaultSession {
     this.assert(g);
     try {
       await this.storage.commitVault(this.owner, record);
+      await this.finishUserHandover(vault);
     } catch (error) {
       this.lock();
       throw error;
@@ -759,6 +762,136 @@ export class EncryptedVaultSession {
     } finally {
       if (material.secret.byteLength) new Uint8Array(material.secret).fill(0);
     }
+  }
+
+  private userHandoverKey(vaultId: string) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(vaultId)) throw new VaultError("invalid_data");
+    return `${this.owner}:user-handover:${vaultId}`;
+  }
+
+  async pendingUserHandover(vault: Vault): Promise<RegistryTransitionPacket | null> {
+    const g = this.generation;
+    await this.started;
+    this.assert(g);
+    const row = await this.storage.get(this.userHandoverKey(vault.vaultId));
+    this.assert(g);
+    if (!row) return null;
+    if (
+      row.ownerSubject !== this.owner ||
+      row.rootKeyId !== vault.rootKeyId ||
+      row.vaultId !== vault.vaultId ||
+      !row.pending ||
+      !/^[A-Za-z0-9_-]{22,128}$/.test(row.pending.operationId)
+    )
+      throw new VaultError("untrusted_vault");
+    return row.pending;
+  }
+
+  async stageUserHandover(
+    vault: Vault,
+    review: RegistryTransitionReview,
+    material: PasskeyMaterial,
+  ) {
+    try {
+      return await this.serial(async () => {
+        const g = this.generation;
+        if (vault.vaultId !== review.vaultId || vault.rootKeyId !== review.rootKeyId)
+          throw new VaultError("untrusted_vault");
+        if (await this.pendingUserHandover(vault)) throw new VaultError("operation_conflict");
+        const packet = await this.signUserRegistryTransition(review, material);
+        this.assert(g);
+        if (
+          !(await this.storage.insert(this.userHandoverKey(vault.vaultId), {
+            ownerSubject: this.owner,
+            vaultId: vault.vaultId,
+            rootKeyId: vault.rootKeyId,
+            pending: packet,
+          }))
+        )
+          throw new VaultError("operation_conflict");
+        this.assert(g);
+        return packet;
+      });
+    } finally {
+      if (material.secret.byteLength) new Uint8Array(material.secret).fill(0);
+    }
+  }
+
+  async submitUserHandover(
+    vault: Vault,
+    send: (packet: RegistryTransitionPacket, signal: AbortSignal) => Promise<unknown>,
+    signal?: AbortSignal,
+  ): Promise<RegistryHandoverReceipt> {
+    return this.serial(async () => {
+      const g = this.generation;
+      const active = AbortSignal.any([this.lifetime.signal, ...(signal ? [signal] : [])]);
+      active.throwIfAborted();
+      const packet = await this.pendingUserHandover(vault);
+      if (!packet) throw new VaultError("operation_conflict");
+      const signed = packet.signedTransition;
+      const bytes = new TextEncoder().encode(`${signed.protected}.${signed.payload}`);
+      const digest = Array.from(
+        new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
+        (value) => value.toString(16).padStart(2, "0"),
+      ).join("");
+      let transition: {
+        nextHead: RegistryHandoverReceipt["registryStart"];
+        nextVaultVersion: number;
+      };
+      try {
+        transition = JSON.parse(atob(signed.payload.replace(/-/g, "+").replace(/_/g, "/")));
+      } catch {
+        throw new VaultError("untrusted_vault");
+      }
+      active.throwIfAborted();
+      const result = await send(packet, active);
+      active.throwIfAborted();
+      this.assert(g);
+      const receipt = result as RegistryHandoverReceipt | null;
+      if (
+        !receipt ||
+        receipt.contractVersion !== CONTRACT ||
+        receipt.profile !== "folioview.owner-handover.v1" ||
+        receipt.ownerSubject !== this.owner ||
+        receipt.vaultId !== vault.vaultId ||
+        receipt.rootKeyId !== vault.rootKeyId ||
+        receipt.operationId !== packet.operationId ||
+        receipt.transitionFingerprint !== digest ||
+        receipt.writerEpoch !== 2 ||
+        receipt.nextVaultVersion !== transition.nextVaultVersion ||
+        !sameEncryptedRecord(receipt.registryStart, transition.nextHead)
+      )
+        throw new VaultError("untrusted_vault");
+      return receipt;
+    });
+  }
+
+  private async finishUserHandover(vault: Vault) {
+    const authority = vault.userAuthority;
+    if (!authority) return;
+    const g = this.generation;
+    const pending = await this.pendingUserHandover(vault);
+    if (!pending) return;
+    const pin = await this.storage.get(this.owner + ":pin");
+    this.assert(g);
+    if (
+      !sameEncryptedRecord(pending.signedTransition, authority.signedTransition) ||
+      pin?.ownerSubject !== this.owner ||
+      pin.vaultId !== vault.vaultId ||
+      pin.rootKeyId !== vault.rootKeyId ||
+      pin.registryEpoch !== authority.registry.registryEpoch ||
+      pin.registrySequence !== authority.registry.registrySequence ||
+      pin.checkpointDigest !== authority.registry.checkpointDigest
+    )
+      throw new VaultError("untrusted_vault");
+    if (
+      !(await this.storage.removeOperation(
+        this.userHandoverKey(vault.vaultId),
+        pending.operationId,
+      ))
+    )
+      throw new VaultError("operation_conflict");
+    this.assert(g);
   }
   async verifyUserRecovery(
     transport: OwnerRecoveryTransport,
@@ -1297,6 +1430,7 @@ export class EncryptedVaultSession {
     this.assert(g);
     try {
       await this.storage.commitVault(this.owner, record);
+      await this.finishUserHandover(vault);
     } catch (error) {
       this.lock();
       throw error;

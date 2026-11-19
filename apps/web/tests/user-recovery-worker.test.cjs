@@ -352,6 +352,76 @@ test("the original Passkey opens a transferred vault and upgrades the stored reg
   });
 });
 
+test("an uncertain handover resumes the original signed packet after lock", async () => {
+  await browser.withDatabase(async (db) => {
+    const { session, storage, state, uid, vault, material, h } = await initialize(db);
+    await session.verifyLifecycle(vault, state);
+    const review = await session.reviewUserRegistryTransition(state);
+    const packet = await session.stageUserHandover(vault, review, material());
+    const seen = [];
+    const original = decoded(packet.signedTransition);
+    const digest = await h.core.sha(
+      `${packet.signedTransition.protected}.${packet.signedTransition.payload}`,
+    );
+    await assert.rejects(
+      session.submitUserHandover(vault, async (value) => {
+        seen.push(value);
+        throw new Error("response lost");
+      }),
+      /response lost/,
+    );
+    session.lock();
+
+    const reload = db.client(uid, storage);
+    assert.deepEqual(await reload.pendingUserHandover(vault), packet);
+    const receipt = {
+      contractVersion: original.contractVersion,
+      profile: "folioview.owner-handover.v1",
+      ownerSubject: original.ownerSubject,
+      vaultId: original.vaultId,
+      rootKeyId: original.rootKeyId,
+      operationId: packet.operationId,
+      baselineDigest: "a".repeat(64),
+      transitionFingerprint: digest,
+      nextVaultVersion: original.nextVaultVersion,
+      registryStart: original.nextHead,
+      writerEpoch: 2,
+    };
+    await assert.rejects(
+      reload.submitUserHandover(vault, async () => ({
+        ...receipt,
+        transitionFingerprint: "b".repeat(64),
+      })),
+      /untrusted_vault/,
+    );
+    assert.deepEqual(
+      await reload.submitUserHandover(vault, async (value) => {
+        seen.push(value);
+        return receipt;
+      }),
+      receipt,
+    );
+    assert.deepEqual(seen, [packet, packet]);
+    assert.deepEqual(await reload.pendingUserHandover(vault), packet);
+    const current = {
+      ...vault,
+      version: receipt.nextVaultVersion,
+      registryHistory: [packet.firstBundle],
+      userAuthority: {
+        signedTransition: packet.signedTransition,
+        registry: receipt.registryStart,
+        registryStart: receipt.registryStart,
+        archive: original.archive,
+        sourcesDigest: await h.core.sha(h.core.canonical([])),
+        sources: [],
+      },
+    };
+    assert.equal((await reload.unlock(current, material())).needsDeviceRegistration, false);
+    await reload.acceptVault(current);
+    assert.equal(await reload.pendingUserHandover(current), null);
+  });
+});
+
 test("Worker verifies the fresh User epoch against the original pinned Root, archive and nonce", async () => {
   await browser.withDatabase(async (db) => {
     const { session, state, vault, storage, evidence, material } = await initialize(db);

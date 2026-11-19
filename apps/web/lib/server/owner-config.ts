@@ -13,6 +13,10 @@ export function ownerCapabilities(env: NodeJS.ProcessEnv = process.env) {
       /^[a-f0-9]{64}$/.test(env.FOLIOVIEW_USER_CURRENT_OWNER ?? "")
         ? { userVault: true }
         : {}),
+      ...(env.FOLIOVIEW_USER_OWNER_ENABLED === "true" &&
+      /^[a-f0-9]{64}$/.test(env.FOLIOVIEW_USER_HANDOVER_OWNER ?? "")
+        ? { userHandover: true }
+        : {}),
     },
   };
 }

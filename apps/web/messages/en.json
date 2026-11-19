@@ -1107,6 +1107,12 @@
     "sharedUnlockHelp": "Library unlocked for Resources, Tasks, Agent, Inbox and Settings.",
     "lockWorkspace": "Lock all private pages",
     "advancedTitle": "Sensitive actions",
+    "userHandoverTitle": "Move vault authority to User",
+    "userHandoverReview": "Check transfer readiness",
+    "userHandoverScope": "Vault {vault} will keep {keys} active device and recovery keys.",
+    "userHandoverConfirm": "Confirm with original passkey",
+    "userHandoverRetry": "Resume the signed transfer",
+    "userHandoverInstalled": "User accepted the signed transfer. The vault is locked while the service switch is verified.",
     "validUntil": "Valid until {date}",
     "numberedDevice": "Device {number}"
   },
