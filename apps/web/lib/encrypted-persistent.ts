@@ -52,7 +52,7 @@ type Context = {
   deviceSigningKeyId: string;
   now: () => number;
   reader: (ids: string[]) => Promise<CryptoKey>;
-  userRegistry?: (bundles: RegistryBundle[], at: number) => Promise<Registry>;
+  userRegistry?: (successors: RegistryBundle[], at: number) => Promise<Registry>;
 };
 export class PersistentOwner {
   constructor(private readonly ctx: Context) {}
@@ -63,7 +63,7 @@ export class PersistentOwner {
     if (!bundles.length) fail();
     const v = this.ctx.vault;
     if (this.ctx.userRegistry && same(bundles[0], v.registryHistory[0]))
-      return this.ctx.userRegistry(bundles, at);
+      return this.ctx.userRegistry(bundles.slice(1), at);
     const last = parsed(bytes(bundles.at(-1)!.checkpoint.payload), true);
     if (bundles.length > 32 || last.registrySequence !== bundles.length) fail();
     return new Registry({

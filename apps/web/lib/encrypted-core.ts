@@ -3629,27 +3629,31 @@ export class VaultCore {
 
   private async verifiedRegistryPrefix(
     vault: Vault,
-    bundles: RegistryBundle[],
+    successors: RegistryBundle[],
     at: number,
   ): Promise<Registry[]> {
-    if (bundles.length < 1 || bundles.length > (vault.userAuthority ? 129 : 32))
+    if (successors.length >= (vault.userAuthority ? 129 : 32))
       throw new VaultError("registry_conflict");
-    const snapshot = structuredClone(bundles);
+    const bundles = structuredClone(successors);
     const owner = await this.owner;
     const verify = await registryBundleVerifier(vault.rootJwk);
-    const history: Registry[] = [];
-    if (vault.userAuthority) {
-      if (!equal(snapshot[0], vault.registryHistory[0])) throw new VaultError("registry_conflict");
-      const { first } = await this.verifyUserVaultStart(vault, owner, verify);
-      if (first.checkpoint.issuedAt > at) throw new VaultError("registry_conflict");
-      history.push(first);
-    }
-    for (const bundle of snapshot.slice(history.length)) {
-      const previous = history.at(-1);
-      const current = await verify(bundle, owner, vault.vaultId, previous, at);
-      if (!previous && current.checkpoint.registrySequence !== 1)
+    // The first bundle always comes from the verified vault. An operation
+    // supplies only successors and cannot choose a separate registry start.
+    const first = vault.userAuthority
+      ? (await this.verifyUserVaultStart(vault, owner, verify)).first
+      : await verify(vault.registryHistory[0], owner, vault.vaultId, undefined, at);
+    if (
+      first.checkpoint.issuedAt > at ||
+      (!vault.userAuthority && first.checkpoint.registrySequence !== 1)
+    )
+      throw new VaultError("registry_conflict");
+    const history = [first];
+    for (const bundle of bundles) {
+      const previous = history.at(-1)!;
+      const next = await verify(bundle, owner, vault.vaultId, previous, at);
+      if (next.checkpoint.registrySequence !== previous.checkpoint.registrySequence + 1)
         throw new VaultError("registry_conflict");
-      history.push(current);
+      history.push(next);
     }
     return history;
   }
@@ -3663,12 +3667,12 @@ export class VaultCore {
   }
 
   private async registryAt(vault: Vault, sequence: number) {
-    const prefix = vault.registryHistory.slice(0, this.registryIndex(vault, sequence) + 1);
-    return (await this.verifiedRegistryPrefix(vault, prefix, this.now())).at(-1)!;
+    const successors = vault.registryHistory.slice(1, this.registryIndex(vault, sequence) + 1);
+    return (await this.verifiedRegistryPrefix(vault, successors, this.now())).at(-1)!;
   }
 
-  private async persistentUserRegistry(vault: Vault, bundles: RegistryBundle[], at: number) {
-    const history = await this.verifiedRegistryPrefix(vault, bundles, at);
+  private async persistentUserRegistry(vault: Vault, successors: RegistryBundle[], at: number) {
+    const history = await this.verifiedRegistryPrefix(vault, successors, at);
     const last = history.at(-1)!;
     const registry = new SharedRegistry({
       ownerSubject: await this.owner,
@@ -7564,7 +7568,7 @@ export class VaultCore {
     resultRequire(matching.length === 1);
     const history = await this.verifiedRegistryPrefix(
       vault,
-      vault.registryHistory.slice(0, matching[0].i + 1),
+      vault.registryHistory.slice(1, matching[0].i + 1),
       written,
     );
     const historical = history.at(-1)!,
