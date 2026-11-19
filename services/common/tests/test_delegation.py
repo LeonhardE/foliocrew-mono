@@ -15,6 +15,7 @@ from test_service_identity import AUDIENCE, EMAIL, NOW, SUBJECT, GoogleIdentityF
 from folioview_shared.delegated_keys import KeyCache
 from folioview_shared.delegation import (
     DELEGATION_TYPE,
+    PRIVATE_AUTHORITY_DELEGATION_TYPE,
     REPORT_DELEGATION_TYPE,
     CatalogueRequirement,
     DelegatedPrincipal,
@@ -26,7 +27,9 @@ from folioview_shared.delegation import (
     make_delegation_dependency,
     make_service_identity_dependency,
 )
+from folioview_shared.encrypted.constants import CONTRACT_VERSION
 from folioview_shared.encrypted.jsonutil import canonical_json
+from folioview_shared.encrypted.private_resources import PRIVATE_AUTHORITY_PROFILE
 from folioview_shared.http import create_app
 from folioview_shared.identity import owner_key
 from folioview_shared.service_identity import GoogleCallerVerifier, ServiceCaller
@@ -230,6 +233,84 @@ class ReportAttemptDelegationTests(DelegationTestCase):
                 requirement=self.f.requirement(),
             )
         self.assertEqual(other_route.exception.code, "invalid_credentials")
+
+
+class PrivateAuthorityDelegationTests(DelegationTestCase):
+    def setUp(self):
+        super().setUp()
+        self.request = {
+            "contractVersion": CONTRACT_VERSION,
+            "profile": PRIVATE_AUTHORITY_PROFILE,
+            "consumer": "portfolio",
+            "ownerSubject": owner_key("owner_A"),
+            "vaultId": "vault_A",
+            "sourceId": "holdings_A",
+            "minimumRegistryEpoch": 2,
+            "nonce": "synthetic_authority_nonce_0001",
+        }
+
+    def claims(self, request, **changes):
+        return self.f.base(
+            **{
+                "purpose": "private_authority_read",
+                "jti": request["nonce"],
+                "requestDigest": hashlib.sha256(canonical_json(request)).hexdigest(),
+                **changes,
+            }
+        )
+
+    def verify_authority(
+        self, request, *, claims=None, consumer="portfolio", typ=PRIVATE_AUTHORITY_DELEGATION_TYPE
+    ):
+        return self.f.verifier.verify_private_authority_read(
+            self.f.service_token(),
+            self.f.sign(self.claims(self.request) if claims is None else claims, typ=typ),
+            request=request,
+            consumer=consumer,
+        )
+
+    def test_only_exact_owner_consumer_epoch_and_source_are_bound(self):
+        self.assertEqual(self.verify_authority(self.request), "owner_A")
+        hub = {**self.request, "consumer": "hub", "sourceId": None}
+        self.assertEqual(
+            self.verify_authority(hub, claims=self.claims(hub), consumer="hub"), "owner_A"
+        )
+        for fields in (
+            {"ownerSubject": owner_key("owner_B")},
+            {"sourceId": "holdings_B"},
+            {"minimumRegistryEpoch": 3},
+            {"nonce": "synthetic_authority_nonce_0002"},
+        ):
+            with self.subTest(fields=fields), self.assertRaises(DelegationError) as denied:
+                self.verify_authority(self.request | fields)
+            self.assertEqual(denied.exception.code, "permission_denied")
+        with self.assertRaises(DelegationError) as denied:
+            self.verify_authority(self.request, consumer="hub")
+        self.assertEqual(denied.exception.code, "permission_denied")
+
+    def test_legacy_tokens_expiry_and_malformed_authority_fields_never_authorize(self):
+        for typ in (DELEGATION_TYPE, REPORT_DELEGATION_TYPE):
+            with self.subTest(typ=typ), self.assertRaises(DelegationError) as denied:
+                self.verify_authority(self.request, typ=typ)
+            self.assertEqual(denied.exception.code, "invalid_credentials")
+        for fields in (
+            {"minimumRegistryEpoch": 1},
+            {"minimumRegistryEpoch": 2.0},
+            {"sourceId": None},
+            {"privateField": "synthetic_unknown_field"},
+        ):
+            candidate = self.request | fields
+            with self.subTest(fields=fields), self.assertRaises(DelegationError) as denied:
+                self.verify_authority(candidate, claims=self.claims(candidate))
+            self.assertEqual(denied.exception.code, "invalid_credentials")
+        with self.assertRaises(DelegationError) as denied:
+            self.verify_authority(self.request, claims=self.claims(self.request, exp=NOW))
+        self.assertEqual(denied.exception.code, "invalid_credentials")
+        with self.assertRaises(DelegationError) as denied:
+            self.verify_authority(
+                self.request, claims=self.claims(self.request, caller=OTHER_EMAIL)
+            )
+        self.assertEqual(denied.exception.code, "permission_denied")
 
 
 class DelegationVerificationTests(DelegationTestCase):

@@ -22,6 +22,7 @@ from .errors import ContractError
 from .jsonutil import canonical_json
 from .schema import load_schema
 
+PRIVATE_AUTHORITY_PROFILE = "folioview.private-authority-read.v1"
 REPORT_PROFILE = "folioview.report-source-authorization.v1"
 RECOVERY_PROFILE = "folioview.owner-recovery-evidence.v1"
 REPORT_PERMIT_SECONDS = 30
@@ -55,6 +56,18 @@ def _validate(name: str, value, *, limit=MAX_CONTEXT_BYTES):
     if not _validator(name).is_valid(value):
         raise ContractError("malformed_request")
     return copy.deepcopy(value)
+
+
+def private_authority_lookup(value: dict) -> dict:
+    """Bind a current-vault or exact Portfolio source lookup to one checked consumer."""
+    if (
+        type(value) is not dict
+        or type(value.get("minimumRegistryEpoch")) is not int
+        or type(value.get("ownerSubject")) is not str
+        or len(value["ownerSubject"]) != 64
+    ):
+        raise ContractError("malformed_request")
+    return _validate("PrivateAuthorityLookup", value, limit=4096)
 
 
 def _digest(value) -> str:
