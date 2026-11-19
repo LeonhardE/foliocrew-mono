@@ -152,7 +152,7 @@ class ArchiveDeletionTests(unittest.TestCase):
             )
         self.assertIsNone(self.state()["archive"])
 
-    @patch("app.vault_lifecycle.MAX_LIFECYCLE_OPERATIONS", 3)
+    @patch("folioview_shared.encrypted.legacy_archive.MAX_LIFECYCLE_OPERATIONS", 3)
     def test_fresh_independent_recovery_restores_same_root_and_delete_replay_is_read_only(self):
         original = self.state()
         delete_body = self.f.delete(original)
@@ -218,7 +218,7 @@ class ArchiveDeletionTests(unittest.TestCase):
         self.assertIsNone(self.vaults.current(UID)["vault"]["archive"])
 
     def test_delete_reserves_two_slots_for_fresh_recovery(self):
-        with patch("app.vault_lifecycle.MAX_LIFECYCLE_OPERATIONS", 4):
+        with patch("folioview_shared.encrypted.legacy_archive.MAX_LIFECYCLE_OPERATIONS", 4):
             for index in (1, 2):
                 state = self.state()
                 operation = f"synthetic_capacity_replace_{index:04}"

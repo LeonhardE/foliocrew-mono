@@ -8,6 +8,7 @@ import math
 import time
 from collections.abc import Mapping
 
+from folioview_shared.encrypted import legacy_archive
 from folioview_shared.encrypted.authority import verify_registry
 from folioview_shared.encrypted.budgets import check_read_response
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
@@ -18,20 +19,7 @@ from folioview_shared.encrypted.schema import validate_schema
 from folioview_shared.identity import owner_key
 
 from .store import StoreUnavailable, document_path
-from .vault_lifecycle import (
-    MAX_COMMAND_BYTES,
-    MAX_LIFECYCLE_OPERATIONS,
-    VaultLifecycleService,
-    _advance,
-    _digest,
-    _history_state,
-)
-from .vault_lifecycle import (
-    _payload as archive_payload,
-)
-from .vault_lifecycle import (
-    _receipt as archive_receipt,
-)
+from .vault_lifecycle import VaultLifecycleService, _digest, _history_state
 from .vaults import (
     MAX_HISTORY,
     MAX_OPERATIONS,
@@ -101,7 +89,7 @@ def _plain(value):
 
 
 def _payload(command, row):
-    if len(canonical_json(command)) > MAX_COMMAND_BYTES:
+    if len(canonical_json(command)) > legacy_archive.MAX_COMMAND_BYTES:
         raise ContractError("payload_too_large")
     p = verify_jws(command, row["rootJwk"], typ="fv-control+jws", expected_kid=row["rootKeyId"])
     if set(p) != _FIELDS:
@@ -167,7 +155,7 @@ def _payload(command, row):
 
 
 def _commands(p, command, row):
-    ap = archive_payload(command, row)
+    ap = legacy_archive.verify_legacy_archive_command(command, row)
     if (
         ap["action"] != "archive_replace"
         or ap["mode"] != "rewrap"
@@ -489,7 +477,7 @@ class VaultKeyRenewalService:
             if (
                 len(row["registryHistory"]) >= MAX_HISTORY
                 or row["operationCount"] >= MAX_OPERATIONS
-                or state["version"] >= MAX_LIFECYCLE_OPERATIONS
+                or state["version"] >= legacy_archive.MAX_LIFECYCLE_OPERATIONS
             ):
                 raise ContractError("version_conflict")
             proposed = verify_registry(
@@ -516,8 +504,10 @@ class VaultKeyRenewalService:
                 "operationCount": row["operationCount"] + 1,
             }
             _verify_row(next_row, owner, now)
-            advanced = _advance(state, ap, body["archiveCommand"], now)
-            ar = archive_receipt(row, ap, advanced, body["archiveCommand"], now)
+            advanced = legacy_archive.advance_legacy_archive(state, ap, body["archiveCommand"], now)
+            ar = legacy_archive.legacy_archive_receipt(
+                row, ap, advanced, body["archiveCommand"], now
+            )
             next_lifecycle = {
                 "ownerSubject": owner,
                 "vaultId": vault,
@@ -541,8 +531,10 @@ class VaultKeyRenewalService:
             ):
                 raise ContractError("key_authorization_required")
             _delta(p, current, proposed, accepted_at)
-            advanced = _advance(state, ap, body["archiveCommand"], accepted_at)
-            next_lifecycle["history"][-1]["receipt"] = archive_receipt(
+            advanced = legacy_archive.advance_legacy_archive(
+                state, ap, body["archiveCommand"], accepted_at
+            )
+            next_lifecycle["history"][-1]["receipt"] = legacy_archive.legacy_archive_receipt(
                 row, ap, advanced, body["archiveCommand"], accepted_at
             )
             receipt = _receipt(row, p, proposed, advanced, body["command"], accepted_at)
