@@ -10,7 +10,13 @@ from urllib.parse import parse_qsl, urlsplit
 from fixtures import BOOT, OTHER_UID, UID, VaultFixture
 from test_oauth import CALLBACK, CLIENT, VERIFIER, authorization_params, configuration
 
-from app.native_transport import PROFILE, REFRESH_IDLE_SECONDS, SCOPE, NativeTransportService
+from app.native_transport import (
+    PROFILE,
+    REFRESH_IDLE_SECONDS,
+    SCOPE,
+    NativeConnectionOwnerService,
+    NativeTransportService,
+)
 from app.oauth import OAuthFailure, OAuthService
 from app.oauth_config import Client, digest
 from app.store import SQLiteHubStore, document_path
@@ -58,6 +64,44 @@ class NativeTransportTests(unittest.TestCase):
         status, tokens, _ = self.exchange(code)
         self.assertEqual(status, 200)
         return tokens
+
+    def test_frozen_owner_cannot_enroll_exchange_or_refresh_and_can_still_disconnect(self):
+        tokens = self.connect()
+        active = self.service.authenticate(tokens["access_token"])
+        approved, callback, unused_code = self.authorize()
+        pending = self.service.authorize(copy.deepcopy(self.authorize_params), BROWSER)
+        marker = document_path("hub_private_resource_writer_fences", self.f.owner)
+        self.store.transact(lambda unit: unit.put(marker, {"state": "frozen"}))
+        with self.assertRaisesRegex(ContractError, "authorization_unavailable"):
+            self.service.approve(UID, pending, BROWSER, self.f.vault)
+        self.assertEqual(self.service.approve(UID, approved, BROWSER, self.f.vault), callback)
+        self.assertEqual(self.exchange(unused_code)[0], 400)
+        with self.assertRaises(OAuthFailure):
+            self.service.authenticate(tokens["access_token"])
+        response = self.service.protocol(
+            {
+                "grant_type": "refresh_token",
+                "client_id": CLIENT,
+                "resource": self.service.config.resource,
+                "refresh_token": tokens["refresh_token"],
+            },
+            {},
+            "token",
+        )
+        self.assertEqual(response[0], 400)
+        management = NativeConnectionOwnerService(self.store, clock=lambda: self.now)
+        self.assertEqual(
+            management.native_disconnect(UID, active.connection_id)["connection"]["status"],
+            "revoked",
+        )
+
+        unrelated = VaultFixture(OTHER_UID)
+        VaultService(self.store, clock=lambda: self.now).bootstrap(
+            OTHER_UID, unrelated.bootstrap(), BOOT
+        )
+        ident = self.service.authorize(copy.deepcopy(self.authorize_params), BROWSER)
+        result = self.service.approve(OTHER_UID, ident, BROWSER, unrelated.vault)
+        self.assertEqual(self.exchange(dict(parse_qsl(urlsplit(result).query))["code"])[0], 200)
 
     def test_native_records_follow_the_issuing_resource_on_shared_storage(self):
         origin = "https://second-hub.example"
