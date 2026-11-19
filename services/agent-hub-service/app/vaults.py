@@ -13,7 +13,8 @@ from folioview_shared.encrypted.budgets import check_read_response
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
 from folioview_shared.encrypted.crypto import jwk_thumbprint, signing_input_fingerprint, verify_jws
 from folioview_shared.encrypted.errors import ContractError
-from folioview_shared.encrypted.jsonutil import b64url_decode, canonical_json
+from folioview_shared.encrypted.jsonutil import canonical_json
+from folioview_shared.encrypted.legacy_archive import validate_passkey_archive as _archive
 from folioview_shared.encrypted.schema import validate_schema
 from folioview_shared.identity import owner_key
 
@@ -38,18 +39,6 @@ _VAULT_FIELDS = frozenset(
         "operationCount",
     }
 )
-_ARCHIVE_FIELDS = frozenset(
-    {
-        "profile",
-        "ownerSubject",
-        "vaultId",
-        "rootKeyId",
-        "credentialId",
-        "prfSalt",
-        "iv",
-        "ciphertext",
-    }
-)
 
 
 def identifier(value):
@@ -60,35 +49,6 @@ def identifier(value):
 def positive(value, *, zero=False):
     if type(value) is not int or not (0 if zero else 1) <= value <= 9_007_199_254_740_991:
         raise ContractError("malformed_request")
-
-
-def _archive(value, *, owner, vault, root):
-    if type(value) is not dict or set(value) != _ARCHIVE_FIELDS:
-        raise ContractError("malformed_request")
-    if (
-        value["profile"] != "folioview.passkey-vault.v1"
-        or value["ownerSubject"] != owner
-        or value["vaultId"] != vault
-        or value["rootKeyId"] != root
-    ):
-        raise ContractError("recipient_binding_mismatch")
-    for field, minimum, maximum in (
-        ("credentialId", 1, 1536),
-        ("prfSalt", 32, 32),
-        ("iv", 12, 12),
-        ("ciphertext", 16, 24576),
-    ):
-        text = value[field]
-        if (
-            type(text) is not str
-            or (field == "credentialId" and len(text) > 2048)
-            or (field == "ciphertext" and len(text) > 32768)
-        ):
-            raise ContractError("malformed_request")
-        raw = b64url_decode(text, max_bytes=maximum)
-        if not minimum <= len(raw) <= maximum:
-            raise ContractError("malformed_request")
-    return value
 
 
 def _selection(registry, now):

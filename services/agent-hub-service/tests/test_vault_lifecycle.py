@@ -14,11 +14,12 @@ from fixtures import BOOT, OTHER_UID, SOURCE, UID
 from vault_lifecycle_fixtures import LifecycleFixture, archive_digest
 
 from app.store import SQLiteHubStore, StoreUnavailable, document_path
-from app.vault_lifecycle import MAX_LIFECYCLE_OPERATIONS, VaultLifecycleService
+from app.vault_lifecycle import VaultLifecycleService
 from app.vaults import VaultService
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import b64url_decode, b64url_encode, canonical_json
+from folioview_shared.encrypted.legacy_archive import MAX_LIFECYCLE_OPERATIONS
 from folioview_shared.identity import owner_key
 
 REPLACE = "synthetic_archive_replace_0001"
@@ -565,7 +566,7 @@ class VaultLifecycleTests(unittest.TestCase):
         self.assertEqual(len(self.state()["history"]), MAX_LIFECYCLE_OPERATIONS)
 
     def test_authorization_near_capacity_cannot_strand_an_unconsumable_grant(self):
-        with patch("app.vault_lifecycle.MAX_LIFECYCLE_OPERATIONS", 3):
+        with patch("folioview_shared.encrypted.legacy_archive.MAX_LIFECYCLE_OPERATIONS", 3):
             for index in range(2):
                 state = self.state()
                 operation = f"synthetic_reserve_slot_replace_{index:04}"
@@ -579,7 +580,7 @@ class VaultLifecycleTests(unittest.TestCase):
             self.assertIsNone(self.state()["pendingAuthorization"])
 
     def test_authorization_reserves_final_slot_for_recovery_consumption(self):
-        with patch("app.vault_lifecycle.MAX_LIFECYCLE_OPERATIONS", 3):
+        with patch("folioview_shared.encrypted.legacy_archive.MAX_LIFECYCLE_OPERATIONS", 3):
             self.replace()
             state = self.state()
             archive = self.f.archive(state, 2)
@@ -600,7 +601,7 @@ class VaultLifecycleTests(unittest.TestCase):
             self.assertEqual(self.service.receipt(UID, self.f.vault, RECOVER), response)
 
     def test_authorization_reserves_final_slot_for_explicit_revocation(self):
-        with patch("app.vault_lifecycle.MAX_LIFECYCLE_OPERATIONS", 3):
+        with patch("folioview_shared.encrypted.legacy_archive.MAX_LIFECYCLE_OPERATIONS", 3):
             self.replace()
             self.authorize(self.f.archive(self.state(), 2))
             response = self.revoke()

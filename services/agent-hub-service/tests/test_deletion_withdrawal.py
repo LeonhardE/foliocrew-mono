@@ -80,7 +80,7 @@ class DeletionWithdrawalTests(unittest.TestCase):
 
     def test_expired_exact_withdrawal_replay_recovers_receipt_without_more_capacity(self):
         body = self.f.withdraw(self.state(), self.deletion)
-        with patch("app.vault_lifecycle.MAX_LIFECYCLE_OPERATIONS", 1):
+        with patch("folioview_shared.encrypted.legacy_archive.MAX_LIFECYCLE_OPERATIONS", 1):
             receipt = self.withdraw(body)
             restarted = VaultLifecycleService(SQLiteHubStore(self.path), clock=lambda: 9000)
             self.assertEqual(

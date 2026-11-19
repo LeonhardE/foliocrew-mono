@@ -9,73 +9,18 @@ an independently retained recovery copy; Google identity cannot recreate it.
 import re
 import time
 
+from folioview_shared.encrypted import legacy_archive
 from folioview_shared.encrypted.budgets import check_read_response
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
-from folioview_shared.encrypted.crypto import signing_input_fingerprint, verify_jws
+from folioview_shared.encrypted.crypto import signing_input_fingerprint
 from folioview_shared.encrypted.errors import ContractError
-from folioview_shared.encrypted.jsonutil import b64url_decode, canonical_json, strict_json_loads
 from folioview_shared.encrypted.schema import validate_schema
 from folioview_shared.identity import owner_key
 
 from .store import StoreUnavailable, document_path
-from .vaults import _archive, _current, _fingerprint, identifier, positive
+from .vaults import _archive, _current, _fingerprint, identifier
 
-PROFILE = "folioview.vault-lifecycle.v1"
-MAX_LIFECYCLE_OPERATIONS = 32
-MAX_AUTHORIZATION_SECONDS = 300
-MAX_COMMAND_BYTES = 8192
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
-_BASE_FIELDS = frozenset(
-    {
-        "profile",
-        "contractVersion",
-        "action",
-        "ownerSubject",
-        "vaultId",
-        "rootKeyId",
-        "stableOperationId",
-        "expectedVaultVersion",
-        "expectedLifecycleVersion",
-        "expectedArchiveRevision",
-        "expectedArchiveDigest",
-        "registrySequence",
-        "checkpointDigest",
-        "keyEpoch",
-        "issuedAt",
-        "expiresAt",
-    }
-)
-_ACTION_FIELDS = {
-    "archive_replace": frozenset({"mode", "newArchiveDigest", "authorizationId"}),
-    "archive_delete": frozenset(),
-    "archive_delete_withdraw": frozenset(
-        {"deletionOperationId", "deletionCommandFingerprint", "deletionLifecycleVersion"}
-    ),
-    "recovery_authorize": frozenset({"authorizationId", "newArchiveDigest"}),
-    "recovery_revoke": frozenset({"authorizationId"}),
-}
-_RECEIPT_FIELDS = frozenset(
-    {
-        "profile",
-        "ownerSubject",
-        "vaultId",
-        "rootKeyId",
-        "operationId",
-        "action",
-        "lifecycleVersion",
-        "archiveRevision",
-        "archiveDigest",
-        "commandFingerprint",
-        "acceptedAt",
-    }
-)
-_ROW_FIELDS = frozenset({"ownerSubject", "vaultId", "rootKeyId", "initialArchiveDigest", "history"})
-_FENCE_FIELDS = (
-    "expectedVaultVersion",
-    "registrySequence",
-    "checkpointDigest",
-    "keyEpoch",
-)
 
 
 def _digest(value):
@@ -83,243 +28,19 @@ def _digest(value):
         raise ContractError("malformed_request")
 
 
-def _payload(command, vault):
-    if len(canonical_json(command)) > MAX_COMMAND_BYTES:
-        raise ContractError("payload_too_large")
-    value = verify_jws(
-        command, vault["rootJwk"], typ="fv-control+jws", expected_kid=vault["rootKeyId"]
-    )
-    action = value.get("action")
-    if (
-        type(action) is not str
-        or action not in _ACTION_FIELDS
-        or set(value) != _BASE_FIELDS | _ACTION_FIELDS[action]
-    ):
-        raise ContractError("malformed_request")
-    if value["profile"] != PROFILE:
-        raise ContractError("unsupported_profile")
-    if value["contractVersion"] != CONTRACT_VERSION:
-        raise ContractError("unsupported_contract")
-    if any(value[field] != vault[field] for field in ("ownerSubject", "vaultId", "rootKeyId")):
-        raise ContractError("recipient_binding_mismatch")
-    validate_schema("OperationIdentifier", value["stableOperationId"])
-    for field in ("expectedVaultVersion", "registrySequence", "keyEpoch", "expiresAt"):
-        positive(value[field])
-    for field in ("expectedLifecycleVersion", "expectedArchiveRevision", "issuedAt"):
-        positive(value[field], zero=True)
-    _digest(value["expectedArchiveDigest"])
-    _digest(value["checkpointDigest"])
-    if not value["issuedAt"] < value["expiresAt"] <= value["issuedAt"] + MAX_AUTHORIZATION_SECONDS:
-        raise ContractError("malformed_request")
-    if action in {"archive_replace", "recovery_authorize"}:
-        _digest(value["newArchiveDigest"])
-    if action == "archive_replace":
-        if value["mode"] not in ("rewrap", "passkey_change", "recovery"):
-            raise ContractError("malformed_request")
-        if value["mode"] != "recovery":
-            if value["authorizationId"] is not None:
-                raise ContractError("malformed_request")
-        else:
-            identifier(value["authorizationId"])
-    elif action in {"recovery_authorize", "recovery_revoke"}:
-        identifier(value["authorizationId"])
-    elif action == "archive_delete_withdraw":
-        validate_schema("OperationIdentifier", value["deletionOperationId"])
-        _digest(value["deletionCommandFingerprint"])
-        positive(value["deletionLifecycleVersion"], zero=True)
-        if value["deletionOperationId"] == value["stableOperationId"]:
-            raise ContractError("idempotency_conflict")
-    return value
-
-
-def _advance(state, payload, command, accepted_at):
-    """Apply signed public semantics both on new writes and on persisted history."""
-    if not payload["issuedAt"] <= accepted_at < payload["expiresAt"]:
-        raise ContractError("key_authorization_required")
-    if accepted_at < state["lastAcceptedAt"]:
-        raise ContractError("version_conflict")
-    if (
-        payload["expectedLifecycleVersion"] != state["version"]
-        or payload["expectedArchiveRevision"] != state["revision"]
-        or payload["expectedArchiveDigest"] != state["digest"]
-    ):
-        raise ContractError("version_conflict")
-    action = payload["action"]
-    pending = state["pending"]
-    next_state = {
-        **state,
-        "version": state["version"] + 1,
-        "lastAcceptedAt": accepted_at,
-        "lastVaultVersion": payload["expectedVaultVersion"],
-        "lastRegistrySequence": payload["registrySequence"],
-    }
-    if action == "recovery_authorize":
-        # A newly granted approval must retain one slot to consume or revoke it.
-        # The same rule is checked while authenticating stored history.
-        if state["version"] >= MAX_LIFECYCLE_OPERATIONS - 1:
-            raise ContractError("version_conflict")
-        if payload["newArchiveDigest"] == state["digest"]:
-            raise ContractError("recipient_binding_mismatch")
-        if payload["authorizationId"] in state["authorizationIds"]:
-            raise ContractError("version_conflict")
-        if pending is not None and accepted_at < pending["payload"]["expiresAt"]:
-            raise ContractError("version_conflict")
-        next_state["pending"] = {"payload": payload, "command": command}
-        next_state["authorizationIds"] = state["authorizationIds"] | {payload["authorizationId"]}
-    elif action == "recovery_revoke":
-        if pending is None or pending["payload"]["authorizationId"] != payload["authorizationId"]:
-            raise ContractError("key_authorization_required")
-        next_state["pending"] = None
-    elif action == "archive_delete":
-        # Leave room for a fresh approval and restore from independent material.
-        if (
-            state["deleted"]
-            or payload["stableOperationId"] in state["withdrawn"]
-            or state["version"] > MAX_LIFECYCLE_OPERATIONS - 3
-        ):
-            raise ContractError("version_conflict")
-        next_state.update(
-            revision=state["revision"] + 1,
-            digest=_fingerprint(None),
-            pending=None,
-            deleted=True,
-        )
-    elif action == "archive_delete_withdraw":
-        target = payload["deletionOperationId"]
-        if (
-            state["deleted"]
-            or target in state["operations"]
-            or target in state["withdrawn"]
-            or payload["deletionLifecycleVersion"] > state["version"]
-        ):
-            raise ContractError("version_conflict")
-        # This signed lifecycle advance permanently invalidates the original CAS.
-        # It preserves the archive/revision, pending recovery and all other keys.
-        next_state["withdrawn"] = {**state["withdrawn"], target: payload}
-    else:
-        if payload["newArchiveDigest"] == state["digest"]:
-            raise ContractError("recipient_binding_mismatch")
-        if payload["mode"] == "recovery":
-            if pending is None:
-                raise ContractError("key_authorization_required")
-            grant = pending["payload"]
-            if (
-                grant["authorizationId"] != payload["authorizationId"]
-                or grant["newArchiveDigest"] != payload["newArchiveDigest"]
-                or grant["expectedArchiveRevision"] != payload["expectedArchiveRevision"]
-                or grant["expectedArchiveDigest"] != payload["expectedArchiveDigest"]
-                or any(grant[field] != payload[field] for field in _FENCE_FIELDS)
-                or not grant["issuedAt"] <= payload["issuedAt"] <= accepted_at < grant["expiresAt"]
-                or payload["expiresAt"] > grant["expiresAt"]
-            ):
-                raise ContractError("key_authorization_required")
-        elif state["deleted"]:
-            raise ContractError("key_authorization_required")
-        next_state.update(
-            revision=state["revision"] + 1,
-            digest=payload["newArchiveDigest"],
-            pending=None,
-            deleted=False,
-        )
-    return next_state
-
-
-def _receipt(vault, payload, state, command, accepted_at):
-    return {
-        "profile": PROFILE,
-        "ownerSubject": vault["ownerSubject"],
-        "vaultId": vault["vaultId"],
-        "rootKeyId": vault["rootKeyId"],
-        "operationId": payload["stableOperationId"],
-        "action": payload["action"],
-        "lifecycleVersion": state["version"],
-        "archiveRevision": state["revision"],
-        "archiveDigest": state["digest"],
-        "commandFingerprint": signing_input_fingerprint(command),
-        "acceptedAt": accepted_at,
-    }
-
-
 def _history_state(vault, registry, row):
-    """Reverify the complete bounded root-approved history; corruption is unavailable."""
-    current_digest = _fingerprint(vault["archive"])
-    initial = (
-        current_digest
-        if row is None
-        else row.get("initialArchiveDigest")
-        if type(row) is dict
-        else None
-    )
-    state = {
-        "version": 0,
-        "revision": 0,
-        "digest": initial,
-        "pending": None,
-        "deleted": False,
-        "authorizationIds": set(),
-        "operations": {},
-        "withdrawn": {},
-        "lastAcceptedAt": 0,
-        "lastVaultVersion": 0,
-        "lastRegistrySequence": 0,
-    }
-    if row is None:
-        return state
     try:
-        if (
-            type(row) is not dict
-            or set(row) != _ROW_FIELDS
-            or any(row[field] != vault[field] for field in ("ownerSubject", "vaultId", "rootKeyId"))
-            or type(row["history"]) is not list
-            or not 1 <= len(row["history"]) <= MAX_LIFECYCLE_OPERATIONS
-        ):
-            raise StoreUnavailable
-        _digest(initial)
-        # _current has already verified every bundle against this pinned root.
-        checkpoints = {
-            index: strict_json_loads(b64url_decode(bundle["checkpoint"]["payload"]))
-            for index, bundle in enumerate(vault["registryHistory"], 1)
-        }
-        for item in row["history"]:
-            if type(item) is not dict or set(item) != {"command", "receipt"}:
-                raise StoreUnavailable
-            payload = _payload(item["command"], vault)
-            receipt = item["receipt"]
-            if type(receipt) is not dict or set(receipt) != _RECEIPT_FIELDS:
-                raise StoreUnavailable
-            positive(receipt["acceptedAt"], zero=True)
-            positive(receipt["lifecycleVersion"])
-            positive(receipt["archiveRevision"], zero=True)
-            if (
-                not state["lastVaultVersion"] <= payload["expectedVaultVersion"] <= vault["version"]
-                or not state["lastRegistrySequence"]
-                <= payload["registrySequence"]
-                <= registry.registry_sequence
-            ):
-                raise StoreUnavailable
-            checkpoint = checkpoints[payload["registrySequence"]]
-            if (
-                payload["checkpointDigest"] != _fingerprint(checkpoint)
-                or payload["keyEpoch"] != checkpoint["keyEpoch"]
-                or payload["stableOperationId"] in state["operations"]
-            ):
-                raise StoreUnavailable
-            advanced = _advance(state, payload, item["command"], receipt["acceptedAt"])
-            if receipt != _receipt(
-                vault, payload, advanced, item["command"], receipt["acceptedAt"]
-            ):
-                raise StoreUnavailable
-            advanced["operations"] = {**state["operations"], payload["stableOperationId"]: item}
-            state = advanced
-        if state["digest"] != current_digest or state["deleted"] != (vault["archive"] is None):
-            raise StoreUnavailable
-        return state
-    except (ContractError, KeyError, TypeError, ValueError):
+        return legacy_archive.verify_legacy_archive_history(vault, registry, row)
+    except ContractError:
         raise StoreUnavailable from None
 
 
 def _mutation_response(receipt):
-    value = {"contractVersion": CONTRACT_VERSION, "profile": PROFILE, "receipt": receipt}
+    value = {
+        "contractVersion": CONTRACT_VERSION,
+        "profile": legacy_archive.PROFILE,
+        "receipt": receipt,
+    }
     check_read_response(value)
     return value
 
@@ -369,7 +90,7 @@ class VaultLifecycleService:
                 }
             value = {
                 "contractVersion": CONTRACT_VERSION,
-                "profile": PROFILE,
+                "profile": legacy_archive.PROFILE,
                 "vaultId": vault,
                 "rootKeyId": row["rootKeyId"],
                 "vaultVersion": row["version"],
@@ -423,7 +144,7 @@ class VaultLifecycleService:
 
         def read(unit):
             row, registry, _, state = self._read(unit, owner, vault, self.now())
-            payload = _payload(body["command"], row)
+            payload = legacy_archive.verify_legacy_archive_command(body["command"], row)
             if payload["action"] != "archive_delete":
                 raise ContractError("malformed_request")
             operation = payload["stableOperationId"]
@@ -456,7 +177,7 @@ class VaultLifecycleService:
                 outcome = "unresolved" if matches else "superseded"
             value = {
                 "contractVersion": CONTRACT_VERSION,
-                "profile": PROFILE,
+                "profile": legacy_archive.PROFILE,
                 "vaultId": vault,
                 "operationId": operation,
                 "commandFingerprint": fingerprint,
@@ -497,7 +218,7 @@ class VaultLifecycleService:
 
         def update(unit):
             row, registry, lifecycle, state = self._read(unit, owner, vault, self.now())
-            payload = _payload(body["command"], row)
+            payload = legacy_archive.verify_legacy_archive_command(body["command"], row)
             if payload["action"] != action:
                 raise ContractError("malformed_request")
             if payload["stableOperationId"] != operation:
@@ -509,7 +230,9 @@ class VaultLifecycleService:
                 if _fingerprint(body["archive"]) != payload["newArchiveDigest"]:
                     raise ContractError("recipient_binding_mismatch")
             if action == "archive_delete_withdraw":
-                original = _payload(body["deletionCommand"], row)
+                original = legacy_archive.verify_legacy_archive_command(
+                    body["deletionCommand"], row
+                )
                 if (
                     original["action"] != "archive_delete"
                     or original["stableOperationId"] != payload["deletionOperationId"]
@@ -527,7 +250,7 @@ class VaultLifecycleService:
                     raise ContractError("idempotency_conflict")
                 # A receipt is an immutable fact, not permission to restore old state.
                 return _mutation_response(prior["receipt"])
-            if state["version"] >= MAX_LIFECYCLE_OPERATIONS:
+            if state["version"] >= legacy_archive.MAX_LIFECYCLE_OPERATIONS:
                 raise ContractError("version_conflict")
             if payload["expectedVaultVersion"] != row["version"]:
                 raise ContractError("version_conflict")
@@ -555,8 +278,10 @@ class VaultLifecycleService:
                     ):
                         raise ContractError("recipient_binding_mismatch")
             now = self.now()
-            advanced = _advance(state, payload, body["command"], now)
-            receipt = _receipt(row, payload, advanced, body["command"], now)
+            advanced = legacy_archive.advance_legacy_archive(state, payload, body["command"], now)
+            receipt = legacy_archive.legacy_archive_receipt(
+                row, payload, advanced, body["command"], now
+            )
             item = {"command": body["command"], "receipt": receipt}
             next_lifecycle = {
                 "ownerSubject": owner,
