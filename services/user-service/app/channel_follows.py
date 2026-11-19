@@ -33,6 +33,7 @@ from folioview_shared.identity import owner_key
 from folioview_shared.instruments import iso_time
 
 from .firestore_reads import read_documents
+from .list_writes import require_list_writes
 from .resource_versions import MAX_REVISION, content_digest, validate_version
 from .resource_versions import version_key as resource_version_key
 
@@ -278,6 +279,7 @@ class SQLiteChannelFollowsStore(ChannelFollowsStore):
             db.execute("BEGIN IMMEDIATE")
             result, content, metadata = replace_pair(*self.read(db, uid), expected_revision, items)
             if content is not None:
+                require_list_writes(ChannelFollowsUnavailable)
                 for table, key, value in (
                     ("user_channel_follows", owner_key(uid), content),
                     ("user_resource_versions", version_key(uid), metadata),
@@ -318,6 +320,7 @@ class FirestoreChannelFollowsStore(ChannelFollowsStore):
             expected_revision, items = change
             result, content, metadata = replace_pair(content, metadata, expected_revision, items)
             if content is not None:
+                require_list_writes(ChannelFollowsUnavailable)
                 transaction.set(content_ref, content)
                 transaction.set(metadata_ref, metadata)
             return result

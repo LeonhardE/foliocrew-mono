@@ -35,6 +35,7 @@ from folioview_shared.valuation import (
 )
 
 from .firestore_reads import read_documents
+from .list_writes import require_list_writes
 from .market_client import MarketResolver, get_market_resolver
 from .resource_versions import new_version, validate_version, version_key
 
@@ -226,6 +227,7 @@ class SQLiteWatchlistStore(WatchlistStore):
             )
             items, changed = update_items(current, symbol, item)
             if changed:
+                require_list_writes(WatchlistUnavailable)
                 db.execute(
                     "INSERT INTO user_watchlists(owner, value) VALUES (?, ?) "
                     "ON CONFLICT(owner) DO UPDATE SET value=excluded.value",
@@ -258,6 +260,7 @@ class SQLiteWatchlistStore(WatchlistStore):
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             result = next_fx(self.read_fx(db, owner), update)
+            require_list_writes(WatchlistUnavailable)
             db.execute(
                 "INSERT INTO user_watchlists(owner,value) VALUES (?,?) "
                 "ON CONFLICT(owner) DO UPDATE SET value=excluded.value",
@@ -302,6 +305,7 @@ class FirestoreWatchlistStore(WatchlistStore):
             metadata = validate_version("watchlist", current_items, stored_metadata)
             items, changed = update_items(current_items, symbol, item)
             if changed:
+                require_list_writes(WatchlistUnavailable)
                 transaction.set(reference, {"version": 1, "items": items})
                 transaction.set(
                     metadata_reference, new_version("watchlist", items, previous=metadata)
@@ -330,6 +334,7 @@ class FirestoreWatchlistStore(WatchlistStore):
             value = reference.get(transaction=transaction, timeout=4, retry=None).to_dict()
             current = checked_fx_record(value) if value is not None else empty_fx()
             result = next_fx(current, update)
+            require_list_writes(WatchlistUnavailable)
             transaction.set(reference, result)
             return result
 

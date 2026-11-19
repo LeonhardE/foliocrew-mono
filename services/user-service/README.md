@@ -59,6 +59,11 @@ change does not claim encrypted holdings or agent-readable list content,
 and it does not introduce a second editable list in Hub. The resource interfaces
 below supply version and authorization metadata only.
 
+During the INF-023 database handoff, `USER_LIST_WRITES_PAUSED=true`
+temporarily blocks changes to watchlists, currency follows, channel follows
+and new resource initializations. Current reads and valid committed
+initialization receipts remain available while the pause is active.
+
 ## Deployment instance
 
 Production project, regional image repository, runtime identity, inventoried service UID and
