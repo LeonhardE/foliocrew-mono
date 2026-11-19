@@ -26,7 +26,7 @@ from folioview_shared.service_identity import (
 from ..resource_api import ResourceRoute, body, configured_verifier, require_v2
 from ..resources import FirestoreUserResourceStore, get_resource_store
 from .authority_cutover import UserAuthorityCutover
-from .authority_views import PrivateAuthorityViews
+from .authority_views import OWNER_CURRENT_PROFILE, PrivateAuthorityViews
 from .recovery import (
     ClosedModel,
     Digest,
@@ -265,6 +265,37 @@ def owner_cutover() -> UserAuthorityCutover:
 def _uncached_private(response):
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-FolioView-Contract"] = CONTRACT_VERSION
+
+
+class OwnerCurrentVaultRequest(ClosedModel):
+    contractVersion: Literal[CONTRACT_VERSION]
+    profile: Literal[OWNER_CURRENT_PROFILE]
+    ownerSubject: Digest
+    nonce: OperationId
+
+
+def owner_current_vault() -> PrivateAuthorityViews:
+    if os.getenv("USER_PRIVATE_OWNER_CURRENT") != "true":
+        raise ContractError("not_found")
+    return PrivateAuthorityViews(get_resource_store())
+
+
+@router.post("/current/read")
+async def read_owner_current_vault(
+    request: Request,
+    response: Response,
+    user: Annotated[CurrentUser, Depends(require_google_user)],
+    view: Annotated[PrivateAuthorityViews, Depends(owner_current_vault)],
+    _: Annotated[None, Depends(require_owner_proxy)],
+):
+    value = await body(request, OwnerCurrentVaultRequest, maximum=4096)
+    if value.ownerSubject != owner_key(user.uid):
+        raise ContractError("not_found")
+    result = await run_in_threadpool(
+        view.owner_current, user.uid, value.nonce, now=int(time.time())
+    )
+    _uncached_private(response)
+    return result
 
 
 @router.post("/{vault_id}/handover/check")

@@ -13,7 +13,7 @@ from app.private_resources.api import (
     live_authority_views,
 )
 from app.private_resources.authority_cutover import UserAuthorityCutover
-from app.private_resources.authority_views import PrivateAuthorityViews
+from app.private_resources.authority_views import OWNER_CURRENT_PROFILE, PrivateAuthorityViews
 from app.private_resources.recovery import COLLECTION as HEADS
 from app.private_resources.report_sources import HOLDINGS_FENCES, holdings_fence_key
 from app.private_resources.source_invalidations import SOURCE_INDEX, SourceInvalidations
@@ -61,6 +61,22 @@ class AuthorityViewTests(unittest.TestCase):
         self.assertEqual(authority["sources"], [])
         self.assertNotIn("ciphertext", authority)
         self.assertNotIn("devices", authority)
+
+    def test_owner_cold_read_returns_authenticated_current_epoch_and_the_original_archive(self):
+        nonce = self.request["nonce"]
+        result = self.viewer.owner_current(fixture.UID, nonce, now=1000)
+        self.assertEqual(result["profile"], OWNER_CURRENT_PROFILE)
+        self.assertEqual((result["ownerSubject"], result["nonce"]), (fixture.OWNER, nonce))
+        self.assertEqual(result["vault"]["archive"], self.sample.vault["archive"])
+        self.assertEqual(result["vault"]["rootKeyId"], self.sample.vault["rootKeyId"])
+        self.assertEqual(result["vault"]["registryHistory"], [self.sample.packet["firstBundle"]])
+        self.assertEqual(
+            result["proof"]["signedTransition"], self.sample.packet["signedTransition"]
+        )
+        self.assertEqual(result["proof"]["registry"]["registryEpoch"], 2)
+        self.assertEqual(result["proof"]["sources"], [])
+        with self.assertRaisesRegex(ContractError, "not_found"):
+            self.viewer.owner_current("unrelated-synthetic-owner", nonce, now=1000)
 
     def test_portfolio_selected_incarnation_is_unavailable_after_invalidation(self):
         source = "synthetic_holdings"
