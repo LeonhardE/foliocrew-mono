@@ -635,7 +635,10 @@ export function hubResponse(
     }
   }
   if (path.startsWith("/api/v2/tasks")) return formal("EncryptedTask", body);
-  if (path === "/api/v2/vaults/current/authority-token")
+  if (
+    path === "/api/v2/vaults/current/authority-token" ||
+    /^\/api\/v2\/vaults\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}\/portfolio-authority-tokens$/.test(path)
+  )
     return (
       fields(body, ["contractVersion", "token", "expiresAt"]) &&
       typeof body.token === "string" &&

@@ -313,6 +313,45 @@ print(json.dumps(next_start.head()))
   });
 });
 
+test("the original Passkey opens a transferred vault and upgrades the stored registry floor", async () => {
+  await browser.withDatabase(async (db) => {
+    const { session, state, vault, storage, material, uid, h } = await initialize(db);
+    await session.verifyLifecycle(vault, state);
+    const review = await session.reviewUserRegistryTransition(state);
+    const packet = await session.signUserRegistryTransition(review, material());
+    const { nextHead, archive } = decoded(packet.signedTransition);
+    const current = {
+      ...vault,
+      version: vault.version + 1,
+      registryHistory: [packet.firstBundle],
+      userAuthority: {
+        signedTransition: packet.signedTransition,
+        registry: nextHead,
+        registryStart: nextHead,
+        archive,
+        sourcesDigest: await h.core.sha(h.core.canonical([])),
+        sources: [],
+      },
+    };
+    const outsider = new h.core.VaultCore(uid, () => 1000);
+    assert.equal((await outsider.unlock(current, material())).needsDeviceRegistration, true);
+    const corrupt = {
+      ...current,
+      userAuthority: { ...current.userAuthority, sourcesDigest: sources },
+    };
+    await assert.rejects(session.acceptVault(corrupt), /untrusted_vault/);
+    await session.acceptVault(current);
+    const imported = await storage.get(vault.archive.ownerSubject + ":pin");
+    assert.equal(imported.registryEpoch, 2);
+    assert.equal(imported.checkpointDigest, nextHead.checkpointDigest);
+    session.lock();
+    const reload = db.client(uid, storage);
+    await assert.rejects(reload.unlock(vault, material()), /rollback_detected/);
+    const verified = db.client(uid, storage);
+    assert.equal((await verified.unlock(current, material())).needsDeviceRegistration, false);
+  });
+});
+
 test("Worker verifies the fresh User epoch against the original pinned Root, archive and nonce", async () => {
   await browser.withDatabase(async (db) => {
     const { session, state, vault, storage, evidence, material } = await initialize(db);

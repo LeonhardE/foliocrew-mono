@@ -96,6 +96,7 @@ export function assertPinAdvance(current: any, record: any) {
   if (
     !Number.isSafeInteger(current.registrySequence) ||
     !Number.isSafeInteger(current.keyEpoch) ||
+    (current.registryEpoch ?? 1) > (pin.registryEpoch ?? 1) ||
     current.registrySequence > pin.registrySequence ||
     current.keyEpoch > pin.keyEpoch
   )
@@ -103,6 +104,7 @@ export function assertPinAdvance(current: any, record: any) {
   if (
     !record.history.some(
       (p: any) =>
+        (p.registryEpoch ?? 1) === (current.registryEpoch ?? 1) &&
         p.registrySequence === current.registrySequence &&
         p.checkpointDigest === current.checkpointDigest &&
         p.keyEpoch === current.keyEpoch,

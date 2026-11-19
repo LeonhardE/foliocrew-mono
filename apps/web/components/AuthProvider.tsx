@@ -91,7 +91,11 @@ function developmentEncryptedOrigin(service: "portfolio" | "agent-hub"): string 
   return origin && ["localhost", "127.0.0.1"].includes(new URL(origin).hostname) ? origin : null;
 }
 
-export type OwnerCapabilities = Readonly<{ portfolio: boolean; agentHub: boolean }>;
+export type OwnerCapabilities = Readonly<{
+  portfolio: boolean;
+  agentHub: boolean;
+  userVault?: true;
+}>;
 export type OwnerConfigStatus = "loading" | "ready" | "unavailable";
 type OwnerConfig = { status: OwnerConfigStatus; flags: OwnerCapabilities };
 const disabledCapabilities: OwnerCapabilities = { portfolio: false, agentHub: false };
@@ -147,7 +151,10 @@ async function readOwnerCapabilities(
     !flags ||
     typeof flags !== "object" ||
     Array.isArray(flags) ||
-    Object.keys(flags).sort().join("|") !== "agentHub|portfolio" ||
+    !["agentHub|portfolio", "agentHub|portfolio|userVault"].includes(
+      Object.keys(flags).sort().join("|"),
+    ) ||
+    (Object.hasOwn(flags, "userVault") && (flags as Record<string, unknown>).userVault !== true) ||
     typeof (flags as Record<string, unknown>).portfolio !== "boolean" ||
     typeof (flags as Record<string, unknown>).agentHub !== "boolean"
   )
@@ -155,6 +162,7 @@ async function readOwnerCapabilities(
   return {
     portfolio: (flags as Record<string, unknown>).portfolio as boolean,
     agentHub: (flags as Record<string, unknown>).agentHub as boolean,
+    ...((flags as Record<string, unknown>).userVault === true ? { userVault: true as const } : {}),
   };
 }
 
@@ -334,6 +342,12 @@ function hubOwnerRule(path: string, method: PrivateMethod): EncryptedRule | null
     };
   } else if (method === "POST" && pathname === "/api/v2/vaults/current/authority-token") {
     rule = { method, keys: ["contractVersion"], maxBytes: 1024 };
+  } else if (method === "POST" && matches(`/api/v2/vaults/${id}/portfolio-authority-tokens`)) {
+    rule = {
+      method,
+      keys: ["contractVersion", "sourceId", "nonce", "minimumRegistryEpoch"],
+      maxBytes: 1024,
+    };
   } else if (method === "POST" && matches(`/api/v2/tasks/${id}/operation-cancellations`)) {
     rule = {
       method,
@@ -446,7 +460,9 @@ function encryptedRule(
     return { method: "POST", keys: ["contractVersion"], authority: true };
   if (
     method === "POST" &&
-    new RegExp(`^/api/v2/holdings/sources/${id}/mutations/${operation}/synchronize$`).test(path)
+    new RegExp(
+      `^/api/v2/holdings/sources/${id}/(?:mutations/${operation}/synchronize|operations/${operation}/synchronize-revision)$`,
+    ).test(path)
   )
     return { method, keys: ["contractVersion"], maxBytes: 1024 };
   return null;
@@ -899,7 +915,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (
         !exact(options.json, recoveryRead.keys) ||
         options.json.profile !== recoveryRead.profile ||
-        options.json.vaultId !== recoveryRead.vault ||
+        (recoveryRead.vault !== null && options.json.vaultId !== recoveryRead.vault) ||
         (recoveryRead.source !== null && options.json.sourceId !== recoveryRead.source)
       )
         throw new Error("Invalid private API request");
@@ -939,6 +955,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         };
       }
       if (!rule) throw new Error("Invalid private API path");
+      if (
+        service === "portfolio" &&
+        rule.authority &&
+        exact(options.json, ["contractVersion", "vaultId", "nonce", "minimumRegistryEpoch"])
+      )
+        rule = { ...rule, keys: ["contractVersion", "vaultId", "nonce", "minimumRegistryEpoch"] };
       const capability = service === "portfolio" ? "portfolio" : "agentHub";
       const configured =
         ownerConfigRef.current.status === "ready" && ownerConfigRef.current.flags[capability]

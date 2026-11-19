@@ -6,6 +6,7 @@ import {
   HANDOVER_CHECK_PROFILE,
   HANDOVER_PROFILE,
   HOLDINGS_REGISTRATION_PROFILE,
+  OWNER_CURRENT_PROFILE,
   RECOVERY_PROFILE,
   REGISTRY_START_PROFILE,
   REGISTRY_UPDATE_PROFILE,
@@ -40,6 +41,7 @@ const KEY = /^[A-Za-z0-9_-]{43}$/;
 const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const NONCE = /^[A-Za-z0-9_-]{22,128}$/;
 const DIGEST = /^[a-f0-9]{64}$/;
+const OPAQUE = /^[A-Za-z0-9_-]+$/;
 const HEAD_FIELDS = ["registryEpoch", "registrySequence", "checkpointDigest", "keyEpoch"];
 const UNSUPPORTED_HEADERS = [
   "idempotency-key",
@@ -82,7 +84,7 @@ function validRequest(
     !fields(value, rule.keys) ||
     value.contractVersion !== CONTRACT ||
     value.profile !== rule.profile ||
-    value.vaultId !== rule.vault ||
+    (rule.vault !== null && value.vaultId !== rule.vault) ||
     !matches(value.ownerSubject, DIGEST)
   )
     return false;
@@ -95,6 +97,7 @@ function validRequest(
       registryBundle(value.firstBundle)
     );
   if (rule.profile === REGISTRY_START_PROFILE) return matches(value.nonce, NONCE);
+  if (rule.profile === OWNER_CURRENT_PROFILE) return matches(value.nonce, NONCE);
   if (rule.profile === REGISTRY_UPDATE_PROFILE)
     return (
       matches(value.operationId, NONCE) &&
@@ -269,6 +272,75 @@ function validRegistryStart(value: Json, input: Json) {
 }
 
 function validReply(body: unknown, input: Json, expectedDigest: string) {
+  if (input.profile === OWNER_CURRENT_PROFILE) {
+    if (
+      !fields(body, ["contractVersion", "profile", "ownerSubject", "nonce", "vault", "proof"]) ||
+      body.contractVersion !== CONTRACT ||
+      body.profile !== input.profile ||
+      body.ownerSubject !== input.ownerSubject ||
+      body.nonce !== input.nonce ||
+      !fields(body.vault, [
+        "vaultId",
+        "rootKeyId",
+        "rootJwk",
+        "version",
+        "archive",
+        "registryHistory",
+      ]) ||
+      !matches(body.vault.vaultId, ID) ||
+      !matches(body.vault.rootKeyId, KEY) ||
+      !fields(body.vault.rootJwk, ["kty", "crv", "x", "y"]) ||
+      body.vault.rootJwk.kty !== "EC" ||
+      body.vault.rootJwk.crv !== "P-256" ||
+      !matches(body.vault.rootJwk.x, KEY) ||
+      !matches(body.vault.rootJwk.y, KEY) ||
+      !integer(body.vault.version, 2) ||
+      !Array.isArray(body.vault.registryHistory) ||
+      body.vault.registryHistory.length < 1 ||
+      body.vault.registryHistory.length > 129 ||
+      !body.vault.registryHistory.every(registryBundle) ||
+      !fields(body.vault.archive, [
+        "profile",
+        "ownerSubject",
+        "vaultId",
+        "rootKeyId",
+        "credentialId",
+        "prfSalt",
+        "iv",
+        "ciphertext",
+      ]) ||
+      body.vault.archive.profile !== "folioview.passkey-vault.v1" ||
+      body.vault.archive.ownerSubject !== input.ownerSubject ||
+      body.vault.archive.vaultId !== body.vault.vaultId ||
+      body.vault.archive.rootKeyId !== body.vault.rootKeyId ||
+      !matches(body.vault.archive.credentialId, OPAQUE) ||
+      String(body.vault.archive.credentialId).length > 2048 ||
+      !matches(body.vault.archive.prfSalt, KEY) ||
+      !matches(body.vault.archive.iv, /^[A-Za-z0-9_-]{16}$/) ||
+      !matches(body.vault.archive.ciphertext, OPAQUE) ||
+      String(body.vault.archive.ciphertext).length > 450_000 ||
+      !fields(body.proof, [
+        "registry",
+        "registryStart",
+        "signedTransition",
+        "archive",
+        "sourcesDigest",
+        "sources",
+      ])
+    )
+      return false;
+    return (
+      head(body.proof.registry) &&
+      head(body.proof.registryStart) &&
+      body.proof.registryStart.registryEpoch === 2 &&
+      body.proof.registry.registryEpoch === 2 &&
+      activeArchive(body.proof.archive) &&
+      signedObject(body.proof.signedTransition) &&
+      matches(body.proof.sourcesDigest, DIGEST) &&
+      Array.isArray(body.proof.sources) &&
+      body.proof.sources.length <= 12
+    );
+  }
   if (input.profile === HOLDINGS_REGISTRATION_PROFILE) {
     return (
       record(input.command) &&
@@ -374,6 +446,12 @@ export function createUserRecoveryProxy(options: Options = {}) {
       if (!validRequest(input, rule)) return fail();
       const uid = await verifyOwner(authorization.slice(7), project, signal);
       if (input.ownerSubject !== digest(uid)) fail("not_found");
+      if (rule.profile === OWNER_CURRENT_PROFILE) {
+        const selected = env.FOLIOVIEW_USER_CURRENT_OWNER;
+        if (!selected) fail("not_found");
+        if (!matches(selected, DIGEST)) fail("authorization_unavailable");
+        if (selected !== input.ownerSubject) fail("not_found");
+      }
 
       const token = await until(identity(origin), signal);
       const response = await until(
@@ -397,6 +475,8 @@ export function createUserRecoveryProxy(options: Options = {}) {
         response.status < 400 &&
         (response.status !== 200 || response.headers.get("x-folioview-contract") !== CONTRACT)
       )
+        fail("authorization_unavailable");
+      if (rule.profile === OWNER_CURRENT_PROFILE && response.status === 404)
         fail("authorization_unavailable");
       // These closed evidence fields are ASCII strings. Sorting the top-level
       // keys gives the exact UTF-8 canonical input hashed by User.

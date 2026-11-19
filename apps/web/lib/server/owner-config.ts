@@ -9,6 +9,10 @@ export function ownerCapabilities(env: NodeJS.ProcessEnv = process.env) {
     flags: {
       portfolio: portfolioConfiguration(env) !== null,
       agentHub: hubConfiguration(env) !== null,
+      ...(env.FOLIOVIEW_USER_OWNER_ENABLED === "true" &&
+      /^[a-f0-9]{64}$/.test(env.FOLIOVIEW_USER_CURRENT_OWNER ?? "")
+        ? { userVault: true }
+        : {}),
     },
   };
 }

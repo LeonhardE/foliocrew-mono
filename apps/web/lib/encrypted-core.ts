@@ -614,6 +614,7 @@ export type Pin = {
   registrySequence: number;
   checkpointDigest: string;
   keyEpoch: number;
+  registryEpoch?: number;
 };
 export type DeviceSeal = Json;
 function archiveContext(a: Json) {
@@ -1007,14 +1008,20 @@ export class VaultCore {
       registrySequence: registry.checkpoint.registrySequence,
       checkpointDigest: registry.digest,
       keyEpoch: registry.checkpoint.keyEpoch,
+      ...(vault.userAuthority ? { registryEpoch: 2 } : {}),
     };
     const history = [];
+    if (vault.userAuthority) {
+      const change = await verified(vault.userAuthority.signedTransition, vault.rootJwk);
+      history.push(change.previousHead);
+    }
     for (const bundle of vault.registryHistory) {
       const cp = parsed(unb64(bundle.checkpoint.payload));
       history.push({
         registrySequence: cp.registrySequence,
         checkpointDigest: await sha(canonical(cp)),
         keyEpoch: cp.keyEpoch,
+        ...(vault.userAuthority ? { registryEpoch: 2 } : {}),
       });
     }
     return { pin, history };
@@ -3392,9 +3399,121 @@ export class VaultCore {
       entries,
     };
   }
+  private async verifyUserVaultStart(
+    vault: Vault,
+    owner: string,
+    verify: Awaited<ReturnType<typeof registryBundleVerifier>>,
+  ) {
+    const proof = vault.userAuthority!;
+    exact(proof, [
+      "registry",
+      "registryStart",
+      "signedTransition",
+      "archive",
+      "sourcesDigest",
+      "sources",
+    ]);
+    exact(proof.archive, ["state", "version", "digest"]);
+    if (
+      proof.archive.state !== "active" ||
+      !Number.isSafeInteger(proof.archive.version) ||
+      proof.archive.version < 1 ||
+      (await sha(canonical(requireArchive(vault.archive)))) !== proof.archive.digest
+    )
+      throw new VaultError("untrusted_vault");
+    validate("Digest", proof.sourcesDigest);
+    if (!Array.isArray(proof.sources) || proof.sources.length > 12)
+      throw new VaultError("untrusted_vault");
+    const keys = new Set<string>();
+    const rows = proof.sources.map((source) => {
+      exact(source, ["binding", "state"]);
+      exact(source.binding, ["ref", "sourceEpoch"]);
+      validate("ResourceRef", source.binding.ref);
+      positive(source.binding.sourceEpoch);
+      if (!["active", "revoking", "disconnected"].includes(source.state))
+        throw new VaultError("untrusted_vault");
+      const { kind, sourceService, resourceId } = source.binding.ref;
+      const key = [kind, sourceService, resourceId].join("/");
+      if (keys.has(key)) throw new VaultError("untrusted_vault");
+      keys.add(key);
+      return { key, source };
+    });
+    rows.sort((left, right) => (left.key < right.key ? -1 : 1));
+    if ((await sha(canonical(rows.map(({ source }) => source)))) !== proof.sourcesDigest)
+      throw new VaultError("untrusted_vault");
+    const change = await verified(proof.signedTransition, vault.rootJwk);
+    exact(change, [
+      "contractVersion",
+      "profile",
+      "ownerSubject",
+      "vaultId",
+      "rootKeyId",
+      "operationId",
+      "previousVaultVersion",
+      "nextVaultVersion",
+      "previousHead",
+      "nextHead",
+      "ownerKeyIds",
+      "archive",
+      "issuedAt",
+    ]);
+    validate("OperationIdentifier", change.operationId);
+    const prior = change.previousHead;
+    exact(prior, ["registryEpoch", "registrySequence", "checkpointDigest", "keyEpoch"]);
+    validate("Digest", prior.checkpointDigest);
+    positive(prior.registrySequence);
+    positive(prior.keyEpoch);
+    positive(change.previousVaultVersion);
+    positive(change.issuedAt, 0);
+    const start = proof.registryStart;
+    if (
+      change.contractVersion !== CONTRACT ||
+      change.profile !== "folioview.owner-registry-transition.v1" ||
+      change.ownerSubject !== owner ||
+      change.vaultId !== vault.vaultId ||
+      change.rootKeyId !== vault.rootKeyId ||
+      prior.registryEpoch !== 1 ||
+      start?.registryEpoch !== 2 ||
+      start.registrySequence !== prior.registrySequence + 1 ||
+      start.keyEpoch < prior.keyEpoch ||
+      change.nextVaultVersion !== change.previousVaultVersion + 1 ||
+      change.nextVaultVersion > vault.version ||
+      change.issuedAt > this.now() ||
+      !equal(change.nextHead, start) ||
+      !equal(change.archive, proof.archive)
+    )
+      throw new VaultError("registry_conflict");
+    const first = await verify(
+      vault.registryHistory[0],
+      owner,
+      vault.vaultId,
+      undefined,
+      change.issuedAt,
+    );
+    const active = [...first.active].sort();
+    if (
+      first.checkpoint.previousDigest !== prior.checkpointDigest ||
+      first.checkpoint.issuedAt !== change.issuedAt ||
+      !equal(privateRegistryHead(first, 2), start) ||
+      !Array.isArray(change.ownerKeyIds) ||
+      !equal(active, [...change.ownerKeyIds].sort()) ||
+      active.length !== first.certificates.size
+    )
+      throw new VaultError("registry_conflict");
+    const roles = new Set(active.map((id) => cert(first, id, undefined, change.issuedAt).role));
+    if (
+      roles.size !== 3 ||
+      !["device_sig", "device_enc", "recovery_enc"].every((role) => roles.has(role))
+    )
+      throw new VaultError("key_revoked");
+    return { first, prior };
+  }
+
   private async checkVault(vault: Vault, pin?: Pin, allowDeleted = false) {
     vault = structuredClone(vault);
-    exact(vault, ["vaultId", "rootJwk", "rootKeyId", "registryHistory", "archive", "version"]);
+    const fields = ["vaultId", "rootJwk", "rootKeyId", "registryHistory", "archive", "version"];
+    if (vault.userAuthority) fields.push("userAuthority");
+    exact(vault, fields);
     positive(vault.version);
     validate("PublicJWK", vault.rootJwk);
     const owner = await this.owner;
@@ -3412,7 +3531,7 @@ export class VaultCore {
       (await thumb(vault.rootJwk)) !== vault.rootKeyId ||
       !Array.isArray(vault.registryHistory) ||
       vault.registryHistory.length < 1 ||
-      vault.registryHistory.length > 32
+      vault.registryHistory.length > (vault.userAuthority ? 129 : 32)
     )
       throw new VaultError("untrusted_vault");
     if (
@@ -3422,28 +3541,36 @@ export class VaultCore {
         !equal(this.vault.archive, vault.archive))
     )
       throw new VaultError("untrusted_vault");
-    let registry: Registry | undefined;
-    const privateHistory2 = structuredClone(vault.registryHistory);
-    const verifyHistoryBundle2 = await registryBundleVerifier(vault.rootJwk);
-    for (const bundle of privateHistory2)
-      registry = await verifyHistoryBundle2(bundle, owner, vault.vaultId, registry, this.now());
+    const verifyHistory = await registryBundleVerifier(vault.rootJwk);
+    const user = vault.userAuthority
+      ? await this.verifyUserVaultStart(vault, owner, verifyHistory)
+      : null;
+    let registry: Registry | undefined = user?.first;
+    for (const bundle of vault.registryHistory.slice(user ? 1 : 0))
+      registry = await verifyHistory(bundle, owner, vault.vaultId, registry, this.now());
+    const epoch = user ? 2 : 1;
+    if (user && !equal(privateRegistryHead(registry!, epoch), vault.userAuthority!.registry))
+      throw new VaultError("registry_conflict");
+    if (this.vault?.userAuthority && !user) throw new VaultError("rollback_detected");
     if (
       pin &&
       (pin.ownerSubject !== owner ||
         pin.vaultId !== vault.vaultId ||
         pin.rootKeyId !== vault.rootKeyId ||
+        (pin.registryEpoch ?? 1) > epoch ||
         registry!.checkpoint.registrySequence < pin.registrySequence ||
-        registry!.checkpoint.keyEpoch < pin.keyEpoch ||
-        !vault.registryHistory.some((b) => {
-          const cp = parsed(unb64(b.checkpoint.payload));
-          return cp.registrySequence === pin.registrySequence;
-        }))
+        registry!.checkpoint.keyEpoch < pin.keyEpoch)
     )
       throw new VaultError("rollback_detected");
-    if (pin) {
+    if (pin && (pin.registryEpoch ?? 1) < epoch) {
+      const { ownerSubject: _owner, vaultId: _vault, rootKeyId: _root, ...previous } = pin;
+      if (!user || !equal({ ...previous, registryEpoch: pin.registryEpoch ?? 1 }, user.prior))
+        throw new VaultError("registry_conflict");
+    } else if (pin) {
       const matched = vault.registryHistory.find(
         (b) => parsed(unb64(b.checkpoint.payload)).registrySequence === pin.registrySequence,
-      )!;
+      );
+      if (!matched) throw new VaultError("rollback_detected");
       if (
         (await sha(canonical(parsed(unb64(matched.checkpoint.payload))))) !== pin.checkpointDigest
       )
@@ -4692,26 +4819,10 @@ export class VaultCore {
     }
   }
   private async adoptVault(vault: Vault, registry: Registry) {
+    const { pin, history } = await this.publicVaultPin(vault, registry);
     this.registry = registry;
     this.vault = vault;
-    const cp = registry.checkpoint;
-    this.pin = {
-      ownerSubject: await this.owner,
-      vaultId: vault.vaultId,
-      rootKeyId: vault.rootKeyId,
-      registrySequence: cp.registrySequence,
-      checkpointDigest: registry.digest,
-      keyEpoch: cp.keyEpoch,
-    };
-    const history = [];
-    for (const bundle of vault.registryHistory) {
-      const cp = parsed(unb64(bundle.checkpoint.payload));
-      history.push({
-        registrySequence: cp.registrySequence,
-        checkpointDigest: await sha(canonical(cp)),
-        keyEpoch: cp.keyEpoch,
-      });
-    }
+    this.pin = pin;
     let device = this.deviceSeal;
     try {
       if (!this.device) throw new VaultError("device_required");

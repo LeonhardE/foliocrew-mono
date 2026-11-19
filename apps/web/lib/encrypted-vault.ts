@@ -200,6 +200,18 @@ export class EncryptedVaultSession {
   static supportsSharedUnlock() {
     return typeof SharedWorker !== "undefined";
   }
+
+  async hasPendingArchiveWork() {
+    const g = this.generation;
+    await this.started;
+    this.assert(g);
+    const [archive, renewal] = await Promise.all([
+      this.storage.get(this.owner + ":archive-change"),
+      this.storage.get(this.owner + ":key-renewal"),
+    ]);
+    this.assert(g);
+    return Boolean(archive || renewal);
+  }
   static lockSharedUnlock(uid: string) {
     if (!this.supportsSharedUnlock()) return;
     try {
