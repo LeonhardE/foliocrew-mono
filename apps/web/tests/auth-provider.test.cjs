@@ -1166,6 +1166,12 @@ test("encrypted requests use only explicit services, fixed version, closed metho
     ["portfolio", "/api/v2/holdings/sources/source_A/operations/synthetic_operation_000001", {}],
     ["portfolio", "/api/v2/holdings/sources/source_A/snapshots/snapshot_A", {}],
     ["portfolio", "/api/v2/holdings/sources/source_A/mutations/synthetic_operation_000001", {}],
+    ["portfolio", `/api/v2/holdings/sources/source_A/mutations/_${operation}`, {}],
+    [
+      "portfolio",
+      `/api/v2/holdings/sources/source_A/mutations/${operation}/synchronize`,
+      { method: "POST", json: { contractVersion: version } },
+    ],
     ...["fence", "disconnect", "delete"].map((action) => [
       "portfolio",
       `/api/v2/holdings/sources/source_A/mutations/${action}`,
@@ -1553,6 +1559,18 @@ test("Portfolio 401 invalidates the active session and invalid mutation shapes n
       },
     ],
     ["/api/v2/holdings/sources/source_A/mutations/operation_A/ack", {}],
+    [
+      "/api/v2/holdings/sources/source_A/mutations/short/synchronize",
+      { method: "POST", json: { contractVersion: version } },
+    ],
+    [
+      `/api/v2/holdings/sources/source_A/mutations/${operation}/synchronize`,
+      { method: "POST", json: { contractVersion: version, sourceEpoch: 2 } },
+    ],
+    [
+      `/api/v2/holdings/sources/source_A/mutations/${operation}/synchronize`,
+      { method: "POST", json: { contractVersion: version }, headers: operationHeaders() },
+    ],
   ])
     await assert.rejects(
       h.actions.requestPrivate("portfolio", path, "a:1", options),
