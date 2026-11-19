@@ -4,6 +4,7 @@ import hashlib
 import re
 
 from .authority import VerifiedRegistry
+from .budgets import check_read_response
 from .constants import CONTRACT_VERSION, MAX_CONTROL_BYTES, MAX_SAFE_INTEGER
 from .crypto import jwk_thumbprint, signing_input_fingerprint, verify_jws
 from .errors import ContractError
@@ -267,6 +268,54 @@ def advance_legacy_archive(state, payload, command, accepted_at):
             deleted=False,
         )
     return next_state
+
+
+def archive_deletion_outcome(vault, registry, state, command):
+    """Check the current disposition of one exact Root-signed removal without writing."""
+    payload = verify_legacy_archive_command(command, vault)
+    if payload["action"] != "archive_delete":
+        raise ContractError("malformed_request")
+    operation = payload["stableOperationId"]
+    fingerprint = signing_input_fingerprint(command)
+    prior = state["operations"].get(operation)
+    withdrawn = state["withdrawn"].get(operation)
+    receipt = None
+    if prior:
+        if prior["receipt"]["commandFingerprint"] != fingerprint:
+            raise ContractError("idempotency_conflict")
+        outcome, receipt = "deleted", prior["receipt"]
+    elif withdrawn:
+        if withdrawn["deletionCommandFingerprint"] != fingerprint:
+            raise ContractError("idempotency_conflict")
+        outcome = "withdrawn"
+        receipt = state["operations"][withdrawn["stableOperationId"]]["receipt"]
+    else:
+        counters = {
+            "expectedVaultVersion": vault["version"],
+            "expectedLifecycleVersion": state["version"],
+            "expectedArchiveRevision": state["revision"],
+            "registrySequence": registry.registry_sequence,
+            "keyEpoch": registry.key_epoch,
+        }
+        if any(payload[key] > value for key, value in counters.items()):
+            raise ContractError("version_conflict")
+        matches = all(payload[key] == value for key, value in counters.items())
+        matches = matches and payload["expectedArchiveDigest"] == state["digest"]
+        matches = matches and payload["checkpointDigest"] == registry.checkpoint_digest
+        outcome = "unresolved" if matches else "superseded"
+    value = {
+        "contractVersion": CONTRACT_VERSION,
+        "profile": PROFILE,
+        "vaultId": vault["vaultId"],
+        "operationId": operation,
+        "commandFingerprint": fingerprint,
+        "outcome": outcome,
+        "vaultVersion": vault["version"],
+        "lifecycleVersion": state["version"],
+        "receipt": receipt,
+    }
+    check_read_response(value)
+    return value
 
 
 def legacy_archive_receipt(vault, payload, state, command, accepted_at):

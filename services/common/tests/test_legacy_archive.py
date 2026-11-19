@@ -7,11 +7,13 @@ from copy import deepcopy
 from test_encrypted_authority import AuthorityFixture
 
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
+from folioview_shared.encrypted.crypto import signing_input_fingerprint
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import b64url_encode, canonical_json
 from folioview_shared.encrypted.legacy_archive import (
     PROFILE,
     advance_legacy_archive,
+    archive_deletion_outcome,
     legacy_archive_receipt,
     verify_legacy_archive_command,
     verify_legacy_archive_history,
@@ -79,6 +81,43 @@ class LegacyArchiveTests(unittest.TestCase):
         self.state = state
         self.row["history"].append(item)
         return item
+
+    def test_exact_removal_outcome_survives_withdrawal_without_reusing_a_changed_command(self):
+        operation = "synthetic_archive_original_delete"
+        payload = {
+            **self.scope,
+            "contractVersion": CONTRACT_VERSION,
+            "profile": PROFILE,
+            "action": "archive_delete",
+            "stableOperationId": operation,
+            "expectedVaultVersion": self.vault["version"],
+            "expectedLifecycleVersion": 0,
+            "expectedArchiveRevision": 0,
+            "expectedArchiveDigest": self.state["digest"],
+            "registrySequence": self.registry.registry_sequence,
+            "checkpointDigest": self.registry.checkpoint_digest,
+            "keyEpoch": self.registry.key_epoch,
+            "issuedAt": 1000,
+            "expiresAt": 1060,
+        }
+        command = self.f.sign(payload, "root")
+        check = archive_deletion_outcome(self.vault, self.registry, self.state, command)
+        self.assertEqual(check["outcome"], "unresolved")
+        item = self.apply(
+            "archive_delete_withdraw",
+            1001,
+            deletionOperationId=operation,
+            deletionCommandFingerprint=signing_input_fingerprint(command),
+            deletionLifecycleVersion=0,
+            expectedVaultVersion=self.vault["version"],
+            registrySequence=self.registry.registry_sequence,
+        )
+        check = archive_deletion_outcome(self.vault, self.registry, self.state, command)
+        self.assertEqual(check["outcome"], "withdrawn")
+        self.assertEqual(check["receipt"], item["receipt"])
+        altered = self.f.sign({**payload, "expiresAt": 1061}, "root")
+        with self.assertRaisesRegex(ContractError, "idempotency_conflict"):
+            archive_deletion_outcome(self.vault, self.registry, self.state, altered)
 
     def test_history_binds_original_authorization_revocation_and_ciphertext(self):
         replacement = {
