@@ -39,6 +39,7 @@ from .authority_cutover import UserAuthorityCutover
 from .authority_views import OWNER_CURRENT_PROFILE, PrivateAuthorityViews
 from .directory import DIRECTORY_PROFILE, PrivateResourceDirectory
 from .display_names import PrivateDisplayNames
+from .key_renewals import PrivateKeyRenewals
 from .recovery import (
     ClosedModel,
     Digest,
@@ -609,6 +610,88 @@ async def register_owner_holdings(
     )
     _uncached_private(response)
     return result
+
+
+OWNER_KEY_RENEWAL_PROFILE = "folioview.owner-user-key-renewal.v1"
+
+
+class OwnerKeyRenewalRead(CutoverScope):
+    profile: Literal[OWNER_KEY_RENEWAL_PROFILE]
+    nonce: OperationId
+    operationId: OperationId | None
+
+
+class OwnerKeyRenewalWrite(CutoverScope):
+    profile: Literal[OWNER_KEY_RENEWAL_PROFILE]
+    nonce: OperationId
+    operationId: OperationId
+    command: dict
+    archiveCommand: dict
+    archive: dict
+    registryBundle: dict
+
+
+def owner_key_renewals() -> PrivateKeyRenewals:
+    if os.getenv("USER_PRIVATE_OWNER_CURRENT") != "true":
+        raise ContractError("not_found")
+    return PrivateKeyRenewals(get_resource_store())
+
+
+def _renewal_reply(value, result, response):
+    _uncached_private(response)
+    return {
+        "contractVersion": CONTRACT_VERSION,
+        "profile": OWNER_KEY_RENEWAL_PROFILE,
+        "ownerSubject": value.ownerSubject,
+        "vaultId": value.vaultId,
+        "nonce": value.nonce,
+        "operationId": value.operationId,
+        "result": result,
+    }
+
+
+@router.post("/{vault_id}/key-renewals/read")
+async def read_owner_key_renewal(
+    vault_id: str,
+    request: Request,
+    response: Response,
+    user: Annotated[CurrentUser, Depends(require_google_user)],
+    service: Annotated[PrivateKeyRenewals, Depends(owner_key_renewals)],
+    _: Annotated[None, Depends(require_owner_proxy)],
+):
+    value = await body(request, OwnerKeyRenewalRead, maximum=4096)
+    _cutover_scope(value.model_dump(), user.uid, vault_id)
+    if value.operationId is None:
+        result = await run_in_threadpool(service.overview, user.uid, vault_id)
+    else:
+        result = await run_in_threadpool(service.receipt, user.uid, vault_id, value.operationId)
+    return _renewal_reply(value, result, response)
+
+
+@router.post("/{vault_id}/key-renewals/apply")
+async def apply_owner_key_renewal(
+    vault_id: str,
+    request: Request,
+    response: Response,
+    user: Annotated[CurrentUser, Depends(require_google_user)],
+    service: Annotated[PrivateKeyRenewals, Depends(owner_key_renewals)],
+    _: Annotated[None, Depends(require_owner_proxy)],
+):
+    if os.getenv("USER_PRIVATE_KEY_RENEWALS") != "true":
+        raise ContractError("not_found")
+    value = await body(request, OwnerKeyRenewalWrite, maximum=MAX_REGISTRY_BYTES + 65_536)
+    _cutover_scope(value.model_dump(), user.uid, vault_id)
+    result = await run_in_threadpool(
+        service.renew,
+        user.uid,
+        vault_id,
+        value.operationId,
+        value.command,
+        value.archiveCommand,
+        value.archive,
+        value.registryBundle,
+    )
+    return _renewal_reply(value, result, response)
 
 
 def owner_registry_writer() -> RegistryUpdates:
