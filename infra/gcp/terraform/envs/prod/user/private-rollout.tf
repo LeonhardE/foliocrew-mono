@@ -43,6 +43,9 @@ locals {
   }
   private_current_environment = try(var.private_rollout.phase, null) != "active" ? {} : {
     USER_PRIVATE_OWNER_CURRENT        = "true"
+    USER_PRIVATE_ARCHIVE_WRITES       = "true"
+    USER_PRIVATE_KEY_RENEWALS         = "true"
+    USER_PRIVATE_ARCHIVE_REMOVALS     = "true"
     USER_PRIVATE_AUTHORITY_READS      = "true"
     USER_PRIVATE_SOURCE_REGISTRATIONS = "true"
     USER_PRIVATE_SOURCE_INVALIDATIONS = "true"
