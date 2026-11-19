@@ -39,6 +39,12 @@
         },
         "FOLIOVIEW_HUB_ORIGIN": {
           "type": "string"
+        },
+        "FOLIOVIEW_USER_OWNER_ENABLED": {
+          "enum": ["true", "false"]
+        },
+        "FOLIOVIEW_USER_ORIGIN": {
+          "type": "string"
         }
       },
       "required": [
@@ -49,6 +55,10 @@
         "FOLIOVIEW_HUB_OWNER_ENABLED",
         "FOLIOVIEW_HUB_ORIGIN"
       ],
+      "dependentRequired": {
+        "FOLIOVIEW_USER_OWNER_ENABLED": ["FOLIOVIEW_USER_ORIGIN"],
+        "FOLIOVIEW_USER_ORIGIN": ["FOLIOVIEW_USER_OWNER_ENABLED"]
+      },
       "additionalProperties": false
     }
   },

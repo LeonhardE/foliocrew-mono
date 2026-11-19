@@ -135,6 +135,9 @@
         },
         "agentHub": {
           "type": "boolean"
+        },
+        "userRecovery": {
+          "type": "boolean"
         }
       },
       "required": ["portfolio", "agentHub"],
