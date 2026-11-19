@@ -98,8 +98,9 @@ async function createBrowserFixture() {
             stores.push(value);
             return value;
           },
-          client(uid, store) {
+          client(uid, store, options = {}) {
             const value = new bridge.EncryptedVaultSession(uid, {
+              ...options,
               storage: store,
               workerFactory: () => new LocalWorker(),
             });

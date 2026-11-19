@@ -8,6 +8,7 @@ import type {
   OwnerRecoveryProgress,
   OwnerRecoveryRequest,
   OwnerRecoveryTransport,
+  OwnerRegistryPageRequest,
   RegistryHandoverReceipt,
   RegistryTransitionPacket,
   RegistryTransitionReview,
@@ -277,6 +278,7 @@ export class EncryptedVaultSession {
   private next = 0;
   private closed = false;
   private readonly lifetime = new AbortController();
+  private readonly readOriginalRegistryPage?: OwnerRecoveryTransport["page"];
   private renewalOnly = false;
   private deletionOnly = false;
   private saving: Promise<void> = Promise.resolve();
@@ -291,8 +293,10 @@ export class EncryptedVaultSession {
       workerFactory?: () => Worker;
       sharedUnlock?: boolean;
       onInvalidated?: () => void;
+      readOriginalRegistryPage?: OwnerRecoveryTransport["page"];
     } = {},
   ) {
+    this.readOriginalRegistryPage = options.readOriginalRegistryPage;
     this.storage = options.storage ?? new BrowserEncryptedStorage();
     const shared = options.sharedUnlock && !options.workerFactory ? sharedOwnerWorker(uid) : null;
     this.sharedUnlock = Boolean(shared);
@@ -465,6 +469,27 @@ export class EncryptedVaultSession {
       if (material.secret.byteLength) new Uint8Array(material.secret).fill(0);
     }
   }
+  private async verifyOriginalRegistryBridge(vault: Vault, pin: Json | undefined) {
+    const read = this.readOriginalRegistryPage;
+    if (!read || !vault.userAuthority || !pin || (pin.registryEpoch ?? 1) !== 1) return;
+    const generation = this.generation;
+    const signal = AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(60_000)]);
+    let page: { id: string; request: OwnerRegistryPageRequest } | null = await this.rpc(
+      "beginOriginalRegistryBridge",
+      { vault, pin },
+    );
+    for (let pages = 0; page; pages++) {
+      if (pages >= 32) throw new VaultError("too_large");
+      signal.throwIfAborted();
+      const value = await read(page.request, signal);
+      this.assert(generation);
+      signal.throwIfAborted();
+      page = await this.rpc("checkOriginalRegistryBridgePage", { id: page.id, value });
+    }
+    this.assert(generation);
+    signal.throwIfAborted();
+  }
+
   async unlock(
     vault: Vault,
     material: PasskeyMaterial,
@@ -472,6 +497,7 @@ export class EncryptedVaultSession {
     try {
       const g = this.generation;
       const local = await this.local(vault.vaultId, vault.archive);
+      await this.verifyOriginalRegistryBridge(vault, local.pin);
       this.storage.setArchiveContext?.(
         this.owner,
         requireArchive(vault.archive).credentialId,
@@ -517,6 +543,7 @@ export class EncryptedVaultSession {
     try {
       const g = this.generation;
       const local = await this.local(vault.vaultId, vault.archive);
+      await this.verifyOriginalRegistryBridge(vault, local.pin);
       this.storage.setArchiveContext?.(
         this.owner,
         requireArchive(vault.archive).credentialId,
@@ -535,6 +562,12 @@ export class EncryptedVaultSession {
   }
   async acceptResultVault(vault: Vault): Promise<{ canWriteState: boolean }> {
     const g = this.generation;
+    if (vault.userAuthority && this.readOriginalRegistryPage) {
+      await this.started;
+      const pin = await this.storage.get(this.owner + ":pin");
+      this.assert(g);
+      await this.verifyOriginalRegistryBridge(vault, pin);
+    }
     const { canWriteState, ...record } = await this.rpc("acceptResultVault", { vault });
     this.assert(g);
     try {
@@ -1426,6 +1459,12 @@ export class EncryptedVaultSession {
   }
   async acceptVault(vault: Vault): Promise<void> {
     const g = this.generation;
+    if (vault.userAuthority && this.readOriginalRegistryPage) {
+      await this.started;
+      const pin = await this.storage.get(this.owner + ":pin");
+      this.assert(g);
+      await this.verifyOriginalRegistryBridge(vault, pin);
+    }
     const record = await this.rpc("acceptVault", { vault });
     this.assert(g);
     try {

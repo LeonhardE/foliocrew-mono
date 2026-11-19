@@ -352,6 +352,87 @@ test("the original Passkey opens a transferred vault and upgrades the stored reg
   });
 });
 
+test("an offline original device verifies the missing old pages before advancing its stored pin", async () => {
+  await browser.withDatabase(async (db) => {
+    const { session, vault, storage, material, uid, h } = await initialize(db);
+    const owner = vault.archive.ownerSubject;
+    const pinKey = owner + ":pin";
+    const before = await storage.get(pinKey);
+    const local = await storage.get(owner + ":device:" + vault.vaultId);
+    let advanced = vault;
+    for (let i = 0; i < 3; i++) {
+      const other = new h.core.VaultCore(uid, () => 1000);
+      await other.unlock(advanced, material());
+      const append = await other.prepareDeviceRegistration(advanced);
+      advanced = {
+        ...advanced,
+        version: advanced.version + 1,
+        registryHistory: [...advanced.registryHistory, append.registryBundle],
+      };
+    }
+    const signer = new h.core.VaultCore(uid, () => 1000);
+    await signer.unlock(advanced, material(), { pin: before, device: local.device });
+    const state = await lifecycleState(h, { vault: advanced });
+    await signer.verifyLifecycle(advanced, state);
+    const review = await signer.reviewUserRegistryTransition(state);
+    const packet = await signer.signUserRegistryTransition(review, material());
+    const { nextHead, previousHead, archive } = decoded(packet.signedTransition);
+    const current = {
+      ...vault,
+      version: advanced.version + 1,
+      registryHistory: [packet.firstBundle],
+      userAuthority: {
+        signedTransition: packet.signedTransition,
+        registryStart: nextHead,
+        registry: nextHead,
+        archive,
+        sourcesDigest: await h.core.sha(h.core.canonical([])),
+        sources: [],
+      },
+    };
+    session.lock();
+
+    const bases = [];
+    const page = async (request, signal) => {
+      assert.equal(signal.aborted, false);
+      assert.deepEqual(request.target, previousHead);
+      assert.equal(request.ownerSubject, owner);
+      assert.equal(request.vaultId, vault.vaultId);
+      const sequence = request.base.registrySequence;
+      bases.push(sequence);
+      assert.deepEqual(await storage.get(pinKey), before);
+      return {
+        ...request,
+        rootKeyId: vault.rootKeyId,
+        bundles: [advanced.registryHistory[sequence]],
+      };
+    };
+    const wrong = db.client(uid, storage, {
+      async readOriginalRegistryPage(request, signal) {
+        const result = await page(request, signal);
+        return {
+          ...result,
+          bundles: [advanced.registryHistory[request.base.registrySequence + 1]],
+        };
+      },
+    });
+    await assert.rejects(wrong.unlock(current, material()), /registry_conflict/);
+    assert.deepEqual(await storage.get(pinKey), before);
+    wrong.lock();
+
+    bases.length = 0;
+    const currentSession = db.client(uid, storage, { readOriginalRegistryPage: page });
+    assert.equal((await currentSession.unlock(current, material())).needsDeviceRegistration, false);
+    assert.deepEqual(bases, [1, 2, 3]);
+    assert.deepEqual(await storage.get(pinKey), before);
+    await currentSession.acceptVault(current);
+    const committed = await storage.get(pinKey);
+    assert.equal(committed.registryEpoch, 2);
+    assert.equal(committed.checkpointDigest, nextHead.checkpointDigest);
+    assert.deepEqual(bases, [1, 2, 3], "reuse completed proof in the same unlocked Worker");
+  });
+});
+
 test("an uncertain handover resumes the original signed packet after lock", async () => {
   await browser.withDatabase(async (db) => {
     const { session, storage, state, uid, vault, material, h } = await initialize(db);

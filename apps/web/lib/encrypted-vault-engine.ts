@@ -347,6 +347,12 @@ export function createVaultKernel(
             case "checkUserRegistryStart":
               result = await core.checkUserRegistryStart(args.nonce, args.value);
               break;
+            case "beginOriginalRegistryBridge":
+              result = await core.beginOriginalRegistryBridge(args.vault, args.pin);
+              break;
+            case "checkOriginalRegistryBridgePage":
+              result = await core.checkOriginalRegistryBridgePage(args.id, args.value);
+              break;
             case "checkUserRegistryPage":
               result = await core.checkUserRegistryPage(args.nonce, args.value);
               break;
