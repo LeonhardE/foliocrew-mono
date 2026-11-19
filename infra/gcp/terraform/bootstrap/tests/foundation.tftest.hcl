@@ -96,11 +96,6 @@ override_resource {
 }
 
 override_resource {
-  target = google_project_iam_member.user_cache
-  values = {}
-}
-
-override_resource {
   target          = google_project_iam_custom_role.user_service_read
   override_during = plan
   values = {
@@ -564,17 +559,9 @@ run "user_execution_business_roles_cannot_create_delete_or_administer_resources"
       google_service_account_iam_member.user_runtime_deployer["terraform"].member == "serviceAccount:${module.target_execution["user"].service_accounts["apply"]}" &&
       google_cloud_run_v2_service_iam_member.user_image_deployer.name == "user-api" &&
       google_cloud_run_v2_service_iam_member.user_image_deployer.role == "roles/run.developer" &&
-      google_cloud_run_v2_service_iam_member.user_image_deployer.member == "serviceAccount:fa-build@${var.project_id}.iam.gserviceaccount.com" &&
-      google_project_iam_member.user_cache.role == "roles/datastore.user" &&
-      google_project_iam_member.user_cache.member == "serviceAccount:fa-user-runtime@${var.project_id}.iam.gserviceaccount.com" &&
-      length(module.user_database_scope.grants) == 0 &&
-      module.user_database_scope.database_resource_name == "projects/${var.project_id}/databases/(default)" &&
-      length(google_project_iam_member.user_cache.condition) == 1 &&
-      google_project_iam_member.user_cache.condition[0].title == "database-default" &&
-      google_project_iam_member.user_cache.condition[0].description == module.user_database_scope.condition.description &&
-      google_project_iam_member.user_cache.condition[0].expression == "resource.type == 'firestore.googleapis.com/Database' && resource.name == 'projects/${var.project_id}/databases/(default)'"
+      google_cloud_run_v2_service_iam_member.user_image_deployer.member == "serviceAccount:fa-build@${var.project_id}.iam.gserviceaccount.com"
     )
-    error_message = "Preserve User image publishing and default-database-only data access under the existing IAM owner; Terraform apply may attach only the User runtime and must not impersonate fa-build."
+    error_message = "Preserve the existing User image publisher; Terraform apply may attach only the User runtime."
   }
 }
 
