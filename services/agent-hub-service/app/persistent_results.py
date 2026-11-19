@@ -177,8 +177,12 @@ class PersistentResultService(PersistentExecutionService):
             raise ContractError("malformed_request")
         validate_schema("Identifier", request["runId"])
 
+        user_scope = self._request_user_scope(owner, vault, connection)
+
         def read(unit):
-            self.authenticate(unit, owner, vault, connection, proof, path, request)
+            self.authenticate(
+                unit, owner, vault, connection, proof, path, request, user_scope=user_scope
+            )
             run, manifest = stored_run(unit, owner, vault, request["runId"])
             if manifest["connectionId"] != connection or run["resultId"] is None:
                 raise ContractError("not_found")
@@ -263,8 +267,12 @@ class PersistentResultService(PersistentExecutionService):
         if c["stableOperationId"] != request["operationId"] or c["objectType"] != "result_revision":
             raise ContractError("recipient_binding_mismatch")
 
+        user_scope = self._request_user_scope(owner, vault, connection)
+
         def existing(unit):
-            uid, *_ = self.authenticate(unit, owner, vault, connection, proof, path, request)
+            uid, *_ = self.authenticate(
+                unit, owner, vault, connection, proof, path, request, user_scope=user_scope
+            )
             prior = self._original(
                 unit,
                 owner,
@@ -345,8 +353,13 @@ class PersistentResultService(PersistentExecutionService):
                     for binding in requested["resources"]
                 }
 
+        if user_scope is not None:
+            user_scope = self.user_vaults.read(uid, vault)
+
         def write(unit):
-            self.authenticate(unit, owner, vault, connection, proof, path, request)
+            self.authenticate(
+                unit, owner, vault, connection, proof, path, request, user_scope=user_scope
+            )
             prior = self._original(
                 unit,
                 owner,
@@ -372,6 +385,7 @@ class PersistentResultService(PersistentExecutionService):
                 request["runId"],
                 sources,
                 report_source_check=check,
+                user_scope=user_scope,
             )
             if m["resultPolicy"] != "owner_inbox":
                 raise ContractError("insufficient_scope")
@@ -410,7 +424,9 @@ class PersistentResultService(PersistentExecutionService):
                 ),
                 now=self.now(),
             )
-            self.authenticate(unit, owner, vault, connection, proof, path, request)
+            self.authenticate(
+                unit, owner, vault, connection, proof, path, request, user_scope=user_scope
+            )
             if _selection(registry, self.now())[1] != recipients:
                 raise ContractError("registry_conflict")
             now = self.now()
@@ -445,7 +461,9 @@ class PersistentResultService(PersistentExecutionService):
 
                 append_result(unit, row["taskCenter"], ident)
                 observe_center_result(unit, row["taskCenter"], ident)
-            self.authenticate(unit, owner, vault, connection, proof, path, request)
+            self.authenticate(
+                unit, owner, vault, connection, proof, path, request, user_scope=user_scope
+            )
             if self.now() >= m["expiresAt"] or _selection(registry, self.now())[1] != recipients:
                 raise ContractError("key_authorization_required")
             unit.put(

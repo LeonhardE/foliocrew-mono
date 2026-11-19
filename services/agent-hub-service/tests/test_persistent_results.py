@@ -195,6 +195,21 @@ class PersistentResultTests(unittest.TestCase):
         self.assertEqual(self.submit(), receipt)
         decide.assert_called_once()
 
+    def test_transferred_report_uses_current_user_proof_and_exact_decision(self):
+        self.service.user_vaults = self.x.transferred_scope()
+        self.service.selected_report_owner = self.f.owner
+        decide = self.use_report_authority()
+        with patch("app.persistent_agents._current", side_effect=AssertionError("legacy registry")):
+            receipt = self.submit()
+            self.assertEqual(self.submit(), receipt)
+            decide.assert_called_once()
+            self.assertEqual(
+                self.service.result_receipt(
+                    *self.x.args("runs/result-receipt", {"runId": self.manifest["runId"]})
+                ),
+                receipt,
+            )
+
     def test_known_receipt_survives_legacy_freeze(self):
         receipt = self.submit()
         self.set_migration_fence("frozen")

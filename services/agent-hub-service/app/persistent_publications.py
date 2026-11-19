@@ -140,8 +140,10 @@ class PersistentPublicationService(ResourceConsentService):
     def _task_scope(self, unit, owner, vault, connection, metadata):
         """Optional parent scope ceiling, in addition to current task authority."""
 
-    def live(self, unit, uid, vault, connection):
-        owner, vault_row, registry, conn = self._context(unit, uid, vault, connection, active=True)
+    def live(self, unit, uid, vault, connection, *, user_scope=None):
+        owner, vault_row, registry, conn = self._context(
+            unit, uid, vault, connection, active=True, user_scope=user_scope
+        )
         identity = self._identity(unit, owner, vault, connection, conn, active=True)
         return owner, vault_row, registry, conn, identity
 

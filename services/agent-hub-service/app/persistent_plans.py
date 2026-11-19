@@ -266,8 +266,12 @@ class PersistentPlanService(PersistentExecutionService):
             raise ContractError("malformed_request")
         validate_schema("Identifier", request["taskId"])
 
+        user_scope = self._request_user_scope(owner, vault, connection)
+
         def read(unit):
-            *_, identity = self.authenticate(unit, owner, vault, connection, proof, path, request)
+            *_, identity = self.authenticate(
+                unit, owner, vault, connection, proof, path, request, user_scope=user_scope
+            )
             authority = stored_authority(unit, owner, vault, request["taskId"], connection)
             if authority is None or any(
                 authority["context"][k] != identity[k] for k in BINDING_FIELDS
@@ -315,9 +319,11 @@ class PersistentPlanService(PersistentExecutionService):
             raise ContractError("malformed_request")
         fingerprint = digest(request)
 
+        user_scope = self._request_user_scope(owner, vault, connection)
+
         def write(unit):
             _, _, registry, conn, identity = self.authenticate(
-                unit, owner, vault, connection, proof, path, request
+                unit, owner, vault, connection, proof, path, request, user_scope=user_scope
             )
             if request["provider"] != conn["provider"]:
                 raise ContractError("recipient_binding_mismatch")
@@ -376,7 +382,9 @@ class PersistentPlanService(PersistentExecutionService):
                 "authority": "agent_statement",
                 "nativeScheduleAttested": False,
             }
-            self.authenticate(unit, owner, vault, connection, proof, path, request)
+            self.authenticate(
+                unit, owner, vault, connection, proof, path, request, user_scope=user_scope
+            )
             unit.put(
                 op,
                 {
