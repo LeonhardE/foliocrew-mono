@@ -450,6 +450,7 @@ function encryptedRule(
 ): EncryptedRule | null {
   if (service === "agent-hub") return hubOwnerRule(path, method);
   const id = "[A-Za-z0-9][A-Za-z0-9_-]{0,127}";
+  const operation = "[A-Za-z0-9_-]{22,128}";
   if (method === "POST" && new RegExp(`^/api/v3/holdings/sources/${id}/view/query$`).test(path))
     return {
       method: "POST",
@@ -470,12 +471,17 @@ function encryptedRule(
     };
   if (
     new RegExp(
-      `^/api/v2/holdings/sources/${id}(?:/latest|/snapshots/${id}|/(?:operations|operation-cancellations)/[A-Za-z0-9_-]{22,128}|/mutations/${id})?$`,
+      `^/api/v2/holdings/sources/${id}(?:/latest|/snapshots/${id}|/(?:operations|operation-cancellations|mutations)/${operation})?$`,
     ).test(path)
   )
     return { method: "GET" };
   if (new RegExp(`^/api/v2/holdings/sources/${id}/authority-sync$`).test(path))
     return { method: "POST", keys: ["contractVersion"], authority: true };
+  if (
+    method === "POST" &&
+    new RegExp(`^/api/v2/holdings/sources/${id}/mutations/${operation}/synchronize$`).test(path)
+  )
+    return { method, keys: ["contractVersion"], maxBytes: 1024 };
   return null;
 }
 
