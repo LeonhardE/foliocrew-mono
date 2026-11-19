@@ -95,7 +95,6 @@ export type OwnerCapabilities = Readonly<{
   portfolio: boolean;
   agentHub: boolean;
   userVault?: true;
-  userHandover?: true;
 }>;
 export type OwnerConfigStatus = "loading" | "ready" | "unavailable";
 type OwnerConfig = { status: OwnerConfigStatus; flags: OwnerCapabilities };
@@ -152,12 +151,8 @@ async function readOwnerCapabilities(
     !flags ||
     typeof flags !== "object" ||
     Array.isArray(flags) ||
-    Object.keys(flags).some(
-      (key) => !["agentHub", "portfolio", "userVault", "userHandover"].includes(key),
-    ) ||
-    ["userVault", "userHandover"].some(
-      (key) => Object.hasOwn(flags, key) && (flags as Record<string, unknown>)[key] !== true,
-    ) ||
+    Object.keys(flags).some((key) => !["agentHub", "portfolio", "userVault"].includes(key)) ||
+    (Object.hasOwn(flags, "userVault") && (flags as Record<string, unknown>).userVault !== true) ||
     typeof (flags as Record<string, unknown>).portfolio !== "boolean" ||
     typeof (flags as Record<string, unknown>).agentHub !== "boolean"
   )
@@ -166,9 +161,6 @@ async function readOwnerCapabilities(
     portfolio: (flags as Record<string, unknown>).portfolio as boolean,
     agentHub: (flags as Record<string, unknown>).agentHub as boolean,
     ...((flags as Record<string, unknown>).userVault === true ? { userVault: true as const } : {}),
-    ...((flags as Record<string, unknown>).userHandover === true
-      ? { userHandover: true as const }
-      : {}),
   };
 }
 

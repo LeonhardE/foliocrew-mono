@@ -2,7 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const { createBrowserFixture } = require("./vault-browser-fixture.cjs");
 const { createOwner, decoded } = require("./full-flow-crypto-fixture.cjs");
-const { lifecycleState } = require("./vault-key-renewal-fixture.cjs");
+const { lifecycleState, renewalAccepted } = require("./vault-key-renewal-fixture.cjs");
 
 let browser;
 test.before(async () => {
@@ -65,6 +65,53 @@ async function initialize({ client, store }) {
     head,
     evidence,
   };
+}
+
+async function signedTransition(h, uid, vault, state, material, signer) {
+  const root = signer ?? new h.core.VaultCore(uid, () => 1000);
+  if (!signer) await root.unlock(vault, material());
+  const previous = vault.registryHistory.at(-1);
+  const entries = previous.entries.filter(
+    ({ active, certificate }) =>
+      active && ["device_sig", "device_enc", "recovery_enc"].includes(decoded(certificate).role),
+  );
+  const firstBundle = await root.bundle(entries, root.registry);
+  const head = async (bundle, registryEpoch) => {
+    const cp = decoded(bundle.checkpoint);
+    return {
+      registryEpoch,
+      registrySequence: cp.registrySequence,
+      keyEpoch: cp.keyEpoch,
+      checkpointDigest: await h.core.sha(h.core.canonical(cp)),
+    };
+  };
+  const operationId = "synthetic_owner_registry_transition";
+  const payload = {
+    contractVersion: h.types.CONTRACT,
+    profile: "folioview.owner-registry-transition.v1",
+    ownerSubject: vault.archive.ownerSubject,
+    vaultId: vault.vaultId,
+    rootKeyId: vault.rootKeyId,
+    operationId,
+    previousVaultVersion: vault.version,
+    nextVaultVersion: vault.version + 1,
+    previousHead: await head(previous, 1),
+    nextHead: await head(firstBundle, 2),
+    ownerKeyIds: entries.map(({ certificate }) => decoded(certificate).keyId).sort(),
+    archive: { state: "active", version: state.lifecycleVersion + 1, digest: state.archiveDigest },
+    issuedAt: decoded(firstBundle.checkpoint).issuedAt,
+  };
+  const signedTransition = await new h.jose.FlattenedSign(
+    new TextEncoder().encode(h.core.canonical(payload)),
+  )
+    .setProtectedHeader({
+      alg: "ES256",
+      kid: vault.rootKeyId,
+      typ: "fv-control+jws",
+      cty: "application/json",
+    })
+    .sign(root.root);
+  return { operationId, signedTransition, firstBundle };
 }
 
 function noPage() {
@@ -239,43 +286,11 @@ test("Worker verifies contiguous signed pages against one target and keeps the o
   });
 });
 
-test("the new registry start requires a fresh original Passkey and preserves current pins", async () => {
+test("an existing Owner-signed registry start passes the shared verifier", async () => {
   await browser.withDatabase(async (db) => {
-    const { vault, state, material, session, storage } = await initialize(db);
-    await session.verifyLifecycle(vault, state);
-    const key = vault.archive.ownerSubject + ":pin";
-    const before = await storage.get(key);
-    const expired = await session.reviewUserRegistryTransition(state);
-    browser.time(expired.expiresAt);
-    await assert.rejects(
-      session.signUserRegistryTransition(expired, material()),
-      /untrusted_vault/,
-    );
-    browser.time(1000);
-    const first = await session.reviewUserRegistryTransition(state);
-    await assert.rejects(
-      session.signUserRegistryTransition(first, {
-        ...material(),
-        secret: new Uint8Array(32).buffer,
-      }),
-      /unlock_failed/,
-    );
-    await assert.rejects(session.signUserRegistryTransition(first, material()), /untrusted_vault/);
-    const review = await session.reviewUserRegistryTransition(state);
-    const packet = await session.signUserRegistryTransition(review, material());
+    const { vault, state, material, uid, h } = await initialize(db);
+    const packet = await signedTransition(h, uid, vault, state, material);
     const transition = decoded(packet.signedTransition);
-    assert.equal(packet.operationId, review.operationId);
-    assert.equal(transition.previousVaultVersion, vault.version);
-    assert.equal(transition.nextVaultVersion, vault.version + 1);
-    assert.equal(transition.archive.digest, state.archiveDigest);
-    assert.deepEqual(transition.ownerKeyIds, review.ownerKeyIds);
-    assert.equal(decoded(packet.firstBundle.checkpoint).previousDigest, before.checkpointDigest);
-    assert.equal(transition.nextHead.registryEpoch, 2);
-    assert.deepEqual(await storage.get(key), before);
-    assert.ok(!JSON.stringify(packet).includes("rootPrivateJwk"));
-    assert.ok(!JSON.stringify(packet).includes(vault.archive.credentialId));
-    await assert.rejects(session.signUserRegistryTransition(review, material()), /untrusted_vault/);
-
     const { spawnSync } = require("node:child_process");
     const { resolve } = require("node:path");
     const repository = resolve(__dirname, "../../..");
@@ -317,8 +332,7 @@ test("the original Passkey opens a transferred vault and upgrades the stored reg
   await browser.withDatabase(async (db) => {
     const { session, state, vault, storage, material, uid, h } = await initialize(db);
     await session.verifyLifecycle(vault, state);
-    const review = await session.reviewUserRegistryTransition(state);
-    const packet = await session.signUserRegistryTransition(review, material());
+    const packet = await signedTransition(h, uid, vault, state, material);
     const { nextHead, archive } = decoded(packet.signedTransition);
     const current = {
       ...vault,
@@ -352,6 +366,96 @@ test("the original Passkey opens a transferred vault and upgrades the stored reg
   });
 });
 
+test("the original Passkey opens a renewed archive after the new epoch omits revoked certificates", async () => {
+  await browser.withDatabase(async (db) => {
+    const { h } = browser;
+    const old = await createOwner(h);
+    old.time(2000);
+    browser.time(2000);
+    const state = await lifecycleState(h, old);
+    await old.session.unlockForKeyRenewal(old.vault, old.material(), {
+      pin: old.local.pin,
+      device: old.local.device,
+    });
+    const candidate = await old.session.prepareKeyRenewal(old.vault, state);
+    const renewed = await renewalAccepted(h, old.vault, state, candidate.packet, old.now());
+    const finished = await old.session.finishKeyRenewal(
+      renewed.vault,
+      renewed.state,
+      candidate.record,
+      renewed.receipt,
+    );
+    const signer = new h.core.VaultCore(old.uid, old.now);
+    await signer.unlock(renewed.vault, old.material(), {
+      pin: finished.record.pin,
+      device: finished.record.device,
+    });
+    const packet = await signedTransition(
+      h,
+      old.uid,
+      renewed.vault,
+      renewed.state,
+      old.material,
+      signer,
+    );
+    const { previousHead, nextHead, archive } = decoded(packet.signedTransition);
+    assert.equal(decoded(packet.firstBundle.checkpoint).revokedKeyIds.length, 3);
+    assert.equal(packet.firstBundle.entries.length, 3);
+    const current = {
+      ...renewed.vault,
+      version: renewed.vault.version + 1,
+      registryHistory: [packet.firstBundle],
+      userAuthority: {
+        signedTransition: packet.signedTransition,
+        registryStart: nextHead,
+        registry: nextHead,
+        archive,
+        sources: [],
+        sourcesDigest: await h.core.sha(h.core.canonical([])),
+      },
+    };
+    const storage = db.store();
+    const owner = renewed.vault.archive.ownerSubject;
+    await storage.commitVault(owner, finished.record);
+    const page = (request) => ({
+      ...request,
+      rootKeyId: current.rootKeyId,
+      bundles: renewed.vault.registryHistory,
+    });
+
+    const unproven = db.client(old.uid, storage, {
+      readOriginalRegistryPage: async (request) => ({
+        ...page(request),
+        bundles: renewed.vault.registryHistory.slice(1),
+      }),
+    });
+    await assert.rejects(unproven.unlockForResults(current, old.material()), /registry_conflict/);
+
+    const requests = [];
+    const sameDevice = db.client(old.uid, storage, {
+      readOriginalRegistryPage: async (request) => {
+        requests.push(request);
+        return page(request);
+      },
+    });
+    assert.equal((await sameDevice.unlockForResults(current, old.material())).canWriteState, true);
+    assert.equal((await sameDevice.acceptResultVault(current)).canWriteState, true);
+    assert.equal(
+      await sameDevice.acceptResultVault(current).then((value) => value.canWriteState),
+      true,
+    );
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].base, null);
+    assert.deepEqual(requests[0].target, previousHead);
+    const pinned = await storage.get(owner + ":pin");
+    assert.equal(pinned.registryEpoch, 2);
+    assert.equal(pinned.checkpointDigest, nextHead.checkpointDigest);
+
+    const reload = db.client(old.uid, storage, { readOriginalRegistryPage: page });
+    assert.equal((await reload.unlockForResults(current, old.material())).canWriteState, true);
+  });
+});
+
 test("an offline original device verifies the missing old pages before advancing its stored pin", async () => {
   await browser.withDatabase(async (db) => {
     const { session, vault, storage, material, uid, h } = await initialize(db);
@@ -374,8 +478,7 @@ test("an offline original device verifies the missing old pages before advancing
     await signer.unlock(advanced, material(), { pin: before, device: local.device });
     const state = await lifecycleState(h, { vault: advanced });
     await signer.verifyLifecycle(advanced, state);
-    const review = await signer.reviewUserRegistryTransition(state);
-    const packet = await signer.signUserRegistryTransition(review, material());
+    const packet = await signedTransition(h, uid, advanced, state, material, signer);
     const { nextHead, previousHead, archive } = decoded(packet.signedTransition);
     const current = {
       ...vault,
@@ -467,10 +570,7 @@ test("an offline Owner bridge crosses the 32-checkpoint legacy limit before pinn
     await signer.unlock(original, material(), { pin: before, device: local.device });
     const lifecycle = await lifecycleState(h, { vault: original });
     await signer.verifyLifecycle(original, lifecycle);
-    const packet = await signer.signUserRegistryTransition(
-      await signer.reviewUserRegistryTransition(lifecycle),
-      material(),
-    );
+    const packet = await signedTransition(h, uid, original, lifecycle, material, signer);
     const { nextHead, previousHead, archive } = decoded(packet.signedTransition);
     assert.equal(previousHead.registrySequence, 32);
     assert.equal(nextHead.registrySequence, 33);
@@ -580,8 +680,7 @@ test("the current Worker verifies original archive lifecycle controls against th
     }
     const previous = { ...state, history, lifecycleVersion: 2 };
     await core.verifyLifecycle(vault, previous);
-    const review = await core.reviewUserRegistryTransition(previous);
-    const packet = await core.signUserRegistryTransition(review, material());
+    const packet = await signedTransition(h, uid, vault, previous, material, core);
     const { nextHead, archive } = decoded(packet.signedTransition);
     const current = {
       ...vault,
@@ -617,8 +716,7 @@ test("a cold User vault verifies a new Passkey against its signed archive contin
   await browser.withDatabase(async (db) => {
     const { session, uid, h, material, vault, state } = await initialize(db);
     await session.verifyLifecycle(vault, state);
-    const review = await session.reviewUserRegistryTransition(state);
-    const handover = await session.stageUserHandover(vault, review, material());
+    const handover = await signedTransition(h, uid, vault, state, material);
     const { nextHead, archive } = decoded(handover.signedTransition);
     const original = {
       ...vault,
@@ -708,8 +806,7 @@ test("a transferred vault shows deletion only after its exact signed removal and
   await browser.withDatabase(async (db) => {
     const { session, uid, h, material, vault, state } = await initialize(db);
     await session.verifyLifecycle(vault, state);
-    const review = await session.reviewUserRegistryTransition(state);
-    const handover = await session.stageUserHandover(vault, review, material());
+    const handover = await signedTransition(h, uid, vault, state, material);
     const { nextHead, archive } = decoded(handover.signedTransition);
     const original = {
       ...vault,
@@ -785,84 +882,50 @@ test("a transferred vault shows deletion only after its exact signed removal and
   });
 });
 
-test("an uncertain handover resumes the original signed packet after lock", async () => {
+test("a verified User head clears a locally pending receipt from the retired handover", async () => {
   await browser.withDatabase(async (db) => {
     const { session, storage, state, uid, vault, material, h } = await initialize(db);
-    await session.verifyLifecycle(vault, state);
-    const review = await session.reviewUserRegistryTransition(state);
-    const packet = await session.stageUserHandover(vault, review, material());
-    const seen = [];
-    const original = decoded(packet.signedTransition);
-    const digest = await h.core.sha(
-      `${packet.signedTransition.protected}.${packet.signedTransition.payload}`,
-    );
-    await assert.rejects(
-      session.submitUserHandover(vault, async (value) => {
-        seen.push(value);
-        throw new Error("response lost");
-      }),
-      /response lost/,
-    );
+    const packet = await signedTransition(h, uid, vault, state, material);
+    const owner = vault.archive.ownerSubject;
+    const key = owner + ":user-handover:" + vault.vaultId;
+    const row = {
+      ownerSubject: owner,
+      vaultId: vault.vaultId,
+      rootKeyId: vault.rootKeyId,
+      pending: packet,
+    };
+    assert.equal(await storage.insert(key, row), true);
     session.lock();
 
     const reload = db.client(uid, storage);
-    assert.deepEqual(await reload.pendingUserHandover(vault), packet);
-    const receipt = {
-      contractVersion: original.contractVersion,
-      profile: "folioview.owner-handover.v1",
-      ownerSubject: original.ownerSubject,
-      vaultId: original.vaultId,
-      rootKeyId: original.rootKeyId,
-      operationId: packet.operationId,
-      baselineDigest: "a".repeat(64),
-      transitionFingerprint: digest,
-      nextVaultVersion: original.nextVaultVersion,
-      registryStart: original.nextHead,
-      writerEpoch: 2,
-    };
-    await assert.rejects(
-      reload.submitUserHandover(vault, async () => ({
-        ...receipt,
-        transitionFingerprint: "b".repeat(64),
-      })),
-      /untrusted_vault/,
-    );
-    assert.deepEqual(
-      await reload.submitUserHandover(vault, async (value) => {
-        seen.push(value);
-        return receipt;
-      }),
-      receipt,
-    );
-    assert.deepEqual(seen, [packet, packet]);
-    assert.deepEqual(await reload.pendingUserHandover(vault), packet);
+    assert.deepEqual(await storage.get(key), row);
+    const transition = decoded(packet.signedTransition);
     const current = {
       ...vault,
-      version: receipt.nextVaultVersion,
+      version: transition.nextVaultVersion,
       registryHistory: [packet.firstBundle],
       userAuthority: {
         signedTransition: packet.signedTransition,
-        registry: receipt.registryStart,
-        registryStart: receipt.registryStart,
-        archive: original.archive,
+        registry: transition.nextHead,
+        registryStart: transition.nextHead,
+        archive: transition.archive,
         sourcesDigest: await h.core.sha(h.core.canonical([])),
         sources: [],
       },
     };
     assert.equal((await reload.unlock(current, material())).needsDeviceRegistration, false);
     await reload.acceptVault(current);
-    assert.equal(await reload.pendingUserHandover(current), null);
+    assert.equal(await storage.get(key), null);
   });
 });
 
 test("Worker verifies the fresh User epoch against the original pinned Root, archive and nonce", async () => {
   await browser.withDatabase(async (db) => {
-    const { session, state, vault, storage, evidence, material } = await initialize(db);
+    const { session, state, vault, storage, evidence, material, uid, h } = await initialize(db);
     await session.verifyLifecycle(vault, state);
     const key = vault.archive.ownerSubject + ":pin";
     const pinned = await storage.get(key);
-    const review = await session.reviewUserRegistryTransition(state);
-    const packet = await session.signUserRegistryTransition(review, material());
+    const packet = await signedTransition(h, uid, vault, state, material);
     const { nextHead, archive } = decoded(packet.signedTransition);
     let lastStarts = 0;
     const transport = {

@@ -1107,12 +1107,6 @@
     "sharedUnlockHelp": "資源庫已解鎖，資源、任務、Agent、收件箱和設定可共用。",
     "lockWorkspace": "鎖定所有私密頁面",
     "advancedTitle": "敏感操作",
-    "userHandoverTitle": "將金庫管理切換至 User",
-    "userHandoverReview": "檢查切換準備",
-    "userHandoverScope": "金庫 {vault} 將保留 {keys} 個有效的裝置和復原金鑰。",
-    "userHandoverConfirm": "使用原本的通行金鑰確認",
-    "userHandoverRetry": "繼續已簽署的切換",
-    "userHandoverInstalled": "User 已接受簽署確認。金庫會在驗證服務切換期間維持鎖定。",
     "validUntil": "有效至 {date}",
     "numberedDevice": "裝置 {number}"
   },

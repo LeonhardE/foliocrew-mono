@@ -172,7 +172,7 @@ export default function WorkspaceShell() {
   const message = (value: string | null | undefined) => localizeMessage(value, t, locale);
   const pickerDialog = useRef<HTMLDialogElement>(null);
   const chartHeading = useRef<HTMLHeadingElement>(null);
-  const watchlist = useWatchlist();
+  const watchlist = useWatchlist(activeView === "markets" || activeView === "resources");
   const overview = useCachedMarketResource<MarketOverview>(
     marketsVisited ? "/api/stocks" : null,
     overviewReload,

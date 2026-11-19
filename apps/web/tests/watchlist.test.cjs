@@ -61,7 +61,7 @@ const response = (data, status = 200) => ({
 });
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
-function mountWatchlist() {
+function mountWatchlist(enabled = true) {
   let auth = { status: "authenticated", sessionKey: "a:1" };
   const cells = [];
   const pendingEffects = [];
@@ -128,7 +128,7 @@ function mountWatchlist() {
     requests,
     render: (flush = true) => {
       index = 0;
-      const result = useWatchlist();
+      const result = useWatchlist(enabled);
       if (flush) {
         for (const { slot, effect, dependencies } of pendingEffects.splice(0)) {
           cells[slot]?.cleanup?.();
@@ -138,6 +138,9 @@ function mountWatchlist() {
         pendingEffects.length = 0;
       }
       return result;
+    },
+    enable(value) {
+      enabled = value;
     },
     account: (sessionKey, status = sessionKey ? "authenticated" : "anonymous") => {
       auth = { sessionKey, status };
@@ -158,6 +161,30 @@ function mountWatchlist() {
     unmount: () => cells.forEach((cell) => cell.cleanup?.()),
   };
 }
+
+test("watchlist waits for a consuming view and keeps the same account's loaded list", async () => {
+  const hook = mountWatchlist(false);
+  assert.equal(hook.render().loading, false);
+  assert.equal(hook.requests.length, 0);
+  hook.enable(true);
+  hook.render();
+  assert.equal(hook.requests.length, 1);
+  hook.requests[0].result.resolve(response(body()));
+  await settle();
+  hook.enable(false);
+  hook.render();
+  hook.enable(true);
+  hook.render();
+  assert.equal(hook.requests.length, 1);
+  hook.enable(false);
+  hook.account("b:1");
+  assert.equal(hook.render().items.length, 0);
+  assert.equal(hook.requests.length, 1);
+  hook.enable(true);
+  hook.render();
+  assert.equal(hook.requests.length, 2);
+  hook.unmount();
+});
 
 test("watchlist CRUD uses one private request at a time and retains server results", async () => {
   const hook = mountWatchlist();

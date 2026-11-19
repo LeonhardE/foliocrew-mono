@@ -1107,12 +1107,6 @@
     "sharedUnlockHelp": "资源库已解锁，资源、任务、Agent、收件箱和设置可共用。",
     "lockWorkspace": "锁定所有私密页面",
     "advancedTitle": "敏感操作",
-    "userHandoverTitle": "将金库管理切到 User",
-    "userHandoverReview": "检查切换准备",
-    "userHandoverScope": "金库 {vault} 将保留 {keys} 个有效的设备和恢复密钥。",
-    "userHandoverConfirm": "用原通行密钥确认",
-    "userHandoverRetry": "继续已签名的切换",
-    "userHandoverInstalled": "User 已接收签名确认。金库将在服务切换验证期间保持锁定。",
     "validUntil": "有效至 {date}",
     "numberedDevice": "设备 {number}"
   },
