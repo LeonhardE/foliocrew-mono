@@ -140,6 +140,11 @@ environment/JWKS endpoint, content-decryption permission, database grant, runtim
 policy. Existing Firebase owner verification, public invocation mode, `(default)` storage, resource
 addresses, UID guard and cost limits remain unchanged.
 
+The User root derives `USER_REPORT_DELEGATION_AUDIENCE` from the pinned User origin by
+adding `/internal/v2/private-resources/report-source-decisions`. This audience binds a
+single report operation. The private source decision endpoint still requires its own
+activation and verified User authority at cutover.
+
 A trust-enabling plan may replace only the existing guarded configuration controller to set these
 four nonsecret environment values. Review its complete source/state-backed plan independently of
 image release; native service replacement, IAM/database changes or an unrelated diff is a stop

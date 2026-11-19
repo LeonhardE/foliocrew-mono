@@ -81,6 +81,28 @@ run "exact_pinned_hub_trust" {
   }
 }
 
+run "report_audience_binds_exact_operation_and_does_not_enable_it" {
+  command = plan
+  variables {
+    hub_trust = {
+      USER_SERVICE_AUDIENCE    = "https://user-api-111222333444.us-central1.run.app"
+      USER_DELEGATION_AUDIENCE = "https://user-api-111222333444.us-central1.run.app/internal/v2"
+      USER_DELEGATION_ISSUER   = "https://agent-hub-api-111222333444.us-central1.run.app"
+      USER_TRUSTED_HUB_CALLERS = jsonencode({
+        "123456789012345678901" = "alpha-hub-runtime@demo-user-alpha.iam.gserviceaccount.com"
+      })
+    }
+  }
+  assert {
+    condition = (
+      local.environment.USER_REPORT_DELEGATION_AUDIENCE == "${var.hub_trust.USER_SERVICE_AUDIENCE}/internal/v2/private-resources/report-source-decisions" &&
+      local.environment.USER_DELEGATION_AUDIENCE == var.hub_trust.USER_DELEGATION_AUDIENCE &&
+      !contains(keys(local.environment), "USER_REPORT_SOURCE_DECISIONS")
+    )
+    error_message = "The report recipient must bind the exact operation and leave activation off."
+  }
+}
+
 run "reject_wrong_service_audience" {
   command = plan
   variables { hub_trust = { "USER_SERVICE_AUDIENCE" : "https://portfolio-api-111222333444.us-central1.run.app", "USER_DELEGATION_AUDIENCE" : "https://user-api-111222333444.us-central1.run.app/internal/v2", "USER_DELEGATION_ISSUER" : "https://agent-hub-api-111222333444.us-central1.run.app", "USER_TRUSTED_HUB_CALLERS" : "{\"123456789012345678901\":\"alpha-hub-runtime@demo-user-alpha.iam.gserviceaccount.com\"}" } }

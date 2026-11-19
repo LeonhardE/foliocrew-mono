@@ -6,13 +6,16 @@ locals {
   hub_trust_environment = var.hub_trust == null ? {} : (
     alltrue([for value in values(var.hub_trust) : value == ""]) ? {} : var.hub_trust
   )
+  report_trust_environment = length(local.hub_trust_environment) == 0 ? {} : {
+    USER_REPORT_DELEGATION_AUDIENCE = "${local.hub_trust_environment.USER_SERVICE_AUDIENCE}/internal/v2/private-resources/report-source-decisions"
+  }
   environment = merge({
     FIREBASE_PROJECT_ID = local.project_id
     CORS_ORIGINS        = local.browser_cors_origins
     FIRESTORE_DATABASE  = "user-data"
     USER_STORE_BACKEND  = "firestore"
     MARKET_API_BASE_URL = var.deployment.market_origin
-  }, local.hub_trust_environment)
+  }, local.hub_trust_environment, local.report_trust_environment)
 }
 
 provider "google" {
