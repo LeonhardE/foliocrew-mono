@@ -94,6 +94,7 @@ async def workload_token(audience):
 
 class HubFenceClient:
     path = "/internal/v2/source-fences"
+    validate = staticmethod(validate_ack)
 
     def __init__(
         self, origin, *, token_factory=workload_token, transport=None, clock=time.monotonic
@@ -171,7 +172,7 @@ class HubFenceClient:
                 ):
                     raise ContractError(code)
                 raise ContractError("source_unavailable")
-            validate_ack(value, request)
+            self.validate(value, request)
             return value
         except ContractError as error:
             if error.code in {"invalid_envelope", "malformed_request"}:
@@ -188,6 +189,49 @@ def configured_client(origin):
 
 class UserFenceClient(HubFenceClient):
     path = "/internal/v2/private-resources/source-fences"
+
+
+class UserRevisionClient(HubFenceClient):
+    path = "/internal/v2/private-resources/source-revisions"
+
+    @staticmethod
+    def validate(value, request):
+        if (
+            type(value) is not dict
+            or value.keys() != request.keys()
+            or type(value["sourceRevision"]) is not int
+            or not request["sourceRevision"] <= value["sourceRevision"] <= 2**53 - 1
+            or any(value[key] != field for key, field in request.items() if key != "sourceRevision")
+        ):
+            raise ContractError("source_unavailable")
+
+
+@lru_cache(maxsize=1)
+def _configured_revision_client(origin):
+    return UserRevisionClient(origin)
+
+
+def revision_client(uid):
+    destination = user_authority_origin(
+        owner_key(uid),
+        os.getenv("PORTFOLIO_HUB_AUTHORITY_ORIGIN", ""),
+        os.getenv("PORTFOLIO_USER_AUTHORITY_ORIGIN", ""),
+        os.getenv("PORTFOLIO_USER_AUTHORITY_OWNER", ""),
+    )
+    return _configured_revision_client(destination) if destination else None
+
+
+async def publish_committed_revision(client, uid, receipt):
+    await client.invalidate(
+        {
+            "contractVersion": CONTRACT_VERSION,
+            "ownerSubject": owner_key(uid),
+            "vaultId": receipt["vaultId"],
+            "ref": receipt["resourceRef"],
+            "sourceEpoch": receipt["sourceEpoch"],
+            "sourceRevision": receipt["revision"],
+        }
+    )
 
 
 @lru_cache(maxsize=1)
@@ -220,6 +264,29 @@ async def synchronize(service, uid, source, operation, client_factory):
 
 
 router = APIRouter(prefix="/api/v2/holdings/sources", route_class=PrivateRoute)
+
+
+@router.post("/{source_id}/operations/{operation_id}/synchronize-revision")
+async def synchronize_revision(
+    source_id: str, operation_id: str, request: Request, user: Owner, service: Service
+):
+    _invoke(lambda: _transport(request))
+    if request.headers.getlist("content-type") != ["application/json"]:
+        raise HTTPException(415, {"code": "unsupported_media_type"})
+    value = await _read_json(request, max_bytes=1024)
+    if value != {"contractVersion": CONTRACT_VERSION}:
+        raise HTTPException(400, {"code": "malformed_request"})
+    client = _invoke(lambda: revision_client(user.uid))
+    if client is None:
+        raise HTTPException(404, {"code": "not_found"})
+    receipt = await run_in_threadpool(
+        _invoke, lambda: service.receipt(user.uid, source_id, operation_id)
+    )
+    try:
+        await publish_committed_revision(client, user.uid, receipt)
+    except ContractError as error:
+        raise HTTPException(error.status, {"code": error.code}) from None
+    return receipt
 
 
 @router.post("/{source_id}/mutations/{operation_id}/synchronize")
