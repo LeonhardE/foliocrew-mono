@@ -1,6 +1,6 @@
 locals {
-  # These are implemented top-level maps/arrays or opaque JSON strings. The Hub
-  # uses exact document IDs/get_many, not Firestore queries on these fields.
+  # These are implemented top-level maps/arrays or opaque JSON strings. The
+  # report cleanup cursor indexes only the owner subfield configured below.
   unindexed_fields = {
     hub_agent_recoveries                   = ["entries"]
     hub_runtime_setup_intents              = ["offer", "paired"]
@@ -71,6 +71,22 @@ resource "google_firestore_field" "opaque" {
   index_config {}
 
   lifecycle { prevent_destroy = true }
+}
+
+resource "google_firestore_field" "report_cleanup_owner" {
+  for_each = toset(["hub_persistent_publications", "hub_persistent_results"])
+
+  project    = local.project_id
+  database   = module.database.database_id
+  collection = each.value
+  field      = "context.ownerSubject"
+
+  index_config {
+    indexes {
+      order       = "ASCENDING"
+      query_scope = "COLLECTION"
+    }
+  }
 }
 
 output "index_exemptions" {
