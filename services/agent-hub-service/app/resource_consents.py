@@ -12,6 +12,7 @@ from folioview_shared.encrypted.resource_consents import (
     validate_resource_consent_schema,
 )
 from folioview_shared.encrypted.schema import validate_schema
+from folioview_shared.identity import owner_key
 
 from .fences import require_current_bindings
 from .persistent_agents import (
@@ -119,6 +120,22 @@ class ResourceConsentService(PersistentAgentService):
 
             require_provider_current(unit, owner, vault_id, connection, conn, row, self.now())
         return identity
+
+    def _require_bindings(self, unit, owner, bindings, user_scope):
+        if user_scope is None:
+            require_current_bindings(unit, owner, bindings)
+            return
+        active = {
+            canonical_json(row["binding"])
+            for row in user_scope.authority["sources"]
+            if row["state"] == "active"
+        }
+        # User list metadata comes from the producer's current exact list ref.
+        if any(
+            binding["ref"]["kind"] == "holdings" and canonical_json(binding) not in active
+            for binding in bindings
+        ):
+            raise ContractError("version_conflict")
 
     def state(self, uid, vault_id, connection):
         identifier(vault_id)
@@ -234,16 +251,35 @@ class ResourceConsentService(PersistentAgentService):
 
         # Resolve exact retries before any producer RPC. A source outage must not
         # force a new signature or permission ID for an already committed action.
+        owner = owner_key(uid)
+        path = operation_path(owner, vault_id, operation)
+
+        def saved_result(unit):
+            saved = unit.get(path)
+            if saved is None:
+                return None
+            if saved.get("connectionId") != connection or saved.get("fingerprint") != fingerprint:
+                raise ContractError("idempotency_conflict")
+            return self._receipt(saved, owner, vault_id, connection, operation)
+
+        if owner == self.user_vaults.owner:
+
+            def receipt(unit):
+                self._receipt_owner(unit, uid, vault_id, connection)
+                return saved_result(unit)
+
+            prior = self.store.transact(receipt)
+            if prior is not None:
+                return prior
+        initial_scope = self.user_vaults.read(uid, vault_id)
+
         def existing(unit):
-            owner, vault, registry, conn = self._context(unit, uid, vault_id, connection)
-            saved = unit.get(operation_path(owner, vault_id, operation))
-            if saved is not None:
-                if (
-                    saved.get("connectionId") != connection
-                    or saved.get("fingerprint") != fingerprint
-                ):
-                    raise ContractError("idempotency_conflict")
-                return self._receipt(saved, owner, vault_id, connection, operation), None
+            owner, vault, registry, conn = self._context(
+                unit, uid, vault_id, connection, user_scope=initial_scope
+            )
+            result = saved_result(unit)
+            if result is not None:
+                return result, None
             self._identity(unit, owner, vault_id, connection, conn, active=not revoke)
             return None, (vault["version"], registry.checkpoint_digest, conn["clientId"])
 
@@ -268,17 +304,15 @@ class ResourceConsentService(PersistentAgentService):
                     }
                 )
 
+        current_scope = self.user_vaults.read(uid, vault_id) if initial_scope is not None else None
+
         def write(unit):
-            owner, vault, registry, conn = self._context(unit, uid, vault_id, connection)
-            path = operation_path(owner, vault_id, operation)
-            saved = unit.get(path)
-            if saved is not None:
-                if (
-                    saved.get("connectionId") != connection
-                    or saved.get("fingerprint") != fingerprint
-                ):
-                    raise ContractError("idempotency_conflict")
-                return self._receipt(saved, owner, vault_id, connection, operation)
+            owner, vault, registry, conn = self._context(
+                unit, uid, vault_id, connection, user_scope=current_scope
+            )
+            result = saved_result(unit)
+            if result is not None:
+                return result
             if (vault["version"], registry.checkpoint_digest, conn["clientId"]) != before:
                 raise ContractError("version_conflict")
             identity = self._identity(unit, owner, vault_id, connection, conn, active=not revoke)
@@ -303,10 +337,11 @@ class ResourceConsentService(PersistentAgentService):
                 policy = revoke_resource_consent(signed, **context)
             else:
                 policy = approve_resource_consent(signed, source_states=sources, **context)
-                require_current_bindings(
+                self._require_bindings(
                     unit,
                     owner,
                     [{"ref": s["ref"], "sourceEpoch": s["sourceEpoch"]} for s in sources],
+                    current_scope,
                 )
             operations = ([] if current is None else current["operations"]) + [operation]
             result = {
