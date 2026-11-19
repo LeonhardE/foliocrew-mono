@@ -8,6 +8,8 @@ import type {
   OwnerRecoveryProgress,
   OwnerRecoveryRequest,
   OwnerRecoveryTransport,
+  RegistryTransitionPacket,
+  RegistryTransitionReview,
 } from "./encrypted-user-recovery";
 import {
   VaultError,
@@ -722,6 +724,29 @@ export class EncryptedVaultSession {
         throw error;
       }
     });
+  }
+  async reviewUserRegistryTransition(
+    state: VaultLifecycleState,
+  ): Promise<RegistryTransitionReview> {
+    const g = this.generation;
+    const result = await this.rpc("reviewUserRegistryTransition", { state });
+    this.assert(g);
+    return result;
+  }
+  async signUserRegistryTransition(
+    review: RegistryTransitionReview,
+    material: PasskeyMaterial,
+  ): Promise<RegistryTransitionPacket> {
+    try {
+      const g = this.generation;
+      const packet = await this.rpc("signUserRegistryTransition", { review, material }, [
+        material.secret,
+      ]);
+      this.assert(g);
+      return packet;
+    } finally {
+      if (material.secret.byteLength) new Uint8Array(material.secret).fill(0);
+    }
   }
   async verifyUserRecovery(
     transport: OwnerRecoveryTransport,

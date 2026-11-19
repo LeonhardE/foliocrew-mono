@@ -328,6 +328,12 @@ export function createVaultKernel(
             case "discardDeviceChange":
               result = await core.discardDeviceChange(args.vault, args.record, args.operationId);
               break;
+            case "reviewUserRegistryTransition":
+              result = await core.reviewUserRegistryTransition(args.state);
+              break;
+            case "signUserRegistryTransition":
+              result = await core.signUserRegistryTransition(args.review, args.material);
+              break;
             case "beginUserRecovery":
               result = await core.beginUserRecovery(args.sourcesDigest);
               break;
