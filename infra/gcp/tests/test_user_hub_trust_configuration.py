@@ -43,6 +43,76 @@ def compiled(value=None):
 
 
 class UserHubTrustConfigurationTests(unittest.TestCase):
+    def test_private_rollout_attaches_only_to_reviewed_user_and_portfolio_deployments(self):
+        from test_browser_origin_configuration import with_aliases
+
+        value = with_aliases(user=["https://workspace.example.test"])
+        value["userHubTrust"]["ownerRecoveryWebSubject"] = "999000111222333444555"
+        artifacts = profile.compile_user_hub_trust_artifacts(value)
+        deployment = artifacts["deployment-config.candidate.json"]
+        portfolio = profile.compile_target(value, "portfolio")
+        origins = profile.compile_browser_origin_artifacts(value, "user")
+        deployment = profile.add_browser_origins(
+            deployment,
+            profile.canonical(origins["browser-origins.candidate.json"]),
+            expected_sha256=origins["manifest.json"]["browserOriginsSha256"],
+        )
+        owner, portfolio_subject = "a" * 64, "777888999000111222333"
+
+        def attach(target=deployment, consumer=portfolio, **kwargs):
+            return profile.add_user_private_rollout(
+                target,
+                consumer,
+                expected_sha256=profile.digest(target),
+                **{
+                    "phase": "prepare",
+                    "owner": owner,
+                    "portfolio_subject": portfolio_subject,
+                    **kwargs,
+                },
+            )
+
+        self.assertNotIn("private_rollout", profile.terraform_inputs(deployment))
+        for phase in ("prepare", "active"):
+            attached = attach(phase=phase)
+            self.assertLessEqual(len(profile.canonical(attached)), profile.MAX_TARGET_BYTES)
+            candidate = profile.terraform_inputs(attached)
+            original = profile.terraform_inputs(deployment)
+            self.assertEqual(
+                candidate.pop("private_rollout"),
+                {
+                    "phase": phase,
+                    "owner_subject": owner,
+                    "portfolio_subject": portfolio_subject,
+                    "portfolio_account_id": portfolio["inputs"]["runtime_account_id"],
+                },
+            )
+            self.assertEqual(original, candidate)
+
+        for overrides in (
+            {"phase": "all"},
+            {"owner": "*"},
+            {"portfolio_subject": value["userHubTrust"]["ownerRecoveryWebSubject"]},
+            {"consumer": profile.compile_target(value, "agent-hub")},
+            {"target": profile.compile_target(value, "user")},
+        ):
+            with self.subTest(overrides=overrides.keys()), self.assertRaises(profile.ProfileError):
+                attach(**overrides)
+
+        other = copy.deepcopy(portfolio)
+        other["instanceId"] = "different-instance"
+        with self.assertRaises(profile.ProfileError):
+            attach(consumer=other)
+        with self.assertRaises(profile.ProfileError):
+            profile.add_user_private_rollout(
+                deployment,
+                portfolio,
+                phase="prepare",
+                owner=owner,
+                portfolio_subject=portfolio_subject,
+                expected_sha256="0" * 64,
+            )
+
     def test_legacy_profiles_and_explicit_disabled_v3_remain_default_denied(self):
         for value in (profiles.adopted(), web.owner_profile(), selected(enabled=False)):
             with self.subTest(version=value["schemaVersion"]):
