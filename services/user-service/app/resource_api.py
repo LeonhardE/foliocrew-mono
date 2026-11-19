@@ -223,13 +223,13 @@ def query_kind(request):
 
 
 @lru_cache(maxsize=4)
-def configured_verifier(configuration):
+def configured_verifier(configuration, logical_path="/internal/v2"):
     service_audience, delegation_audience, issuer, callers = configuration
     try:
         if (
             not service_audience
             or service_audience.endswith("/")
-            or delegation_audience != service_audience + "/internal/v2"
+            or delegation_audience != service_audience + logical_path
         ):
             raise ValueError
         allowed = strict_json_loads(callers, max_bytes=4096)
