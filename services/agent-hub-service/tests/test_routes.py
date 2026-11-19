@@ -1,5 +1,6 @@
 """Authenticated encrypted archive routes and real two-token public-authority reads."""
 
+import hashlib
 import os
 import tempfile
 import unittest
@@ -14,7 +15,7 @@ from test_delegation import DelegationFixture
 
 from app.api import get_delegation_verifier, get_service, require_owner
 from app.main import app
-from app.store import SQLiteHubStore
+from app.store import SQLiteHubStore, private_resource_writer_fence_path
 from app.vaults import VaultService
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
 from folioview_shared.encrypted.schema import validate_schema
@@ -167,6 +168,108 @@ class VaultRoutesTests(unittest.TestCase):
         self.assertEqual(claims["aud"], ISSUER + "/internal/v2")
         self.assertEqual(claims["resourceKinds"], ["holdings"])
         self.assertEqual(claims["scopes"], ["resources:catalog"])
+        self.assertEqual(response.json()["expiresAt"], NOW + 60)
+
+    def test_portfolio_user_authority_token_binds_the_transfer_and_exact_lookup(self):
+        from test_service_identity import EMAIL, NOW
+        from test_signing import KEY, KMSRpc
+
+        from app.signing import KMSSigner
+        from folioview_shared.delegated_keys import KeyCache
+        from folioview_shared.delegation import PRIVATE_AUTHORITY_DELEGATION_TYPE
+        from folioview_shared.encrypted.jsonutil import canonical_json
+        from folioview_shared.encrypted.private_resources import PRIVATE_AUTHORITY_PROFILE
+        from folioview_shared.service_identity import verify_signed_jwt
+
+        issuer = "https://agent-hub-api-123456789.us-central1.run.app"
+        user_origin = "https://user-api-123456789.us-central1.run.app"
+        signer = KMSSigner(KEY, client=KMSRpc())
+        url = f"/api/v2/vaults/{self.f.vault}/portfolio-authority-tokens"
+        packet = {
+            "contractVersion": CONTRACT_VERSION,
+            "sourceId": SOURCE,
+            "minimumRegistryEpoch": 2,
+            "nonce": "synthetic_authority_nonce_0001",
+        }
+        config = {
+            "HUB_SERVICE_AUDIENCE": issuer,
+            "HUB_USER_ORIGIN": user_origin,
+            "HUB_PORTFOLIO_CALLER_EMAIL": EMAIL,
+            "HUB_PORTFOLIO_USER_AUTHORITY_TOKENS": "1",
+            "HUB_USER_PRIVATE_AUTHORITY_OWNER": self.f.owner,
+        }
+
+        def set_writer(state, **fields):
+            self.service.store.transact(
+                lambda unit: unit.put(
+                    private_resource_writer_fence_path(self.f.owner),
+                    {
+                        "ownerSubject": self.f.owner,
+                        "vaultId": self.f.vault,
+                        "writerEpoch": 2,
+                        "state": state,
+                        **fields,
+                    },
+                )
+            )
+
+        def post(value=packet):
+            return self.client.post(url, headers=self.headers, json=value)
+
+        with (
+            patch.dict(os.environ, config, clear=True),
+            patch("app.private_authority.get_signer", return_value=signer) as signing,
+            patch("app.private_authority.time.time", return_value=NOW),
+        ):
+            self.failure(post(), 404)
+            set_writer("frozen")
+            self.failure(post(), 404)
+            set_writer("transferred", vaultId="foreign_vault_001")
+            self.failure(post(), 404)
+            set_writer("transferred")
+            with patch.dict(os.environ, {"HUB_PORTFOLIO_USER_AUTHORITY_TOKENS": "0"}):
+                self.failure(post(), 404)
+            with patch.dict(os.environ, {"HUB_USER_ORIGIN": "https://user-api-example.run.app"}):
+                self.failure(post(), 503)
+            app.dependency_overrides[require_owner] = lambda: SimpleNamespace(uid=OTHER_UID)
+            self.failure(post(), 404)
+            app.dependency_overrides[require_owner] = lambda: SimpleNamespace(uid=UID)
+            self.failure(post({**packet, "minimumRegistryEpoch": 1}), 400)
+            self.failure(post({**packet, "caller": "foreign"}), 400)
+            signing.assert_not_called()
+            response = post()
+            signing.assert_called_once()
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        keys = KeyCache(
+            issuer + "/.well-known/jwks.json",
+            transport=lambda *_a, **_kw: canonical_json(signer.jwks()),
+        )
+        claims = verify_signed_jwt(
+            response.json()["token"], keys=keys, expected_typ=PRIVATE_AUTHORITY_DELEGATION_TYPE
+        )
+        lookup = {
+            **packet,
+            "profile": PRIVATE_AUTHORITY_PROFILE,
+            "consumer": "portfolio",
+            "ownerSubject": self.f.owner,
+            "vaultId": self.f.vault,
+        }
+        self.assertEqual(
+            claims,
+            {
+                "iss": issuer,
+                "aud": user_origin + "/internal/v2/private-resources/portfolio-authority/read",
+                "sub": UID,
+                "iat": NOW,
+                "exp": NOW + 60,
+                "jti": packet["nonce"],
+                "caller": EMAIL,
+                "purpose": "private_authority_read",
+                "requestDigest": hashlib.sha256(canonical_json(lookup)).hexdigest(),
+            },
+        )
         self.assertEqual(response.json()["expiresAt"], NOW + 60)
 
     def test_signed_internal_read_requires_both_credentials_and_exact_owner(self):

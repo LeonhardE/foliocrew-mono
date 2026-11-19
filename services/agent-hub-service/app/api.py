@@ -30,6 +30,7 @@ from folioview_shared.service_identity import (
 
 from .fences import FenceService
 from .key_renewals import VaultKeyRenewalService
+from .private_authority import issue_portfolio_authority_token
 from .signing import get_signer, mint_authority_token, origin, token_configuration
 from .store import get_store
 from .vault_lifecycle import VaultLifecycleService
@@ -350,6 +351,17 @@ async def authority_token(request: Request, user: Owner, service: Service):
         return mint_authority_token(user.uid, get_signer())
 
     return await run_in_threadpool(_invoke, mint)
+
+
+@owner_router.post("/{vault_id}/portfolio-authority-tokens")
+async def portfolio_authority_token(vault_id: str, request: Request, user: Owner, service: Service):
+    value = await body(
+        request, {"contractVersion", "sourceId", "nonce", "minimumRegistryEpoch"}, max_bytes=4096
+    )
+    return await run_in_threadpool(
+        _invoke,
+        lambda: issue_portfolio_authority_token(service.store, user.uid, vault_id, value),
+    )
 
 
 @lru_cache(maxsize=4)
