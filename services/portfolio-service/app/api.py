@@ -96,6 +96,8 @@ def receipt(source_id: str, operation_id: str, request: Request, user: Owner, se
 
 @router.put("/{source_id}/snapshots/{snapshot_id}")
 async def commit(source_id: str, snapshot_id: str, request: Request, user: Owner, service: Service):
+    from .fence_sync import publish_committed_revision, revision_client
+
     _invoke(lambda: _transport(request, write=True))
     value = await _read_json(request, max_bytes=MAX_HTTP_WRITE_BYTES)
     if (
@@ -105,7 +107,8 @@ async def commit(source_id: str, snapshot_id: str, request: Request, user: Owner
     ):
         raise HTTPException(400, {"code": "malformed_request"})
 
-    return await run_in_threadpool(
+    client = _invoke(lambda: revision_client(user.uid))
+    result = await run_in_threadpool(
         _invoke,
         lambda: service.commit(
             user.uid,
@@ -116,8 +119,15 @@ async def commit(source_id: str, snapshot_id: str, request: Request, user: Owner
             operation_id=request.headers["idempotency-key"],
             carrier=value["carrier"],
             contract_header=request.headers["x-folioview-contract"],
+            require_user_authority=client is not None,
         ),
     )
+    if client is not None:
+        try:
+            await publish_committed_revision(client, user.uid, result)
+        except ContractError as error:
+            raise HTTPException(error.status, {"code": error.code}) from None
+    return result
 
 
 async def _read_json(request, *, max_bytes):

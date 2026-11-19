@@ -13,12 +13,14 @@ from fastapi.testclient import TestClient
 from fixtures import MUTATION_OPERATION, OPERATION, OTHER_UID, SOURCE, UID, HoldingsFixture
 
 from app.api import get_service
+from app.fence_sync import UserRevisionClient
 from app.holdings import PortfolioService
 from app.main import app
 from app.store import SQLitePortfolioStore
 from folioview_shared.auth import CurrentUser, require_google_user
 from folioview_shared.encrypted.constants import CONTRACT_VERSION, MAX_HTTP_WRITE_BYTES
 from folioview_shared.encrypted.schema import validate_schema
+from folioview_shared.identity import owner_key
 
 
 class HoldingsRouteTests(unittest.TestCase):
@@ -78,6 +80,58 @@ class HoldingsRouteTests(unittest.TestCase):
         recovered = self.client.get(self.base + "/operations/" + OPERATION, headers=self.headers)
         self.assert_private(recovered, 200)
         self.assertEqual(recovered.json(), saved.json())
+
+    def test_revision_confirmation_replays_the_committed_operation_after_a_lost_response(self):
+        saved = self.client.put(self.url, headers=self.headers, json=self.body)
+        self.assert_private(saved, 200)
+        url = self.base + "/operations/" + OPERATION + "/synchronize-revision"
+        body = {"contractVersion": CONTRACT_VERSION}
+        received = []
+        origin = "https://user-api-123456.northamerica-northeast2.run.app"
+
+        async def token(audience):
+            self.assertEqual(audience, origin)
+            return "synthetic.workload.signature"
+
+        def transport(request):
+            self.assertEqual(
+                str(request.url), origin + "/internal/v2/private-resources/source-revisions"
+            )
+            self.assertEqual(
+                request.headers["authorization"], "Bearer synthetic.workload.signature"
+            )
+            received.append(json.loads(request.content))
+            if len(received) == 1:
+                raise httpx.ReadTimeout("synthetic lost response")
+            if len(received) == 2:
+                return httpx.Response(200, json={**received[-1], "sourceEpoch": 2})
+            return httpx.Response(200, json={**received[-1], "sourceRevision": 2})
+
+        selected = UserRevisionClient(
+            origin, token_factory=token, transport=httpx.MockTransport(transport)
+        )
+        with patch("app.fence_sync.revision_client", return_value=selected):
+            self.assert_private(
+                self.client.post(url, headers=self.headers, json={**body, "sourceRevision": 999}),
+                400,
+            )
+            self.assert_private(
+                self.client.put(self.url, headers=self.headers, json=self.body), 503
+            )
+            self.assert_private(self.client.post(url, headers=self.headers, json=body), 503)
+            self.assert_private(self.client.post(url, headers=self.headers, json=body), 503)
+            confirmed = self.client.post(url, headers=self.headers, json=body)
+        self.assert_private(confirmed, 200)
+        self.assertEqual(confirmed.json(), saved.json())
+        expected = {
+            "contractVersion": CONTRACT_VERSION,
+            "ownerSubject": owner_key(UID),
+            "vaultId": saved.json()["vaultId"],
+            "ref": saved.json()["resourceRef"],
+            "sourceEpoch": saved.json()["sourceEpoch"],
+            "sourceRevision": saved.json()["revision"],
+        }
+        self.assertEqual(received, [expected, expected, expected])
 
     def test_signed_mutation_returns_pending_and_can_be_recovered_without_an_ack_route(self):
         command = self.fixture.control(action="disconnect")

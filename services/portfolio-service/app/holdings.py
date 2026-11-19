@@ -676,6 +676,7 @@ class PortfolioService:
         operation_id: str,
         carrier: dict,
         contract_header: str,
+        require_user_authority: bool = False,
     ):
         _identifier(source)
         _identifier(snapshot)
@@ -690,6 +691,8 @@ class PortfolioService:
             now = self.now()
             authority = _current_authority(unit, owner, source, now)
             row = authority.document
+            if require_user_authority and "registryStart" not in row:
+                raise ContractError("source_unavailable")
             from .upload_cancellations import operation_cancelled
 
             if operation_cancelled(unit, authority, operation_id, now):
