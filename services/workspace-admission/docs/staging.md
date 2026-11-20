@@ -3,13 +3,15 @@
 Configure Firebase Authentication with Identity Platform in an isolated project. Point
 `FOLIOCREW_INVITATION_USER_ORIGIN` at the matching User Service. Bind both functions to the same
 dedicated runtime service account with `FOLIOCREW_INVITATION_FUNCTION_SERVICE_ACCOUNT` during
-function discovery. User Service must trust only that account and its Google subject for the
-internal invitation routes. The function does not need Firestore or Secret Manager IAM.
+function discovery. Configure the User Service's `USER_INVITATION_AUTH_CALLER` with a one-entry
+JSON map keyed by the callback account's numeric Google subject, with its service account email
+as the value. Grant that account invocation permission on User Service only.
 
 Pin `FOLIOCREW_INVITATION_CREATE_AUDIENCE` and `FOLIOCREW_INVITATION_SIGN_IN_AUDIENCE` to the
-distinct HTTPS Cloud Run origins reported for the two callbacks. Validate the observed signed
-audience and event type on both paths before treating a staging failure as an invite rejection.
-The committed Firebase configuration contains no bound project or credentials.
+distinct values reported by Cloud Functions as `serviceConfig.uri`. Register the identical URIs
+in Identity Platform. In staging, the deterministic regional aliases were reachable over HTTPS,
+but Identity Platform accepted the canonical `*.a.run.app` origins from the function deployment.
+Validate the signed audience and event type on both paths before relying on denial results.
 
 Before registering the production triggers, verify these behaviors in staging.
 
@@ -22,7 +24,8 @@ Before registering the production triggers, verify these behaviors in staging.
 - Sign-in for the existing owner succeeds with the original UID. Config, Portfolio, and Hub
   enforce admission for direct user calls and preserve legitimate delegated operations.
 - Both callbacks complete inside the Identity Platform deadline during cold starts and service
-  contention. Leave optional inbound Google OAuth credentials disabled.
+  contention. Exercise User Service after it has scaled to zero, including the first real Google
+  login after idle time. Leave optional inbound Google OAuth credentials disabled.
 
 Keep an export of the previous triggers. Restore that configuration before deleting either
 callback during rollback. Keep the private-route rollout disabled until validation passes.

@@ -93,6 +93,17 @@ class WorkspaceAdmissionTests(unittest.TestCase):
         )
         self.identity.assert_called_with(ORIGIN)
 
+    def test_user_request_allows_cold_start_within_callback_budget(self):
+        with patch.object(main.http.client, "HTTPSConnection") as connection:
+            main._evaluate("check", event())
+        connection.assert_called_once_with(
+            "user-api-123456789.northamerica-northeast2.run.app", timeout=4.75
+        )
+        self.assertLess(
+            connection.call_args.kwargs["timeout"] + main.METADATA_TIMEOUT_SECONDS,
+            main.FUNCTION_OPTIONS["timeout_sec"],
+        )
+
     def test_unverified_wrong_provider_tenant_and_mismatched_email_never_reach_user(self):
         linked = event()
         linked.additional_user_info.provider_id = "password"

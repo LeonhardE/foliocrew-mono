@@ -19,9 +19,13 @@ USER_ORIGIN = re.compile(r"https://user-api-[0-9]{1,20}\.[a-z]+(?:-[a-z0-9]+)+[0
 FUNCTION_ORIGIN = re.compile(r"https://[a-z0-9.-]+\.run\.app")
 JWT_SEGMENT_BYTES = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
 ACTION = Literal["check", "bind"]
+CALLBACK_TIMEOUT_SECONDS = 6
+METADATA_TIMEOUT_SECONDS = 0.75
+# Allow User Service to start from zero while leaving time for callback processing.
+USER_TIMEOUT_SECONDS = 4.75
 FUNCTION_OPTIONS = {
     "region": "northamerica-northeast2",
-    "timeout_sec": 6,
+    "timeout_sec": CALLBACK_TIMEOUT_SECONDS,
     "max_instances": 3,
     "service_account": os.getenv("FOLIOCREW_INVITATION_FUNCTION_SERVICE_ACCOUNT"),
     "id_token": False,
@@ -97,7 +101,9 @@ def _response(connection, method, path, *, body=None, headers=None, maximum, con
 
 
 def _workload_token(origin: str) -> str:
-    metadata = http.client.HTTPConnection("metadata.google.internal", timeout=0.75)
+    metadata = http.client.HTTPConnection(
+        "metadata.google.internal", timeout=METADATA_TIMEOUT_SECONDS
+    )
     query = urlencode({"audience": origin, "format": "full"})
     token = _response(
         metadata,
@@ -136,7 +142,9 @@ def _evaluate(operation: ACTION, event: identity_fn.AuthBlockingEvent) -> None:
         raise HttpsError(FunctionsErrorCode.UNAVAILABLE, "WORKSPACE_ADMISSION_UNAVAILABLE")
     try:
         token = _workload_token(origin)
-        downstream = http.client.HTTPSConnection(urlsplit(origin).hostname, timeout=3.25)
+        downstream = http.client.HTTPSConnection(
+            urlsplit(origin).hostname, timeout=USER_TIMEOUT_SECONDS
+        )
         raw = _response(
             downstream,
             "POST",
