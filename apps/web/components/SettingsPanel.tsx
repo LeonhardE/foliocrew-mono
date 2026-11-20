@@ -6,6 +6,7 @@ import { usePreferences } from "@/components/PreferencesProvider";
 import type { Preferences } from "@/lib/preferences";
 import type { HoldingsWorkspace } from "./useHoldingsWorkspace";
 import SettingsSecurityPanel from "./SettingsSecurityPanel";
+import SettingsInvitations from "./SettingsInvitations";
 import { useCurrencyPreferences } from "./CurrencyPreferencesProvider";
 import { PORTFOLIO_CURRENCIES, type PortfolioCurrency } from "@/lib/currency-preferences";
 import styles from "./SettingsPanel.module.css";
@@ -207,6 +208,7 @@ export default function SettingsPanel({ workspace }: { workspace?: HoldingsWorks
         </div>
       )}
       {workspace && <SettingsSecurityPanel workspace={workspace} />}
+      <SettingsInvitations />
     </section>
   );
 }

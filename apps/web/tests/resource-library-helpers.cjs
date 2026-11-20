@@ -56,6 +56,7 @@ function compile(file, imports = {}, globals = {}) {
         return compile("../lib/holdings-publication.ts", { "./resource-library": contracts });
       if (["@/lib/user-recovery-route", "../user-recovery-route"].includes(name))
         return compile("../lib/user-recovery-route.ts");
+      if (name === "@/lib/workspace-invitations") return compile("../lib/workspace-invitations.ts");
       if (name === "@/lib/workspace-cache") return compile("../lib/workspace-cache.ts");
       if (name === "@/lib/account-preference-reads")
         return compile("../lib/account-preference-reads.ts", {

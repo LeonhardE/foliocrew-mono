@@ -51,6 +51,7 @@ test("workspace navigation keeps one owner session without server transitions af
   const sharedWorkspace = { lock() {}, owner: "session_A", authenticated: true };
   let workspaceCalls = 0;
   let pathname = "/";
+  let privateWorkspaceAvailable = true;
   const historyCalls = [];
   const agentReads = [];
   const window = {
@@ -73,7 +74,14 @@ test("workspace navigation keeps one owner session without server transitions af
           throw new Error("Server navigation would reload the stale client and lose its keys");
         },
       },
-      "./AuthProvider": { useAuth: () => ({ ownerConfigStatus: "ready" }) },
+      "./AuthProvider": {
+        useAuth: () => ({
+          ownerConfigStatus: "ready",
+          ownerCapabilities: { invitationRequired: !privateWorkspaceAvailable },
+          privateWorkspaceAvailable,
+          status: privateWorkspaceAvailable ? "authenticated" : "anonymous",
+        }),
+      },
       "./useWorkspaceJourney": { useWorkspaceJourney: () => () => {} },
       "@/lib/workspace-routes": compile("../lib/workspace-routes.ts", {}),
       react: {
@@ -258,4 +266,30 @@ test("workspace navigation keeps one owner session without server transitions af
   );
   // Stable component type/key/position keeps its private Worker alive within the app session.
   // Lock/logout isolation is exercised against the hook in holdings-workspace.test.cjs.
+  privateWorkspaceAvailable = false;
+  sharedWorkspace.authenticated = false;
+  for (const url of ["/resources", "/tasks", "/agents", "/inbox", "/settings"]) {
+    pathname = url;
+    tree = render();
+    sidebar = find(tree, (node) => node.type === Sidebar).tree;
+    assert.equal(sidebar.props.activeView, "markets");
+    assert.equal(sidebar.props.privateNavigationDisabled, true);
+    assert.equal(
+      find(tree, (node) => node.type === ResourcePanel),
+      null,
+    );
+    assert.equal(
+      find(tree, (node) => node.type === TasksPanel),
+      null,
+    );
+    assert.ok(find(tree, (node) => node.props?.children === "nav.invitationRequired"));
+    assert.equal(agentReads.at(-1), false);
+    const before = historyCalls.length;
+    sidebar.props.onNavigate("agents");
+    assert.equal(historyCalls.length, before);
+  }
+  privateWorkspaceAvailable = true;
+  sharedWorkspace.authenticated = true;
+  pathname = "/resources";
+  assert.equal(find(render(), (node) => node.type === ResourcePanel).parent.props.hidden, false);
 });

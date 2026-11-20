@@ -57,10 +57,12 @@ function NavigationIcon({ view }: { view: WorkspaceView }) {
 export function WorkspaceSidebar({
   activeView,
   onNavigate,
+  privateNavigationDisabled = false,
   workspace,
 }: {
   activeView: WorkspaceView;
   onNavigate: (view: WorkspaceView) => void;
+  privateNavigationDisabled?: boolean;
   workspace?: { authenticated: boolean; phase: string; lock: () => void };
 }) {
   const t = useTranslations();
@@ -202,32 +204,54 @@ export function WorkspaceSidebar({
         </div>
         <div className={styles.bottom}>
           <nav className={styles.navigation} aria-label={t("nav.primary")}>
-            {(["markets", "resources", "tasks", "agents", "settings"] as const).map((view) => (
-              <a
-                key={view}
-                href={workspaceHref(view)}
-                aria-label={t(`nav.${view}`)}
-                title={compact ? t(`nav.${view}`) : undefined}
-                aria-current={activeView === view ? "page" : undefined}
-                className={styles.navItem}
-                onClick={(event) => {
-                  if (
-                    event.button !== 0 ||
-                    event.metaKey ||
-                    event.ctrlKey ||
-                    event.shiftKey ||
-                    event.altKey
-                  )
-                    return;
-                  event.preventDefault();
-                  onNavigate(view);
-                  if (compactScreen) setMobileOpen(false);
-                }}
-              >
-                <NavigationIcon view={view} />
-                <span className={styles.label}>{t(`nav.${view}`)}</span>
-              </a>
-            ))}
+            {(["markets", "resources", "tasks", "agents", "settings"] as const).map((view) => {
+              const label = t(`nav.${view}`);
+              const content = (
+                <>
+                  <NavigationIcon view={view} />
+                  <span className={styles.label}>{label}</span>
+                </>
+              );
+              if (privateNavigationDisabled && view !== "markets") {
+                return (
+                  <span
+                    key={view}
+                    role="link"
+                    aria-disabled="true"
+                    aria-label={label}
+                    title={compact ? label : undefined}
+                    className={styles.navItem}
+                  >
+                    {content}
+                  </span>
+                );
+              }
+              return (
+                <a
+                  key={view}
+                  href={workspaceHref(view)}
+                  aria-label={label}
+                  title={compact ? label : undefined}
+                  aria-current={activeView === view ? "page" : undefined}
+                  className={styles.navItem}
+                  onClick={(event) => {
+                    if (
+                      event.button !== 0 ||
+                      event.metaKey ||
+                      event.ctrlKey ||
+                      event.shiftKey ||
+                      event.altKey
+                    )
+                      return;
+                    event.preventDefault();
+                    onNavigate(view);
+                    if (compactScreen) setMobileOpen(false);
+                  }}
+                >
+                  {content}
+                </a>
+              );
+            })}
           </nav>
           <AccountControls
             collapsed={compact}

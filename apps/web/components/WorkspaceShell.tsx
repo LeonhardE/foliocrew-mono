@@ -77,13 +77,20 @@ export default function WorkspaceShell() {
   const [overviewReload, setOverviewReload] = useState(0);
   const [chartReload, setChartReload] = useState(0);
   const pathname = usePathname();
+  const {
+    ownerConfigStatus,
+    ownerCapabilities,
+    privateWorkspaceAvailable,
+    status: authStatus,
+  } = useAuth();
   const requestedView = workspaceView(pathname) ?? "markets";
-  const activeView = requestedView === "inbox" ? "tasks" : requestedView;
+  const privateNavigationDisabled = privateWorkspaceAvailable === false;
+  const blockedView = privateNavigationDisabled && requestedView !== "markets";
+  const activeView = blockedView ? "markets" : requestedView === "inbox" ? "tasks" : requestedView;
   const visited = useRef(new Set<string>());
   visited.current.add(activeView);
   const marketsVisited = visited.current.has("markets");
   const encryptedWorkspace = useHoldingsWorkspace();
-  const { ownerConfigStatus } = useAuth();
   const agentScope = JSON.stringify([
     encryptedWorkspace.owner,
     encryptedWorkspace.vault?.vaultId,
@@ -119,6 +126,7 @@ export default function WorkspaceShell() {
     brandOrigin,
   );
   useEffect(() => {
+    if (privateNavigationDisabled) return;
     let disposed = false;
     const route = () => {
       const target = isAgentConsentHandoff(window.location.search)
@@ -145,7 +153,7 @@ export default function WorkspaceShell() {
       window.removeEventListener("hashchange", route);
       window.removeEventListener("popstate", route);
     };
-  }, [pathname]);
+  }, [pathname, privateNavigationDisabled]);
   const linkedOwner = useRef<string | null>(null);
   useEffect(() => {
     if (linkedOwner.current && linkedOwner.current !== encryptedWorkspace.owner)
@@ -243,6 +251,7 @@ export default function WorkspaceShell() {
         : "loading",
   });
   const navigate = (view: WorkspaceView, intent: "page" | "handoff" = "page") => {
+    if (privateNavigationDisabled && view !== "markets") return;
     markNavigation(intent === "page" ? view : null);
     scrollPositions.current[activeView] = window.scrollY ?? 0;
     if (view !== "inbox") clearInboxResultLink();
@@ -474,16 +483,26 @@ export default function WorkspaceShell() {
       )}
       <WorkspaceSidebar
         activeView={activeView}
+        privateNavigationDisabled={privateNavigationDisabled}
         onNavigate={navigate}
         workspace={encryptedWorkspace}
       />
       {!pickerOpen && activeView === "markets" && <WatchlistNotification watchlist={watchlist} />}
       <main className="workspace-content" id="workspace-content">
+        {blockedView &&
+          ownerCapabilities?.invitationRequired &&
+          !["loading", "verifying", "signing-in"].includes(authStatus) && (
+            <p role="status" className="workspace-invitation-notice">
+              {t("nav.invitationRequired")}
+            </p>
+          )}
         <div className="workspace-page" hidden={activeView !== "settings"}>
-          {visited.current.has("settings") && <SettingsPanel workspace={encryptedWorkspace} />}
+          {!privateNavigationDisabled && visited.current.has("settings") && (
+            <SettingsPanel workspace={encryptedWorkspace} />
+          )}
         </div>
         <div className="workspace-page" hidden={activeView !== "resources"}>
-          {visited.current.has("resources") && (
+          {!privateNavigationDisabled && visited.current.has("resources") && (
             <ResourcesPanel
               watchlist={watchlist}
               active={activeView === "resources"}
@@ -505,7 +524,7 @@ export default function WorkspaceShell() {
           )}
         </div>
         <div className="workspace-page" hidden={activeView !== "tasks"}>
-          {visited.current.has("tasks") && (
+          {!privateNavigationDisabled && visited.current.has("tasks") && (
             <TasksPanel
               persistent={persistent}
               onAgentConnectionsNeeded={requestTaskAgents}
@@ -520,7 +539,7 @@ export default function WorkspaceShell() {
           )}
         </div>
         <div className="workspace-page" hidden={activeView !== "agents"}>
-          {visited.current.has("agents") && (
+          {!privateNavigationDisabled && visited.current.has("agents") && (
             <PersistentAgentsPanel
               workspace={encryptedWorkspace}
               model={persistent}

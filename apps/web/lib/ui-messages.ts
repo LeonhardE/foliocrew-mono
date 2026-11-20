@@ -28,6 +28,7 @@ const messageKeys: Record<string, string> = {
   "Allow pop-ups for this site, then try signing in again.": "popup",
   "Could not connect to Google. Check your connection and try again.": "networkGoogle",
   "Google sign-in is temporarily unavailable. You can continue browsing.": "signIn",
+  "Your Google account needs an invitation to access the workspace.": "invitationRequired",
   "Could not verify your account. Please try again.": "verify",
   "Account verification took too long. Please try again.": "verifyTimeout",
   "Your session could not be verified. Sign out and sign in again.": "session",

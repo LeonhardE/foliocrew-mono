@@ -118,9 +118,12 @@
   width: 20px;
   height: 20px;
 }
-.navItem:hover {
+.navItem[href]:hover {
   background: var(--raised);
   color: var(--text);
+}
+.navItem[aria-disabled="true"] {
+  opacity: 0.45;
 }
 .navItem[aria-current="page"] {
   background: color-mix(in srgb, var(--accent) 16%, transparent);
