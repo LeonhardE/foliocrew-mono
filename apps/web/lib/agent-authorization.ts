@@ -10,7 +10,7 @@ export type AgentAuthorizationHandoff = {
 };
 export function agentAuthorizationHandoff(
   hash: string,
-  expectedOrigin: string,
+  expectedOrigin: string | readonly string[],
 ): AgentAuthorizationHandoff | null {
   if (!hash.startsWith("#agent_authorization=")) return null;
   const q = new URLSearchParams(hash.slice(1));
@@ -27,7 +27,9 @@ export function agentAuthorizationHandoff(
     if (
       !exact(v, ["version", "issuer", "vaultId", "connectionId", "setupIntentId", "secret"]) ||
       v.version !== 1 ||
-      v.issuer !== expectedOrigin ||
+      !(typeof expectedOrigin === "string"
+        ? v.issuer === expectedOrigin
+        : expectedOrigin.includes(v.issuer)) ||
       !identifier(v.vaultId) ||
       !identifier(v.connectionId) ||
       typeof v.setupIntentId !== "string" ||

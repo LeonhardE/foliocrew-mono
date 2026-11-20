@@ -33,6 +33,14 @@ to the original Hub window, limited to `pending` and `approve`. It severs the op
 before transporting a transient Google credential, fences account/visibility changes
 and returns no OAuth code, token or callback URL to the application or Agent.
 
+The public Agent link configuration retains its original response by default. Web asks
+for `?version=2` to discover the legacy Hub, the optionally admitted `https://mcp.foliocrew.app`,
+and the preferred origin for copied links. `FOLIOVIEW_AGENT_BRAND_ORIGIN` admits that
+exact branded origin. `FOLIOVIEW_AGENT_PREFER_BRAND=1` selects it for copied links after
+live verification. The authenticated same-origin proxy retains the legacy Hub origin.
+Handoffs accept only the explicitly admitted origins. Signed credentials and approvals
+retain their original issuer or audience for verification.
+
 ### Persistent owner flow: Persistent workspace consumer
 
 The Agents page shows ordinary connection and task controls. Discovery follows visibility

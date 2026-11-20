@@ -1,4 +1,8 @@
 export const CONNECTION_CONTRACT = "folioview.agent-workspace.v2.0";
+export const BRANDED_AGENT_ORIGIN = "https://mcp.foliocrew.app";
+export const isLegacyAgentOrigin = (value: unknown): value is string =>
+  typeof value === "string" &&
+  /^https:\/\/agent-hub-api-[0-9]{1,20}\.[a-z]+(?:-[a-z0-9]+)+[0-9]\.run\.app$/.test(value);
 
 export class ConnectionError extends Error {
   constructor(readonly code: string) {

@@ -43,3 +43,14 @@ test("temporary authorization fragments are closed and bound to the configured s
       (e) => e.code === "invalid_handoff",
     );
 });
+
+test("migration admits a branded authorization fragment only when explicitly configured", () => {
+  const brand = connections.BRANDED_AGENT_ORIGIN;
+  const branded = { ...value, issuer: brand };
+  assert.equal(parse(hash(branded), [origin, brand]).issuer, brand);
+  assert.equal(parse(hash(value), [origin, brand]).issuer, origin);
+  assert.throws(
+    () => parse(hash(branded), origin),
+    (e) => e.code === "invalid_handoff",
+  );
+});

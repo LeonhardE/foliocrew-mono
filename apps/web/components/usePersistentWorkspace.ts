@@ -84,6 +84,7 @@ export function usePersistentWorkspace(
   workspace: HoldingsWorkspace,
   hubOrigin: string | null,
   active = true,
+  brandOrigin: string | null = null,
 ) {
   const auth = useAuth(),
     owner = auth.status === "authenticated" ? auth.sessionKey : null;
@@ -92,11 +93,11 @@ export function usePersistentWorkspace(
   );
   const scope =
     visible && owner && workspace.owner === owner && workspace.phase === "unlocked"
-      ? `${owner}:${workspace.vault?.vaultId ?? "unavailable"}:${workspace.vaultGeneration}`
+      ? `${owner}:${workspace.vault?.vaultId ?? "unavailable"}:${workspace.vaultGeneration}${brandOrigin ? ":" + brandOrigin : ""}`
       : null;
   const [state, setState] = useState<State>(initial);
-  const live = useRef({ auth, workspace, owner, scope, visible, hubOrigin, active });
-  live.current = { auth, workspace, owner, scope, visible, hubOrigin, active };
+  const live = useRef({ auth, workspace, owner, scope, visible, hubOrigin, active, brandOrigin });
+  live.current = { auth, workspace, owner, scope, visible, hubOrigin, active, brandOrigin };
   const job = useRef<AbortController | null>(null);
   const displayJob = useRef<AbortController | null>(null);
   const fresh = useRef(0);
@@ -288,6 +289,7 @@ export function usePersistentWorkspace(
                 assert,
                 abort.signal,
                 live.current.hubOrigin ?? "",
+                live.current.brandOrigin,
               ),
               hub,
               assert,

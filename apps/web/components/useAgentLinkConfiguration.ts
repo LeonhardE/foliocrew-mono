@@ -2,7 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { untilSignal } from "@/lib/workspace-cache";
-import { readAgentLinkConfiguration, type AgentLinkConfiguration } from "@/lib/agent-link";
+import {
+  AGENT_LINK_CONFIGURATION_PATH,
+  readAgentLinkConfiguration,
+  type AgentLinkConfiguration,
+} from "@/lib/agent-link";
 
 /** This public metadata response contains a configured destination, never a user or credential. */
 export function useAgentLinkConfiguration(active: boolean) {
@@ -42,7 +46,7 @@ export function useAgentLinkConfiguration(active: boolean) {
     void (async () => {
       try {
         const response = await untilSignal(
-          fetch("/api/private/agent-link/config", {
+          fetch(AGENT_LINK_CONFIGURATION_PATH, {
             method: "GET",
             cache: "no-store",
             credentials: "omit",

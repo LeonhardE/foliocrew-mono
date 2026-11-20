@@ -65,11 +65,15 @@ export function PersistentAgentsPanel({
   workspace,
   model,
   origin,
+  hubOrigin,
+  brandOrigin,
   active,
 }: {
   workspace: HoldingsWorkspace;
   model: PersistentWorkspaceModel;
   origin: string | null;
+  hubOrigin?: string | null;
+  brandOrigin?: string | null;
   active: boolean;
 }) {
   const t = useTranslations("agentAccess"),
@@ -121,8 +125,9 @@ export function PersistentAgentsPanel({
   }, [model.owner]);
   useEffect(() => {
     if (!active || !origin) return;
+    const trusted = hubOrigin && brandOrigin ? [hubOrigin, brandOrigin] : (hubOrigin ?? origin);
     try {
-      const value = agentAuthorizationHandoff(window.location.hash, origin);
+      const value = agentAuthorizationHandoff(window.location.hash, trusted);
       if (value) {
         handoff.current = value;
         setHandoffReady(true);
@@ -137,7 +142,7 @@ export function PersistentAgentsPanel({
     try {
       const value = nativeHandoff(window.location.search);
       if (value)
-        void connectNativeOwnerBridge(value, origin, abort.signal)
+        void connectNativeOwnerBridge(value, trusted, abort.signal)
           .then((v) => {
             if (abort.signal.aborted) v.close();
             else {
@@ -156,7 +161,7 @@ export function PersistentAgentsPanel({
       attached?.close();
       setBridge(null);
     };
-  }, [active, origin]);
+  }, [active, origin, hubOrigin, brandOrigin]);
   useEffect(() => {
     if (!bridge || !model.owner || !active) return;
     const owner = model.owner,

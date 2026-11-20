@@ -1,9 +1,11 @@
 /** A fresh Google credential goes only to the original cookie-bound first-party Hub window. */
 import {
+  BRANDED_AGENT_ORIGIN,
   CONNECTION_CONTRACT as CONTRACT,
   exact,
   identifier,
   ConnectionError,
+  isLegacyAgentOrigin,
 } from "./agent-connections";
 const PROFILE = "folioview.native-account-bridge.v1";
 const NONCE = /^[A-Za-z0-9_-]{43}$/;
@@ -176,16 +178,18 @@ export function verifiedNativeBridge(v: unknown): v is NativeOwnerBridge {
 }
 export function connectNativeOwnerBridge(
   handoff: NativeHandoff,
-  hubOrigin: string,
+  hubOrigin: string | readonly string[],
   signal?: AbortSignal,
 ): Promise<NativeOwnerBridge> {
   const peer = window.opener;
+  const origins = typeof hubOrigin === "string" ? [hubOrigin] : [...hubOrigin];
   if (
     !identifier(handoff.requestId) ||
     !NONCE.test(handoff.nonce) ||
-    !/^https:\/\/agent-hub-api-[0-9]{1,20}\.[a-z]+(?:-[a-z0-9]+)+[0-9]\.run\.app$/.test(
-      hubOrigin,
-    ) ||
+    !origins.length ||
+    origins.length > 2 ||
+    new Set(origins).size !== origins.length ||
+    origins.some((origin) => origin !== BRANDED_AGENT_ORIGIN && !isLegacyAgentOrigin(origin)) ||
     !peer ||
     peer.closed ||
     signal?.aborted
@@ -205,7 +209,7 @@ export function connectNativeOwnerBridge(
       if (
         !event.isTrusted ||
         event.source !== peer ||
-        event.origin !== hubOrigin ||
+        !origins.includes(event.origin) ||
         !exact(event.data, ["type", "profile", "requestId", "nonce"]) ||
         event.data.type !== "fv-native-owner-attached" ||
         event.data.profile !== PROFILE ||
@@ -224,16 +228,18 @@ export function connectNativeOwnerBridge(
         reject(new ConnectionError("invalid_handoff"));
         return;
       }
-      const bridge = new NativeOwnerBridge(event.ports[0], handoff.requestId, hubOrigin);
+      const bridge = new NativeOwnerBridge(event.ports[0], handoff.requestId, event.origin);
       brands.add(bridge);
       resolve(bridge);
     };
     const timer = setTimeout(cancel, 30000);
     window.addEventListener("message", message);
     signal?.addEventListener("abort", cancel, { once: true });
-    peer.postMessage(
-      { type: "fv-native-owner-ready", requestId: handoff.requestId, nonce: handoff.nonce },
-      hubOrigin,
-    );
+    const ready = {
+      type: "fv-native-owner-ready",
+      requestId: handoff.requestId,
+      nonce: handoff.nonce,
+    };
+    for (const origin of origins) peer.postMessage(ready, origin);
   });
 }

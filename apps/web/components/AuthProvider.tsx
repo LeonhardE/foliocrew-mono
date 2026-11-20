@@ -1188,7 +1188,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!session || !ownsSession()) throw changed();
       const configuration = await loadAgentLinkConfiguration(signal);
       if (!ownsSession()) throw changed();
-      if (!configuration.enabled || configuration.hubOrigin !== bridge.hubOrigin)
+      if (
+        !configuration.enabled ||
+        (configuration.hubOrigin !== bridge.hubOrigin &&
+          !(configuration.schemaVersion === 2 && configuration.brandOrigin === bridge.hubOrigin))
+      )
         throw new Error("Agent consent is not configured.");
       let token: string;
       try {
