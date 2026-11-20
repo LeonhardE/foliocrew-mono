@@ -108,8 +108,9 @@ Terraform, profiles, local logs, and source files.
 
 The User root's optional `workspace_invitation` input references the numeric versions and the
 numeric subject of `workspace-admission@PROJECT.iam.gserviceaccount.com`. It uses the User
-origin pinned in `hub_trust`. Integrate this input into the reviewed managed User projection
-before enabling production. Stage it with `restrict_workspace_access` disabled until Firebase
+origin pinned in `hub_trust`. The consumer marker connects this input to the reviewed managed
+User projection after the profile foundation is deployed. Stage it with
+`restrict_workspace_access` disabled until Firebase
 blocking triggers, dependent services and the existing owner's sign-in and vault access pass
 validation.
 
