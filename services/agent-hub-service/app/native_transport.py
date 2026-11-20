@@ -236,9 +236,12 @@ class NativeServer(_Server):
 
 
 class NativeTransportService(OwnerConnectionService):
-    def __init__(self, store, config, *, clock=time.time, user_vaults=None):
+    def __init__(self, store, config, *, clock=time.time, user_vaults=None, primary_issuer=None):
         super().__init__(store, clock=clock)
         self.config = NativeConfig(config)
+        self.connection_resource = (
+            self.config.resource if primary_issuer not in (None, config.issuer) else None
+        )
         self.user_vaults = user_vaults or configured_native_vaults(store)
 
     def transact(self, callback):
@@ -426,6 +429,7 @@ class NativeTransportService(OwnerConnectionService):
                     and candidate["status"] == "active"
                     and candidate["clientId"] == pending["params"]["client_id"]
                     and candidate["vaultId"] == vault
+                    and candidate.get("nativeResource") == self.connection_resource
                     and candidate.get(USER_AUTHORITY_TRANSITION) == fingerprint
                 ):
                     if candidate["provider"] != self._provider(candidate["clientId"]):
@@ -476,6 +480,8 @@ class NativeTransportService(OwnerConnectionService):
                     "status": "active",
                     "transportKind": "persistent_runtime",
                 }
+                if self.connection_resource is not None:
+                    conn["nativeResource"] = self.connection_resource
                 if predecessor is not None:
                     conn["predecessorConnectionId"] = predecessor
                 if fingerprint is not None:
@@ -562,6 +568,7 @@ class NativeTransportService(OwnerConnectionService):
             owner_allowed(context["ownerSubject"])
             and conn
             and conn.get("transportKind") == "persistent_runtime"
+            and conn.get("nativeResource") == self.connection_resource
             and conn.get("ownerSubject") == context["ownerSubject"]
             and conn.get("connectionId") == context["connectionId"]
             and conn.get(USER_AUTHORITY_TRANSITION) == authority

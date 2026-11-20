@@ -28,6 +28,24 @@ cookie for that request’s pending and approval paths. Turning off the flag res
 the legacy cookie while existing scoped windows can finish. Keep the compatible reader until
 30 minutes after the last scoped cookie was issued before reverting to an older binary.
 
+### Branded native origin
+
+The existing `HUB_OAUTH_ISSUER` remains the default origin. Set
+`HUB_NATIVE_EDGE_PUBLIC_KEY` to the base64url Ed25519 public key for the
+dedicated Cloudflare Agent Worker to prepare `https://mcp.foliocrew.app`.
+The native edge proof binds the upstream and public origins, method, exact
+path and query, browser Origin, and timestamp. Only allowlisted public protocol
+paths accept it, and an invalid or missing branded proof cannot select the
+second issuer. Keep the matching private key in the Worker secret.
+
+The branded issuer has its own OAuth resource and MCP boundary. New branded
+connections retain that resource in storage. Existing connections retain
+their original issuer, and Owner approvals use the resource recorded for the
+chosen connection. Use both original and branded discovery, OAuth and signed
+runtime tests before publishing the branded default. Once branded
+connections exist, use a compatible revision for rollback and keep their
+brand routing and key valid.
+
 ## First pairing
 
 Only explicit user connection or reauthorization creates a ten-minute setup. The

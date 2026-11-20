@@ -9,7 +9,9 @@ from .api import internal_router, owner_router, public_router
 from .catalogue import router as catalogue_router
 from .errors import HubErrors
 from .native_mcp import install_native_mcp
+from .native_origin import AgentEdgeIngress
 from .native_transport_routes import connections_router as native_connections_router
+from .native_transport_routes import get_branded_native_transport
 from .native_transport_routes import owner_router as native_transport_owner_router
 from .native_transport_routes import router as native_transport_router
 from .persistent_execution_routes import router as persistent_execution_router
@@ -67,7 +69,8 @@ app.include_router(native_transport_router)
 app.include_router(native_transport_owner_router)
 app.include_router(native_connections_router)
 app.add_middleware(HubErrors)
-install_native_mcp(app)
+app.add_middleware(AgentEdgeIngress)
+install_native_mcp(app, branded_factory=get_branded_native_transport)
 
 
 @app.get("/health")

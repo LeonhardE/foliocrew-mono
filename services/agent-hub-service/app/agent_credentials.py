@@ -21,6 +21,7 @@ from folioview_shared.encrypted.persistent_agents import (
 from folioview_shared.encrypted.schema import safe_https_url, validate_schema
 from folioview_shared.identity import owner_key
 
+from .native_origin import BRAND_ORIGIN, BRAND_RESOURCE
 from .native_transport import (
     SCOPE,
     USER_AUTHORITY_TRANSITION,
@@ -82,6 +83,14 @@ class AgentCredentialService(PersistentAgentService):
             return _current(unit, owner, self.now(), vault)
         user_scope.require_current(unit, self.now())
         return user_scope.authority, user_scope.cursor.registry
+
+    def _connection_audience(self, conn):
+        resource = conn.get("nativeResource")
+        if resource is None:
+            return self.audience
+        if resource != BRAND_RESOURCE:
+            raise StoreUnavailable
+        return BRAND_ORIGIN
 
     def _credential_context(self, unit, uid, vault, connection, user_scope, *, active=False):
         owner = owner_key(uid)
@@ -264,7 +273,7 @@ class AgentCredentialService(PersistentAgentService):
                 previous_id = None
             return {
                 **snapshot(self._setup(unit, intent, owner, vault, connection, conn, live=False)),
-                "issuer": self.audience,
+                "issuer": self._connection_audience(conn),
                 "provider": conn["provider"],
                 "predecessorConnectionId": previous_id,
             }
@@ -492,7 +501,7 @@ class AgentCredentialService(PersistentAgentService):
                 identity=identity,
                 current_lease=old,
                 setup_intent_id=setup["setupIntentId"],
-                audience=self.audience,
+                audience=self._connection_audience(conn),
                 now=self.now(),
             )
             predecessor = None
