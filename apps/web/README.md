@@ -52,6 +52,11 @@ release path. Shared browser contract changes are included in the Web trigger. V
 source, image digest, ready revision and traffic; passing PR checks alone is not deployment proof.
 See the [delivery guide](../../infra/gcp/README.md) and [Web infrastructure](../../infra/gcp/terraform/envs/prod/web/README.md).
 
+For invitation staging, set `FOLIOCREW_INVITATION_UI_ENABLED=1` in the Web server environment
+to expose the invitation proxy and let the settings page ask User Service about administrator
+access. Set `FOLIOCREW_WORKSPACE_ACCESS_RESTRICTED=1` only after Firebase and User Service enforce
+admission. The browser receives both switches with the existing owner configuration response.
+
 ## Public introduction
 
 Build the static introduction independently of the signed-in workspace. Set

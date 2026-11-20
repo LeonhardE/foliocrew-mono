@@ -17,6 +17,7 @@ The workspace administrator can manage Gmail invitations in Settings when invita
   when the workspace invitation requirement is enabled.
 - Show a localized invitation-required message when the Google sign-in callback denies
   workspace admission.
+- Read the server's rollout switches with the existing owner configuration request.
 
 ## Validation
 

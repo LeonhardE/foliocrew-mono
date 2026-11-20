@@ -48,7 +48,6 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8
 // An unset service origin keeps the current deployment usable during migration.
 const USER_API_BASE_URL = process.env.NEXT_PUBLIC_USER_API_BASE_URL || API_BASE_URL;
 const CONFIG_API_BASE_URL = process.env.NEXT_PUBLIC_CONFIG_API_BASE_URL || API_BASE_URL;
-const INVITATION_REQUIRED = process.env.NEXT_PUBLIC_FOLIOCREW_WORKSPACE_ACCESS_RESTRICTED === "1";
 const INVITATION_MESSAGE = "Your Google account needs an invitation to access the workspace.";
 
 export type PrivateService = "user" | "config" | "portfolio" | "agent-hub";
@@ -98,6 +97,8 @@ export type OwnerCapabilities = Readonly<{
   portfolio: boolean;
   agentHub: boolean;
   userVault?: true;
+  invitationRequired?: true;
+  invitationManagement?: true;
 }>;
 export type OwnerConfigStatus = "loading" | "ready" | "unavailable";
 type OwnerConfig = { status: OwnerConfigStatus; flags: OwnerCapabilities };
@@ -164,6 +165,12 @@ async function readOwnerCapabilities(
     portfolio: (flags as Record<string, unknown>).portfolio as boolean,
     agentHub: (flags as Record<string, unknown>).agentHub as boolean,
     ...((flags as Record<string, unknown>).userVault === true ? { userVault: true as const } : {}),
+    ...(response.headers.get("X-Foliocrew-Workspace-Invitation") === "required"
+      ? { invitationRequired: true as const }
+      : {}),
+    ...(response.headers.get("X-Foliocrew-Invitation-Management") === "enabled"
+      ? { invitationManagement: true as const }
+      : {}),
   };
 }
 
@@ -620,12 +627,12 @@ function readProfile(value: unknown, expectedUid: string): AccountProfile {
   return profile as AccountProfile;
 }
 
-function popupErrorMessage(error: unknown): string | null {
+function popupErrorMessage(error: unknown, invitationRequired: boolean): string | null {
   const failure = error && typeof error === "object" ? error : null;
   const code = failure && "code" in failure ? failure.code : null;
   if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") return null;
   if (
-    INVITATION_REQUIRED &&
+    invitationRequired &&
     code === "auth/internal-error" &&
     failure &&
     "message" in failure &&
@@ -731,7 +738,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       if (response.status === 401) {
         message = "Your session could not be verified. Sign out and sign in again.";
-      } else if (response.status === 403 && INVITATION_REQUIRED) {
+      } else if (response.status === 403 && ownerConfigRef.current.flags.invitationRequired) {
         message = INVITATION_MESSAGE;
       } else if (response.status === 503) {
         message = "Sign-in is temporarily unavailable. Please try again.";
@@ -840,7 +847,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await signInWithPopup(auth, provider);
     } catch (error) {
       if (generation !== generationRef.current) return;
-      const message = popupErrorMessage(error);
+      const message = popupErrorMessage(
+        error,
+        ownerConfigRef.current.flags.invitationRequired === true,
+      );
       setState({
         ...anonymousState,
         status: message ? "error" : "anonymous",
@@ -1243,7 +1253,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       ...state,
       ownerConfigStatus: ownerConfig.status,
-      privateWorkspaceAvailable: !INVITATION_REQUIRED || state.status === "authenticated",
+      privateWorkspaceAvailable:
+        state.status === "authenticated" ||
+        (ownerConfig.status === "ready" && ownerConfig.flags.invitationRequired !== true),
       ownerCapabilities: ownerConfig.flags,
       portfolioConfigured:
         (ownerConfig.status === "ready" && ownerConfig.flags.portfolio) ||

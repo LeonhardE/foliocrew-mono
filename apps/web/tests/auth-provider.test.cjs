@@ -73,9 +73,9 @@ async function settle() {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
-function configResponse(portfolio = true, agentHub = false) {
+function configResponse(portfolio = true, agentHub = false, headers = {}) {
   return new Response(JSON.stringify({ schemaVersion: 1, flags: { portfolio, agentHub } }), {
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...headers },
   });
 }
 
@@ -288,7 +288,10 @@ test("the signup callback reports an invitation denial with a fixed message befo
     ],
   ]) {
     const mounted = mountProvider({
-      env: { NEXT_PUBLIC_FOLIOCREW_WORKSPACE_ACCESS_RESTRICTED: enabled },
+      fetchOwnerConfig: async () =>
+        configResponse(false, false, {
+          "X-Foliocrew-Workspace-Invitation": enabled === "1" ? "required" : "off",
+        }),
       login: async () => {
         throw {
           code: "auth/internal-error",
@@ -296,12 +299,36 @@ test("the signup callback reports an invitation denial with a fixed message befo
         };
       },
     });
+    await settle();
     await mounted.actions.signIn();
     assert.equal(mounted.state().error, expected);
     assert.equal(mounted.state().sessionKey, null);
     assert.equal(mounted.requests.length, 0);
     mounted.unmount();
   }
+});
+
+test("the existing owner configuration request carries the invitation switches", async () => {
+  const config = deferred();
+  const h = mountProvider({ fetchOwnerConfig: () => config.promise });
+  assert.equal(h.initial.privateWorkspaceAvailable, false);
+  h.emitUser(null);
+  assert.equal(h.state().privateWorkspaceAvailable, false);
+  config.resolve(
+    configResponse(false, false, {
+      "X-Foliocrew-Workspace-Invitation": "required",
+      "X-Foliocrew-Invitation-Management": "enabled",
+    }),
+  );
+  await settle();
+  assert.equal(h.state().privateWorkspaceAvailable, false);
+  assert.equal(h.actions.ownerCapabilities.invitationManagement, true);
+  assert.equal(h.requests.length, 0);
+  h.emitUser({ uid: "a", getIdToken: async () => "test-token" });
+  await settle();
+  assert.equal(h.state().privateWorkspaceAvailable, true);
+  assert.equal(h.configRequests.length, 1);
+  h.unmount();
 });
 
 test("loopback capability markup inputs match SSR and the first client render before mount", async () => {

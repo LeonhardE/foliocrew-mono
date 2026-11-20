@@ -77,6 +77,7 @@ test("workspace navigation keeps one owner session without server transitions af
       "./AuthProvider": {
         useAuth: () => ({
           ownerConfigStatus: "ready",
+          ownerCapabilities: { invitationRequired: !privateWorkspaceAvailable },
           privateWorkspaceAvailable,
           status: privateWorkspaceAvailable ? "authenticated" : "anonymous",
         }),

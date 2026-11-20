@@ -77,7 +77,12 @@ export default function WorkspaceShell() {
   const [overviewReload, setOverviewReload] = useState(0);
   const [chartReload, setChartReload] = useState(0);
   const pathname = usePathname();
-  const { ownerConfigStatus, privateWorkspaceAvailable, status: authStatus } = useAuth();
+  const {
+    ownerConfigStatus,
+    ownerCapabilities,
+    privateWorkspaceAvailable,
+    status: authStatus,
+  } = useAuth();
   const requestedView = workspaceView(pathname) ?? "markets";
   const privateNavigationDisabled = privateWorkspaceAvailable === false;
   const blockedView = privateNavigationDisabled && requestedView !== "markets";
@@ -484,11 +489,13 @@ export default function WorkspaceShell() {
       />
       {!pickerOpen && activeView === "markets" && <WatchlistNotification watchlist={watchlist} />}
       <main className="workspace-content" id="workspace-content">
-        {blockedView && !["loading", "verifying", "signing-in"].includes(authStatus) && (
-          <p role="status" className="workspace-invitation-notice">
-            {t("nav.invitationRequired")}
-          </p>
-        )}
+        {blockedView &&
+          ownerCapabilities?.invitationRequired &&
+          !["loading", "verifying", "signing-in"].includes(authStatus) && (
+            <p role="status" className="workspace-invitation-notice">
+              {t("nav.invitationRequired")}
+            </p>
+          )}
         <div className="workspace-page" hidden={activeView !== "settings"}>
           {!privateNavigationDisabled && visited.current.has("settings") && (
             <SettingsPanel workspace={encryptedWorkspace} />

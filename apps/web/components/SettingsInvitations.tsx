@@ -278,12 +278,8 @@ function Invitations({ sessionKey }: { sessionKey: string }) {
 }
 
 export default function SettingsInvitations() {
-  const { status, sessionKey } = useAuth();
-  if (
-    process.env.NEXT_PUBLIC_FOLIOCREW_INVITATION_UI_ENABLED !== "1" ||
-    status !== "authenticated" ||
-    !sessionKey
-  )
+  const { ownerCapabilities, status, sessionKey } = useAuth();
+  if (!ownerCapabilities?.invitationManagement || status !== "authenticated" || !sessionKey)
     return null;
   return <Invitations key={sessionKey} sessionKey={sessionKey} />;
 }
