@@ -2,11 +2,16 @@ locals {
   project_id       = var.deployment.project_id
   region           = var.deployment.region
   existing_web_uid = var.deployment.existing_service_uid
+  agent_link_mode  = try(var.workspace_edge.agent_link_mode, null)
   environment = tomap(merge(
     var.owner_environment == null ? {} : var.owner_environment,
     var.workspace_edge == null ? {} : {
       FOLIOCREW_EDGE_BROWSER_ORIGIN = var.workspace_edge.browser_origin
       FOLIOCREW_EDGE_PUBLIC_KEY     = var.workspace_edge.public_key
+    },
+    local.agent_link_mode == null ? {} : {
+      FOLIOVIEW_AGENT_BRAND_ORIGIN = "https://mcp.foliocrew.app"
+      FOLIOVIEW_AGENT_PREFER_BRAND = local.agent_link_mode == "preferred" ? "1" : "0"
     },
   ))
 }

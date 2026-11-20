@@ -230,6 +230,45 @@ run "workspace_edge_rejects_origin_with_port" {
   expect_failures = [var.workspace_edge]
 }
 
+run "workspace_edge_can_admit_branded_agent_links" {
+  command = plan
+  variables {
+    owner_environment = {
+      FOLIOVIEW_OWNER_FIREBASE_PROJECT_ID = "demo-web-alpha"
+      FOLIOVIEW_PORTFOLIO_OWNER_ENABLED   = "false"
+      FOLIOVIEW_PORTFOLIO_ORIGIN          = ""
+      FOLIOVIEW_PORTFOLIO_AUDIENCE        = ""
+      FOLIOVIEW_HUB_OWNER_ENABLED         = "true"
+      FOLIOVIEW_HUB_ORIGIN                = "https://agent-hub-api-111222333444.us-central1.run.app"
+    }
+    workspace_edge = {
+      browser_origin  = "https://hub.foliocrew.app"
+      public_key      = "m-cQA9lh6oJmA1Kn74lPpBu0TjkXtYoCBXco7JRq6EI"
+      agent_link_mode = "admitted"
+    }
+  }
+  assert {
+    condition = (
+      local.environment.FOLIOVIEW_AGENT_BRAND_ORIGIN == "https://mcp.foliocrew.app" &&
+      local.environment.FOLIOVIEW_AGENT_PREFER_BRAND == "0" &&
+      local.environment.FOLIOVIEW_HUB_ORIGIN == var.owner_environment.FOLIOVIEW_HUB_ORIGIN
+    )
+    error_message = "The admitted stage adds the exact branded host and retains the legacy copy default and private upstream."
+  }
+}
+
+run "workspace_edge_rejects_brand_links_without_owner_hub" {
+  command = plan
+  variables {
+    workspace_edge = {
+      browser_origin  = "https://hub.foliocrew.app"
+      public_key      = "m-cQA9lh6oJmA1Kn74lPpBu0TjkXtYoCBXco7JRq6EI"
+      agent_link_mode = "preferred"
+    }
+  }
+  expect_failures = [var.workspace_edge]
+}
+
 run "workspace_edge_rejects_noncanonical_key" {
   command = plan
   variables {

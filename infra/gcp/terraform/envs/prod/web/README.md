@@ -137,6 +137,13 @@ owner environment. Supply the exact `browser_origin` and an unpadded base64url
 Run. The Worker holds the signing key. Keep the value null until the paired Web
 image and Worker are ready to rehearse together.
 
+For the exact `https://hub.foliocrew.app` edge with the Owner Hub enabled,
+optionally set `agent_link_mode` to `admitted` to enable branded Agent handoffs.
+Advance to `preferred` after live validation to update the copied default to
+`https://mcp.foliocrew.app`. Roll back the copied default with `admitted` to keep
+existing branded handoffs available. Omitting the mode preserves both original
+edge settings without enabling branded Agent links.
+
 The complete plan should change only these settings on Web's existing guarded
 controller. Review it with the same source, saved-plan and release checks as the
 owner environment. Compare the existing image digest, traffic and service UID
