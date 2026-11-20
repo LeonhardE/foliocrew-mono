@@ -207,7 +207,7 @@ def require_web_owner_consumer(directory):
     )
 
 
-def require_workspace_edge_consumer(directory):
+def require_workspace_edge_consumer(directory, *, agent_links=False):
     require_consumer_marker(
         directory / "workspace-edge.consumer.json",
         {
@@ -218,6 +218,17 @@ def require_workspace_edge_consumer(directory):
         },
         "Web source has not adopted the reviewed Workbench edge contract.",
     )
+    if agent_links:
+        require_consumer_marker(
+            directory / "workspace-edge-agent-links.consumer.json",
+            {
+                "schemaVersion": 1,
+                "target": "web",
+                "configurationContract": "workspace-edge-agent-links.v1",
+                "terraformVariable": "workspace_edge",
+            },
+            "Web source has not adopted the reviewed workbench Agent link stages.",
+        )
 
 
 def require_browser_origins_consumer(directory, target):
@@ -391,7 +402,9 @@ def registry(root, target, instance=None):
     if instance is not None and "browserOrigins" in instance:
         require_browser_origins_consumer(directory, target)
     if instance is not None and "workspaceEdge" in instance:
-        require_workspace_edge_consumer(directory)
+        require_workspace_edge_consumer(
+            directory, agent_links="agentLinkMode" in instance["workspaceEdge"]
+        )
     return policy, selected, directory
 
 

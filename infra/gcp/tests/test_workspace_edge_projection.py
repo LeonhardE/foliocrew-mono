@@ -80,3 +80,32 @@ class WorkspaceEdgeTests(unittest.TestCase):
                 runner.require_workspace_edge_consumer(directory)
             path.write_text(json.dumps(marker))
             runner.require_workspace_edge_consumer(directory)
+            with self.assertRaisesRegex(RuntimeError, "Agent link stages"):
+                runner.require_workspace_edge_consumer(directory, agent_links=True)
+            (directory / "workspace-edge-agent-links.consumer.json").write_text(
+                json.dumps({**marker, "configurationContract": "workspace-edge-agent-links.v1"})
+            )
+            runner.require_workspace_edge_consumer(directory, agent_links=True)
+
+    def test_agent_link_modes_require_the_fixed_workbench_and_active_owner_hub(self):
+        artifacts = profile.compile_web_owner_deployment_artifacts(selected())
+        pin = artifacts["trigger-substitutions.candidate.json"]
+        instance = profile.parse_target(pin["_DEPLOYMENT_CONFIG"].encode())
+        branded = {**EDGE, "browserOrigin": "https://hub.foliocrew.app"}
+        for mode in ("admitted", "preferred"):
+            edge = {**branded, "agentLinkMode": mode}
+            extended = profile.add_workspace_edge(
+                instance, edge, expected_sha256=profile.digest(instance)
+            )
+            self.assertEqual(
+                profile.terraform_inputs(extended)["workspace_edge"]["agent_link_mode"], mode
+            )
+            self.assertEqual(extended["webOwner"], instance["webOwner"])
+        without_owner = profile.compile_target(selected(), "web")
+        for base, edge in (
+            (instance, {**EDGE, "agentLinkMode": "admitted"}),
+            (instance, {**branded, "agentLinkMode": "implicit"}),
+            (without_owner, {**branded, "agentLinkMode": "preferred"}),
+        ):
+            with self.subTest(edge=edge), self.assertRaises(profile.ProfileError):
+                profile.add_workspace_edge(base, edge, expected_sha256=profile.digest(base))
