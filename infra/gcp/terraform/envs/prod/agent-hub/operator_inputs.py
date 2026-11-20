@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 from deployment_profile import ProfileError, browser_origin_aliases  # noqa: E402
 
 FLAGS = ("provider_connection_slots_enabled", "task_center_enabled")
+BRAND_WORKSPACE = "https://hub.foliocrew.app"
 FIELDS = {
     "deployment",
     "bootstrap_image",
@@ -195,7 +196,10 @@ def validate_full_input(value):
     )
     require(
         not boolean(value, "prefer_branded_workspace")
-        or (mode and "https://hub.foliocrew.app" in (value.get("browser_origin_aliases") or [])),
+        or (
+            mode
+            and any(origin == BRAND_WORKSPACE for origin in value.get("browser_origin_aliases", []))
+        ),
         "invalid_brand_workspace_default",
     )
     require(
