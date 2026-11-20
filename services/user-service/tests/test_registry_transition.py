@@ -3,6 +3,7 @@
 import hashlib
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -31,6 +32,11 @@ from app.private_resources.registry_pages import (
     RegistryHistory,
     RegistryPageRequest,
     _index,
+)
+from app.private_resources.registry_retention import (
+    ARCHIVE_HOLDER,
+    RegistryRetention,
+    RetiredRegistryScope,
 )
 from app.private_resources.report_sources import HOLDINGS_FENCES, holdings_fence_key
 from app.private_resources.source_invalidations import (
@@ -292,6 +298,65 @@ class RegistryTransitionTests(unittest.TestCase):
         self.assertEqual(start["firstBundle"], self.packet["firstBundle"])
         with self.assertRaisesRegex(ContractError, "not_found"):
             cutover.read_start("another-account", VAULT, nonce, now=1001)
+
+    def test_registry_retention_derives_and_persists_only_the_authenticated_original_scope(self):
+        self.stage_frozen_scope()
+        self.stage_transferred_authority()
+        ledger = RegistryRetention(self.store)
+        scope = RetiredRegistryScope(**self.scope, registryEpoch=1)
+        expected = {
+            "registryEpoch": 1,
+            "retiredEntries": 1,
+            "protectedEntries": 1,
+            "deletableEntries": 0,
+            "references": 1,
+            "coverageComplete": False,
+        }
+        self.assertEqual(ledger.audit_original(UID, VAULT, now=1001), expected)
+        self.assertEqual(ledger._record(scope)["references"], {})
+        for _ in range(2):
+            self.assertEqual(
+                ledger.audit_original(UID, VAULT, now=1001, record_reference=True), expected
+            )
+        persisted = RegistryRetention(self.store)
+        (proof,) = persisted._record(scope)["references"].values()
+        self.assertEqual(proof["holderId"], ARCHIVE_HOLDER)
+        with self.assertRaisesRegex(ContractError, "version_conflict"):
+            persisted.release(scope, proof)
+        with self.assertRaisesRegex(ContractError, "not_found"):
+            persisted.audit_original("unrelated-account", VAULT, now=1001, record_reference=True)
+        self.assertEqual(
+            RegistryHistory(self.heads)._read(self.scope, 1, [1])[0]["bundle"],
+            self.vault["registryHistory"][0],
+        )
+
+    def test_registry_retention_serializes_registrations_and_rejects_late_replays(self):
+        ledger = RegistryRetention(self.store)
+        scope = RetiredRegistryScope(**self.scope, registryEpoch=1)
+        first = {
+            **scope.model_dump(),
+            "contractVersion": CONTRACT_VERSION,
+            "profile": "folioview.private-history-reference.v1",
+            "holderId": "hub",
+            "referenceId": "frozen_run_1",
+            "purpose": "frozen_run",
+            "firstSequence": 1,
+            "lastSequence": 1,
+        }
+        second = {**first, "referenceId": "frozen_run_2"}
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            tuple(pool.map(lambda reference: ledger.register(scope, reference), (first, second)))
+        ledger.register(scope, first)
+        self.assertEqual(len(ledger._record(scope)["references"]), 2)
+        with self.assertRaisesRegex(ContractError, "recipient_binding_mismatch"):
+            ledger.release(scope.model_copy(update={"ownerSubject": "f" * 64}), first)
+        with self.assertRaisesRegex(ContractError, "version_conflict"):
+            ledger.release(scope, {**first, "lastSequence": 2})
+        ledger.release(scope, first)
+        ledger.release(scope, first)
+        with self.assertRaisesRegex(ContractError, "version_conflict"):
+            ledger.register(scope, first)
+        self.assertEqual(list(ledger._record(scope)["references"].values()), [second])
 
     def test_offline_owner_can_page_only_the_signed_original_target(self):
         self.stage_frozen_scope()
