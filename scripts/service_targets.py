@@ -249,9 +249,9 @@ def parse_registry_document(raw: bytes | str) -> tuple[Target, ...]:
             runtime = row.get("runtime", "cloud_run")
             if (
                 kind not in {"backend", "web"}
-                or runtime not in {"cloud_run", "confidential_vm"}
+                or runtime not in {"cloud_run", "confidential_vm", "firebase_functions"}
                 or (
-                    runtime == "confidential_vm"
+                    runtime in {"confidential_vm", "firebase_functions"}
                     and (kind != "backend" or release_mode not in {"build_only", "retired"})
                 )
                 or release_mode not in {"existing", "build_only", "retired"}
@@ -312,13 +312,18 @@ def load_registry(root: Path = ROOT) -> Registry:
                 # retirement PR may remove its complete source/build tree.
                 targets.append(replace(target, source_present=False))
                 continue
-            if target.runtime != "cloud_run":
+            if target.runtime not in {"cloud_run", "firebase_functions"}:
                 raise RegistryError("Only retired metadata may retain an obsolete runtime")
             _file(root, target.dockerfile)
             _file(root, target.cloudbuild)
             ruff_config = None
             if target.kind == "backend":
-                for filename in ("app/main.py", "requirements.txt", "requirements-dev.txt"):
+                entrypoint = (
+                    ("main.py", "firebase.json")
+                    if target.runtime == "firebase_functions"
+                    else ("app/main.py",)
+                )
+                for filename in (*entrypoint, "requirements.txt", "requirements-dev.txt"):
                     _file(root, directory + "/" + filename)
                 _test_directory(root, target.tests, "test*.py")
                 optional_config = _inside(root, directory + "/pyproject.toml")

@@ -47,8 +47,12 @@ def write_registry_fixture(root: Path, *, extra_backend: bool = False) -> dict:
         test_directory = directory / "tests"
         test_directory.mkdir()
         if row["kind"] == "backend":
-            (directory / "app").mkdir()
-            (directory / "app/main.py").write_text('"""Synthetic application."""\n')
+            if row.get("runtime") == "firebase_functions":
+                (directory / "main.py").write_text('"""Synthetic functions."""\n')
+                (directory / "firebase.json").write_text('{"functions": []}\n')
+            else:
+                (directory / "app").mkdir()
+                (directory / "app/main.py").write_text('"""Synthetic application."""\n')
             (directory / "requirements.txt").write_text("# fixture\n")
             (directory / "requirements-dev.txt").write_text("# fixture\n")
             (test_directory / "test_ready.py").write_text(
@@ -148,6 +152,21 @@ class RegistryTests(unittest.TestCase):
             target = load_registry(root).target("synthetic-service")
         self.assertEqual(target.release_mode, "build_only")
         self.assertEqual(target.service, "synthetic-api")
+
+    def test_firebase_runtime_requires_its_source_config_and_stays_build_only(self):
+        self.document = write_registry_fixture(self.root / "firebase", extra_backend=True)
+        self.root = self.root / "firebase"
+        row = self.document["targets"][-1]
+        row["runtime"] = "firebase_functions"
+        directory = self.root / row["directory"]
+        self.save()
+        self.reject()
+        (directory / "main.py").write_text('"""Synthetic functions."""\n')
+        (directory / "firebase.json").write_text('{"functions": []}\n')
+        self.assertEqual(self.load().target(row["id"]).runtime, "firebase_functions")
+        row["release_mode"] = "existing"
+        self.save()
+        self.reject()
 
     def test_unregistered_service_markers_and_nonstandard_code_fail_closed(self):
         cases = [
