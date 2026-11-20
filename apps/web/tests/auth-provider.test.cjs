@@ -81,6 +81,7 @@ function configResponse(portfolio = true, agentHub = false) {
 
 function mountProvider({
   logout = async () => {},
+  login = async () => {},
   fetchProfile = async () => profileResponse("a"),
   fetchOwnerConfig = async () => configResponse(),
   env = {},
@@ -153,7 +154,7 @@ function mountProvider({
       return () => {};
     },
     signOut: logout,
-    signInWithPopup: async () => {},
+    signInWithPopup: login,
     GoogleAuthProvider: class {
       setCustomParameters() {}
     },
@@ -267,6 +268,41 @@ function mountProvider({
     },
   };
 }
+
+test("the signup callback reports an invitation denial with a fixed message before a session exists", async () => {
+  for (const [enabled, blockingMessage, expected] of [
+    [
+      "1",
+      "WORKSPACE_INVITATION_REQUIRED",
+      "Your Google account needs an invitation to access the workspace.",
+    ],
+    [
+      "1",
+      "WORKSPACE_ADMISSION_UNAVAILABLE",
+      "Google sign-in is temporarily unavailable. You can continue browsing.",
+    ],
+    [
+      "0",
+      "WORKSPACE_INVITATION_REQUIRED",
+      "Google sign-in is temporarily unavailable. You can continue browsing.",
+    ],
+  ]) {
+    const mounted = mountProvider({
+      env: { NEXT_PUBLIC_FOLIOCREW_WORKSPACE_ACCESS_RESTRICTED: enabled },
+      login: async () => {
+        throw {
+          code: "auth/internal-error",
+          message: `Firebase: Error. ${blockingMessage} (auth/internal-error).`,
+        };
+      },
+    });
+    await mounted.actions.signIn();
+    assert.equal(mounted.state().error, expected);
+    assert.equal(mounted.state().sessionKey, null);
+    assert.equal(mounted.requests.length, 0);
+    mounted.unmount();
+  }
+});
 
 test("loopback capability markup inputs match SSR and the first client render before mount", async () => {
   for (const hostname of ["localhost", "127.0.0.1"]) {

@@ -15,6 +15,8 @@ The workspace administrator can manage Gmail invitations in Settings when invita
   browser account changes.
 - Keep anonymous visitors on Market and disable private navigation and private route content
   when the workspace invitation requirement is enabled.
+- Show a localized invitation-required message when the Google sign-in callback denies
+  workspace admission.
 
 ## Validation
 

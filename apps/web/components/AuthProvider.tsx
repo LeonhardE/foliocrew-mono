@@ -49,6 +49,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8
 const USER_API_BASE_URL = process.env.NEXT_PUBLIC_USER_API_BASE_URL || API_BASE_URL;
 const CONFIG_API_BASE_URL = process.env.NEXT_PUBLIC_CONFIG_API_BASE_URL || API_BASE_URL;
 const INVITATION_REQUIRED = process.env.NEXT_PUBLIC_FOLIOCREW_WORKSPACE_ACCESS_RESTRICTED === "1";
+const INVITATION_MESSAGE = "Your Google account needs an invitation to access the workspace.";
 
 export type PrivateService = "user" | "config" | "portfolio" | "agent-hub";
 type PrivateMethod = "GET" | "PUT" | "DELETE" | "POST" | "PATCH";
@@ -620,8 +621,19 @@ function readProfile(value: unknown, expectedUid: string): AccountProfile {
 }
 
 function popupErrorMessage(error: unknown): string | null {
-  const code = error && typeof error === "object" && "code" in error ? error.code : null;
+  const failure = error && typeof error === "object" ? error : null;
+  const code = failure && "code" in failure ? failure.code : null;
   if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") return null;
+  if (
+    INVITATION_REQUIRED &&
+    code === "auth/internal-error" &&
+    failure &&
+    "message" in failure &&
+    typeof failure.message === "string" &&
+    /\bWORKSPACE_INVITATION_REQUIRED\b/.test(failure.message)
+  ) {
+    return INVITATION_MESSAGE;
+  }
   if (code === "auth/popup-blocked") {
     return "Allow pop-ups for this site, then try signing in again.";
   }
@@ -720,7 +732,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (response.status === 401) {
         message = "Your session could not be verified. Sign out and sign in again.";
       } else if (response.status === 403 && INVITATION_REQUIRED) {
-        message = "Your Google account needs an invitation to access the workspace.";
+        message = INVITATION_MESSAGE;
       } else if (response.status === 503) {
         message = "Sign-in is temporarily unavailable. Please try again.";
       }
