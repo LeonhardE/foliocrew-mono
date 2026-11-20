@@ -78,3 +78,22 @@ requires the named `user-data` database. Configure a distinct
 `/internal/v2/private-resources/report-source-decisions`. Enable after the
 authenticated holdings authority writer and revocation workflow update the
 same fences, and after verifying migration parity and rollback.
+
+## Registry retention inventory
+
+User records a vault-specific retention floor, live registry proof references,
+and release tombstones in one atomic record. The same reference ID cannot be
+reopened after release. Recording and replaying an identical live reference
+are idempotent. A full or unreadable record fails closed.
+
+The maintenance entry point is
+`python -m app.private_resources.registry_retention UID VAULT`.
+It verifies the original boundary against the signed transfer, counts its
+protected history, and prints only aggregate results. With
+`--record-reference` it also persists the existing full-range recovery hold.
+That hold is reserved for User's original archive and cannot be released
+through the ordinary consumer release operation.
+
+This is an inventory entry point. It reports zero deletable entries because
+the current archive verifier still needs the original chain and the remaining
+writers have not enrolled all their references. It has no deletion mode.
