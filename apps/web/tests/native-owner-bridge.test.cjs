@@ -163,6 +163,30 @@ test("failure to sever opener rejects before branding or credential transport", 
   await assert.rejects(connecting, (error) => error.code === "invalid_handoff");
   channel.port2.close();
 });
+test("an admitted branded opener gets an exact target and keeps its bound origin", async (t) => {
+  const h = loadOwner(),
+    channel = new MessageChannel();
+  t.after(() => {
+    channel.port1.close();
+    channel.port2.close();
+  });
+  const brand = contracts.BRANDED_AGENT_ORIGIN;
+  const connecting = h.bridge.connectNativeOwnerBridge(
+    { requestId: "request_A", nonce: "n".repeat(43) },
+    [ORIGIN, brand],
+  );
+  assert.deepEqual(
+    h.ready.map((message) => message[1]),
+    [ORIGIN, brand],
+  );
+  h.attach(channel.port1, { origin: `${brand}.example` });
+  assert.equal(h.listeners.size, 1);
+  h.attach(channel.port1, { origin: brand });
+  const bridge = await connecting;
+  assert.equal(bridge.hubOrigin, brand);
+  assert.equal(h.bridge.verifiedNativeBridge(bridge), true);
+  bridge.close();
+});
 test("a constructed arbitrary port and OAuth-only approval cannot use the owner credential API", async () => {
   const h = loadOwner(),
     channel = new MessageChannel(),

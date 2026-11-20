@@ -2013,9 +2013,10 @@ export class PersistentOwner {
       s.version < 0 ||
       typeof s.parentRevoked !== "boolean" ||
       (s.reported === null) !== (s.version === 0) ||
-      !/^https:\/\/agent-hub-api-[0-9]{1,20}\.[a-z]+(?:-[a-z0-9]+)+[0-9]\.run\.app$/.test(
-        args.hubOrigin,
-      )
+      (args.hubOrigin !== "https://mcp.foliocrew.app" &&
+        !/^https:\/\/agent-hub-api-[0-9]{1,20}\.[a-z]+(?:-[a-z0-9]+)+[0-9]\.run\.app$/.test(
+          args.hubOrigin,
+        ))
     )
       fail("invalid_plan_observation");
     if (s.reported) {

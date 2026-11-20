@@ -1,21 +1,41 @@
-import { ConnectionError, exact } from "./agent-connections";
+import {
+  BRANDED_AGENT_ORIGIN,
+  ConnectionError,
+  exact,
+  isLegacyAgentOrigin,
+} from "./agent-connections";
 
-export type AgentLinkConfiguration = {
-  schemaVersion: 1;
+type AgentLinkFields = {
   enabled: boolean;
   hubOrigin: string | null;
 };
+export type AgentLinkConfiguration = AgentLinkFields &
+  (
+    | { schemaVersion: 1 }
+    | {
+        schemaVersion: 2;
+        brandOrigin: typeof BRANDED_AGENT_ORIGIN | null;
+        preferredOrigin: string | null;
+      }
+  );
+export const AGENT_LINK_CONFIGURATION_PATH = "/api/private/agent-link/config?version=2";
+
 export function readAgentLinkConfiguration(value: unknown): AgentLinkConfiguration {
+  const v1 = exact(value, ["schemaVersion", "enabled", "hubOrigin"]) && value.schemaVersion === 1;
+  const v2 =
+    exact(value, ["schemaVersion", "enabled", "hubOrigin", "brandOrigin", "preferredOrigin"]) &&
+    value.schemaVersion === 2;
   if (
-    !exact(value, ["schemaVersion", "enabled", "hubOrigin"]) ||
-    value.schemaVersion !== 1 ||
+    (!v1 && !v2) ||
     typeof value.enabled !== "boolean" ||
     (value.enabled
-      ? typeof value.hubOrigin !== "string" ||
-        !/^https:\/\/agent-hub-api-[0-9]{1,20}\.[a-z]+(?:-[a-z0-9]+)+[0-9]\.run\.app$/.test(
-          value.hubOrigin,
-        )
-      : value.hubOrigin !== null)
+      ? !isLegacyAgentOrigin(value.hubOrigin) ||
+        (v2 &&
+          ((value.brandOrigin !== null && value.brandOrigin !== BRANDED_AGENT_ORIGIN) ||
+            (value.preferredOrigin !== value.hubOrigin &&
+              (value.brandOrigin === null || value.preferredOrigin !== value.brandOrigin))))
+      : value.hubOrigin !== null ||
+        (v2 && (value.brandOrigin !== null || value.preferredOrigin !== null)))
   )
     throw new ConnectionError("invalid_response");
   return value as AgentLinkConfiguration;
@@ -24,7 +44,7 @@ export function readAgentLinkConfiguration(value: unknown): AgentLinkConfigurati
 export async function loadAgentLinkConfiguration(
   signal?: AbortSignal,
 ): Promise<AgentLinkConfiguration> {
-  const response = await fetch("/api/private/agent-link/config", {
+  const response = await fetch(AGENT_LINK_CONFIGURATION_PATH, {
     method: "GET",
     cache: "no-store",
     credentials: "omit",

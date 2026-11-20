@@ -107,10 +107,16 @@ export default function WorkspaceShell() {
     activeView === "agents" ||
     (activeView === "tasks" && taskAgentDemand.scope === agentScope && taskAgentDemand.needed);
   const persistentConfiguration = useAgentLinkConfiguration(agentViewsActive);
+  const agentLink = persistentConfiguration.data;
+  const hubOrigin = agentLink?.hubOrigin ?? null;
+  const brandOrigin = agentLink?.schemaVersion === 2 ? agentLink.brandOrigin : null;
+  const preferredAgentOrigin =
+    agentLink?.schemaVersion === 2 ? agentLink.preferredOrigin : hubOrigin;
   const persistent = usePersistentWorkspace(
     encryptedWorkspace,
-    persistentConfiguration.data?.hubOrigin ?? null,
+    hubOrigin,
     agentViewsActive,
+    brandOrigin,
   );
   useEffect(() => {
     let disposed = false;
@@ -518,7 +524,9 @@ export default function WorkspaceShell() {
             <PersistentAgentsPanel
               workspace={encryptedWorkspace}
               model={persistent}
-              origin={persistentConfiguration.data?.hubOrigin ?? null}
+              origin={preferredAgentOrigin}
+              hubOrigin={hubOrigin}
+              brandOrigin={brandOrigin}
               active={activeView === "agents"}
             />
           )}

@@ -89,7 +89,16 @@ export class PersistentExperienceController {
     private readonly assert: () => void,
     private readonly signal: AbortSignal,
     private readonly hubOrigin = "",
+    private readonly brandOrigin: string | null = null,
   ) {}
+  private trustedOrigin(value: unknown): value is string {
+    return typeof value === "string" && (value === this.hubOrigin || value === this.brandOrigin);
+  }
+  private credentialOrigin(state: Json) {
+    const origin = state.lease?.audience ?? this.hubOrigin;
+    if (!this.trustedOrigin(origin)) fail("verification_failed");
+    return origin;
+  }
   private async request(path: string, options: Parameters<PersistentApi>[2] = {}) {
     this.assert();
     const v = await this.api("agent-hub", path, options);
@@ -243,7 +252,7 @@ export class PersistentExperienceController {
       const archived = await this.workspace().archiveSupersededPersistentPublication({
         actor,
         current,
-        hubOrigin: this.hubOrigin,
+        hubOrigin: this.credentialOrigin(current),
         expectedOperationId: pending.operationId,
         expectedFingerprint: pending.fingerprint,
       });
@@ -265,7 +274,7 @@ export class PersistentExperienceController {
     const verified = await this.workspace().inspectAgentCredential({
       actor: this.actor(connection),
       state,
-      hubOrigin: this.hubOrigin,
+      hubOrigin: this.credentialOrigin(state),
     });
     this.assert();
     return { state, verified };
@@ -312,7 +321,7 @@ export class PersistentExperienceController {
       actor: this.actor(connection),
       current,
       sources,
-      hubOrigin: this.hubOrigin,
+      hubOrigin: this.credentialOrigin(current),
       legacyConnectionId,
     });
     this.assert();
@@ -330,7 +339,7 @@ export class PersistentExperienceController {
     );
   }
   async inspectAuthorization(handoff: Json) {
-    if (handoff.issuer !== this.hubOrigin || handoff.vaultId !== this.vault().vaultId)
+    if (!this.trustedOrigin(handoff.issuer) || handoff.vaultId !== this.vault().vaultId)
       fail("invalid_handoff");
     const base = `/api/v3/agent-credentials/${handoff.vaultId}/${handoff.connectionId}`;
     const setup = await this.request(`${base}/setups/${handoff.setupIntentId}`);
@@ -349,7 +358,7 @@ export class PersistentExperienceController {
       handoff,
       setup,
       current,
-      hubOrigin: this.hubOrigin,
+      hubOrigin: handoff.issuer,
     });
     this.assert();
     if ((this.workspace() as any).providerSlotsSupported) {
@@ -466,7 +475,7 @@ export class PersistentExperienceController {
         handoff,
         setup: current.setup,
         current: current.current,
-        hubOrigin: this.hubOrigin,
+        hubOrigin: handoff.issuer,
         previousSetup,
       });
       this.assert();
@@ -486,7 +495,7 @@ export class PersistentExperienceController {
         handoff,
         setup: current.setup,
         current: current.current,
-        hubOrigin: this.hubOrigin,
+        hubOrigin: handoff.issuer,
         lifetimeSeconds,
         ...(current.providerState ? { providerState: current.providerState } : {}),
       }));
@@ -545,7 +554,7 @@ export class PersistentExperienceController {
         ...this.control(context),
         credentialState,
         sources,
-        hubOrigin: this.hubOrigin,
+        hubOrigin: this.credentialOrigin(credentialState),
         resources,
       });
       this.assert();
@@ -582,7 +591,7 @@ export class PersistentExperienceController {
         ...this.control(context),
         credentialState,
         sources,
-        hubOrigin: this.hubOrigin,
+        hubOrigin: this.credentialOrigin(credentialState),
         authority: task.authority,
         task: task.packet,
       });
