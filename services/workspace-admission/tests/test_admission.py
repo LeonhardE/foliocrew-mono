@@ -144,6 +144,12 @@ class WorkspaceAdmissionTests(unittest.TestCase):
         self.identity.assert_not_called()
         self.response.assert_not_called()
 
+    def test_compact_jwt_requires_three_unpadded_base64url_segments(self):
+        self.assertTrue(main._is_compact_jwt(b"abc_-12.DEF.123"))
+        for token in (b"abc..123", b"abc.DEF.123.", b"abc=.DEF.123", b"abc.DEF+.123"):
+            with self.subTest(token=token):
+                self.assertFalse(main._is_compact_jwt(token))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -17,7 +17,7 @@ CONTRACT = "folioview.agent-workspace.v2.0"
 GOOGLE = "google.com"
 USER_ORIGIN = re.compile(r"https://user-api-[0-9]{1,20}\.[a-z]+(?:-[a-z0-9]+)+[0-9]\.run\.app")
 FUNCTION_ORIGIN = re.compile(r"https://[a-z0-9.-]+\.run\.app")
-JWT = re.compile(rb"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
+JWT_SEGMENT_BYTES = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
 ACTION = Literal["check", "bind"]
 FUNCTION_OPTIONS = {
     "region": "northamerica-northeast2",
@@ -38,6 +38,13 @@ def _deny() -> HttpsError:
     return HttpsError(FunctionsErrorCode.PERMISSION_DENIED, "WORKSPACE_INVITATION_REQUIRED")
 
 
+def _is_compact_jwt(token: bytes) -> bool:
+    segments = token.split(b".", 3)
+    return len(segments) == 3 and all(
+        segment and not segment.translate(None, JWT_SEGMENT_BYTES) for segment in segments
+    )
+
+
 def _scope_event(event_type: str, audience_var: str):
     def decorator(handler):
         @wraps(handler)
@@ -56,7 +63,7 @@ def _scope_event(event_type: str, audience_var: str):
                 if (
                     not isinstance(token, str)
                     or not token.isascii()
-                    or not JWT.fullmatch(token.encode())
+                    or not _is_compact_jwt(token.encode("ascii"))
                 ):
                     return Response(status=403)
                 claims = jwt.decode(token, verify=False)
@@ -99,7 +106,7 @@ def _workload_token(origin: str) -> str:
         headers={"Metadata-Flavor": "Google"},
         maximum=8192,
     )
-    if not JWT.fullmatch(token):
+    if not _is_compact_jwt(token):
         raise AdmissionUnavailable
     return token.decode("ascii")
 
