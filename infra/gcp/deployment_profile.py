@@ -578,11 +578,18 @@ def validate_target(value):
             require(addresses == browser_origin_aliases(addresses, reserved))
         if has_workspace_edge:
             edge = value["workspaceEdge"]
-            fields(edge, {"browserOrigin", "publicKey"})
+            fields(edge, {"browserOrigin", "publicKey"} | (edge.keys() & {"agentLinkMode"}))
             browser_origin_aliases([edge["browserOrigin"]], run_service_origins(number, region))
             labels = urlsplit(edge["browserOrigin"]).hostname.split(".")
             require(len(edge["browserOrigin"]) <= 261 and labels[-1][0].isalpha())
             matches(re.compile(r"[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]\Z"), edge["publicKey"])
+            if "agentLinkMode" in edge:
+                require(edge["agentLinkMode"] in {"admitted", "preferred"})
+                require(edge["browserOrigin"] == "https://hub.foliocrew.app")
+                require(
+                    value["webOwner"]["server"]["environment"]["FOLIOVIEW_HUB_OWNER_ENABLED"]
+                    == "true"
+                )
         if target == "web":
             build = value["build"]
             fields(build, WEB_BUILD_FIELDS)
@@ -729,10 +736,13 @@ def terraform_inputs(instance):
     if "browserOrigins" in value:
         result["browser_origin_aliases"] = list(value["browserOrigins"])
     if "workspaceEdge" in value:
+        edge = value["workspaceEdge"]
         result["workspace_edge"] = {
-            "browser_origin": value["workspaceEdge"]["browserOrigin"],
-            "public_key": value["workspaceEdge"]["publicKey"],
+            "browser_origin": edge["browserOrigin"],
+            "public_key": edge["publicKey"],
         }
+        if "agentLinkMode" in edge:
+            result["workspace_edge"]["agent_link_mode"] = edge["agentLinkMode"]
     return result
 
 
