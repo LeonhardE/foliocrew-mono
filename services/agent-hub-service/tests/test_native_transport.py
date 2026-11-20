@@ -11,6 +11,9 @@ from urllib.parse import parse_qsl, urlsplit
 from fixtures import BOOT, OTHER_UID, UID, VaultFixture
 from test_oauth import CALLBACK, CLIENT, VERIFIER, authorization_params, configuration
 
+from app.agent_credentials import AgentCredentialService
+from app.native_credentials import NativeCredentialService
+from app.native_origin import BRAND_ORIGIN, BRAND_RESOURCE
 from app.native_transport import (
     PROFILE,
     REFRESH_IDLE_SECONDS,
@@ -67,6 +70,72 @@ class NativeTransportTests(unittest.TestCase):
         status, tokens, _ = self.exchange(code)
         self.assertEqual(status, 200)
         return tokens
+
+    def test_same_provider_on_both_origins_keeps_the_legacy_connection_and_issuer(self):
+        legacy = self.connect()
+        config = configuration()
+        branded = NativeTransportService(
+            self.store,
+            replace(config, issuer=BRAND_ORIGIN, consent_url=BRAND_ORIGIN + "/oauth/consent"),
+            primary_issuer=config.issuer,
+            clock=lambda: self.now,
+        )
+        params = authorization_params(scope=SCOPE, resource=BRAND_RESOURCE)
+        request = branded.authorize(params, BROWSER)
+        callback = branded.approve(UID, request, BROWSER, self.f.vault)
+        code = dict(parse_qsl(urlsplit(callback).query))["code"]
+        form = {
+            "grant_type": "authorization_code",
+            "client_id": CLIENT,
+            "code": code,
+            "redirect_uri": CALLBACK,
+            "code_verifier": VERIFIER,
+            "resource": BRAND_RESOURCE,
+        }
+        self.assertEqual(self.exchange(code)[0], 400)
+        status, tokens, _ = branded.protocol(form, {}, "token")
+        self.assertEqual(status, 200)
+        first = self.service.authenticate(legacy["access_token"])
+        second = branded.authenticate(tokens["access_token"])
+        self.assertNotEqual(first.connection_id, second.connection_id)
+        for service, token in (
+            (branded, legacy["access_token"]),
+            (self.service, tokens["access_token"]),
+        ):
+            with self.assertRaises(OAuthFailure):
+                service.authenticate(token)
+        refreshed = {}
+        for service, other, previous in (
+            (self.service, branded, legacy),
+            (branded, self.service, tokens),
+        ):
+            form = {
+                "grant_type": "refresh_token",
+                "client_id": CLIENT,
+                "refresh_token": previous["refresh_token"],
+            }
+            self.assertEqual(
+                other.protocol({**form, "resource": other.config.resource}, {}, "token")[0],
+                400,
+            )
+            status, rotated, _ = service.protocol(
+                {**form, "resource": service.config.resource}, {}, "token"
+            )
+            self.assertEqual(status, 200)
+            refreshed[service.config.resource] = rotated["access_token"]
+        native_credentials = NativeCredentialService(
+            branded, owner_url="https://owner.example/agents"
+        )
+        prepared = native_credentials.prepare(refreshed[BRAND_RESOURCE])
+        owner_credentials = AgentCredentialService(
+            self.store, audience=config.issuer, client_ids=[CLIENT], clock=lambda: self.now
+        )
+        opened = owner_credentials.owner_setup(
+            UID, self.f.vault, second.connection_id, prepared["setup"]["setupIntentId"]
+        )
+        self.assertEqual(prepared["issuer"], BRAND_ORIGIN)
+        self.assertEqual(opened["issuer"], BRAND_ORIGIN)
+        self.assertIsNone(opened["predecessorConnectionId"])
 
     def test_frozen_owner_cannot_enroll_exchange_or_refresh_and_can_still_disconnect(self):
         tokens = self.connect()

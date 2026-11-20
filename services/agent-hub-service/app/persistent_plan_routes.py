@@ -11,7 +11,7 @@ from folioview_shared.http import PrivateRoute
 from .agent_transport import recovery_transport
 from .api import Owner, _invoke, body
 from .catalogue import CatalogueService, get_sources
-from .oauth_config import OAuthConfig
+from .native_origin import native_oauth_configuration
 from .persistent_execution_routes import execution_enabled
 from .persistent_plans import PersistentOwnerPlanService, PersistentPlanService
 from .persistent_routes import control_transport
@@ -29,7 +29,7 @@ def get_plan_service():
     def configured():
         if not execution_enabled():
             raise ContractError("authorization_unavailable")
-        config = OAuthConfig.environment()
+        config, _ = native_oauth_configuration()
         store = get_store()
         return PersistentPlanService(
             store,

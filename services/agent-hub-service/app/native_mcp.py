@@ -17,6 +17,7 @@ from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import strict_json_loads
 
 from .mcp_transport import failure, protocol_response
+from .native_origin import branded_native_request
 from .native_transport import SCOPE
 from .native_transport_routes import get_native_transport as get_native_service
 
@@ -382,19 +383,29 @@ class NativeMCPBoundary:
         await self.application(child, replay, no_store)
 
 
-def install_native_mcp(app, *, factory=get_native_service):
+def install_native_mcp(app, *, factory=get_native_service, branded_factory=None):
     boundary = NativeMCPBoundary(factory)
+    branded = NativeMCPBoundary(branded_factory) if branded_factory is not None else None
     previous = app.router.lifespan_context
 
     @asynccontextmanager
     async def lifespan(host):
         async with previous(host), boundary.lifespan():
-            yield
+            if branded is None:
+                yield
+            else:
+                async with branded.lifespan():
+                    yield
+
+    class Dispatch:
+        async def __call__(self, scope, receive, send):
+            selected = branded if branded_native_request() else boundary
+            await selected(scope, receive, send)
 
     app.router.lifespan_context = lifespan
     app.add_route(
         "/mcp/v3",
-        boundary,
+        Dispatch() if branded is not None else boundary,
         methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
         include_in_schema=False,
     )

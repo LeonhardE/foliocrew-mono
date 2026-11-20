@@ -12,7 +12,7 @@ from folioview_shared.http import PrivateRoute
 from .agent_transport import recovery_transport
 from .api import _invoke, body
 from .catalogue import CatalogueService, get_sources
-from .oauth_config import OAuthConfig
+from .native_origin import native_oauth_configuration
 from .persistent_execution import PersistentExecutionService
 from .persistent_publication_routes import publication_enabled
 from .store import get_store
@@ -32,7 +32,7 @@ def get_execution():
     def configured():
         if not execution_enabled():
             raise ContractError("authorization_unavailable")
-        config = OAuthConfig.environment()
+        config, _ = native_oauth_configuration()
         store = get_store()
         return PersistentExecutionService(
             store,

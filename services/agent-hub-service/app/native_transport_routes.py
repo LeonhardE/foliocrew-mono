@@ -16,6 +16,7 @@ from folioview_shared.http import PrivateRoute
 
 from .agent_rollout import uid_allowed
 from .api import Owner, _invoke, body
+from .native_origin import native_oauth_configuration
 from .native_transport import PROFILE, SCOPE, NativeTransportService
 from .oauth import PENDING_SECONDS
 from .oauth_config import OAuthConfig
@@ -38,14 +39,22 @@ router = APIRouter(route_class=OAuthRoute)
 owner_router = APIRouter(prefix=COOKIE_PATH, route_class=PrivateRoute)
 
 
-def get_native_transport():
+def _native_transport(*, branded=None):
     def configured():
         if os.getenv("HUB_PERSISTENT_TRANSPORT_ENABLED") != "1":
             raise ContractError("authorization_unavailable")
-        config = OAuthConfig.environment()
-        return NativeTransportService(get_store(), config)
+        config, primary_issuer = native_oauth_configuration(branded=branded)
+        return NativeTransportService(get_store(), config, primary_issuer=primary_issuer)
 
     return _invoke(configured)
+
+
+def get_native_transport():
+    return _native_transport()
+
+
+def get_branded_native_transport():
+    return _native_transport(branded=True)
 
 
 Service = Annotated[NativeTransportService, Depends(get_native_transport)]
