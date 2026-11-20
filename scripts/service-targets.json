@@ -50,6 +50,15 @@
       "release_mode": "existing"
     },
     {
+      "id": "workspace-admission",
+      "kind": "backend",
+      "directory": "services/workspace-admission",
+      "service": "workspace-admission",
+      "cloudbuild": "infra/gcp/cloudbuild.workspace-admission.yaml",
+      "release_mode": "build_only",
+      "runtime": "firebase_functions"
+    },
+    {
       "id": "agent-policy-service",
       "kind": "backend",
       "directory": "services/agent-policy-service",
