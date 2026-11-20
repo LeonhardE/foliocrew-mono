@@ -49,7 +49,7 @@ test("every one of the seven scope fields, unknown envelope keys and corrupt oth
       (v) => v.displayNames.items.push(v.displayNames.items[0]),
       (v) => (v.displayNames.items[0].command.privateKey = "bad"),
       (v) => (v.catalogue.groups[0].items[0].state = "invented"),
-      (v) => (v.scope.registrySequence = 33),
+      (v) => (v.scope.registrySequence = Number.MAX_SAFE_INTEGER + 1),
     ]) {
       const v = f.body();
       mutate(v);
@@ -67,6 +67,18 @@ test("every one of the seven scope fields, unknown envelope keys and corrupt oth
       { ...hint, reason: "unsupported" },
     ])
       assert.throws(() => ctx.read(extra));
+  } finally {
+    await f.close();
+  }
+});
+test("a later catalogue sequence must still match the caller's exact expected scope", async () => {
+  const f = await fixture();
+  try {
+    const body = f.body();
+    const expected = { ...f.scope, registrySequence: 33 };
+    body.scope = { ...expected };
+    assert.equal(contract.readResourceDisplay(body, expected).scope.registrySequence, 33);
+    assert.throws(() => contract.readResourceDisplay(body, f.scope), /invalid_response/);
   } finally {
     await f.close();
   }
