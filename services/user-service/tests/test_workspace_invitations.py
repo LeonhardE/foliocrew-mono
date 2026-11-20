@@ -1,5 +1,6 @@
 """Workspace admission and delivery tests without real accounts or email."""
 
+import json
 import os
 import unittest
 from copy import deepcopy
@@ -10,6 +11,7 @@ from unittest.mock import Mock, patch
 from fastapi.testclient import TestClient
 
 from app import workspace_invitations as invites
+from app import workspace_invite_delivery as delivery
 from app.main import app
 from app.workspace_invite_delivery import DeliveryUnconfirmed
 from folioview_shared import auth
@@ -21,6 +23,58 @@ ADMIN = "test-admin-uid"
 EMAIL = "example.invitee@gmail.com"
 BEARER = {"Authorization": "Bearer test-id-token"}
 NOW = 1_800_000_000
+
+
+class WorkspaceInviteDeliveryTests(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(
+            patch.dict(
+                os.environ,
+                {
+                    "FIREBASE_PROJECT_ID": "fixture-invite-staging",
+                    "FOLIOCREW_INVITATION_MAIL_KEY": "mock-provider-credential",
+                },
+                clear=True,
+            )
+        )
+        self.transport = self.enterContext(patch.object(delivery.http.client, "HTTPSConnection"))
+        result = self.transport.return_value.getresponse.return_value
+        result.status = 200
+        result.read.return_value = b'{"id":"provider-message"}'
+
+    def message(self):
+        self.assertEqual(delivery.send_invitation(EMAIL, "fixture-delivery"), "provider-message")
+        self.transport.assert_called_once_with("api.resend.com", timeout=8)
+        request = self.transport.return_value.request.call_args.args
+        self.assertEqual(request[:2], ("POST", "/emails"))
+        self.assertEqual(request[3]["Idempotency-Key"], "fixture-delivery")
+        return json.loads(request[2])
+
+    def test_production_invitation_uses_the_default_workbench(self):
+        message = self.message()
+        self.assertEqual(message["to"], [EMAIL])
+        self.assertEqual(message["subject"], "You’re invited to Foliocrew")
+        self.assertIn("https://hub.foliocrew.app/", message["text"])
+
+    def test_staging_invitation_uses_its_own_firebase_host(self):
+        os.environ["FOLIOCREW_INVITATION_STAGING_ORIGIN"] = "https://fixture-invite-staging.web.app"
+        message = self.message()
+        self.assertTrue(message["subject"].startswith("[Staging] "))
+        self.assertIn("https://fixture-invite-staging.web.app/", message["text"])
+        self.assertNotIn("hub.foliocrew.app", message["text"])
+
+    def test_staging_invitation_rejects_another_origin_before_contacting_provider(self):
+        for origin in (
+            "",
+            "https://another-project.web.app",
+            "http://fixture-invite-staging.web.app",
+            "https://fixture-invite-staging.web.app/redirect",
+        ):
+            with self.subTest(origin=origin):
+                os.environ["FOLIOCREW_INVITATION_STAGING_ORIGIN"] = origin
+                with self.assertRaises(DeliveryUnconfirmed):
+                    delivery.send_invitation(EMAIL, "fixture-delivery")
+        self.transport.assert_not_called()
 
 
 class MemoryStore:
