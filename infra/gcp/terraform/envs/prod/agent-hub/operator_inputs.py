@@ -21,6 +21,8 @@ FIELDS = {
     "agent_owned_mode_enabled",
     "agent_clients",
     "browser_origin_aliases",
+    "native_edge_public_key",
+    "prefer_branded_workspace",
     *FLAGS,
 }
 DEPLOYMENT = {
@@ -71,7 +73,9 @@ def decode_input(raw):
     require(type(raw) is bytes, "input_bytes_required")
     try:
         value = json.loads(
-            raw.decode("utf-8"), object_pairs_hook=unique_pairs, parse_constant=reject_constant
+            raw.decode("utf-8"),
+            object_pairs_hook=unique_pairs,
+            parse_constant=reject_constant,
         )
     except (UnicodeError, ValueError, RecursionError):
         raise InputError("invalid_json") from None
@@ -93,7 +97,10 @@ def clients(value, *, legacy=False):
             CLIENT if legacy else CLIENT | {"provider"},
             {"client_id", "redirect_uris"} | (set() if legacy else {"provider"}),
         )
-        require(type(client["client_id"]) is str and bool(client["client_id"]), "invalid_client")
+        require(
+            type(client["client_id"]) is str and bool(client["client_id"]),
+            "invalid_client",
+        )
         if not legacy:
             require(client["provider"] in ("muse", "chatgpt"), "invalid_provider")
         redirects = client["redirect_uris"]
@@ -177,6 +184,20 @@ def validate_full_input(value):
     )
     require(len(set(owners)) == len(owners), "invalid_owner_scope")
     mode = boolean(value, "agent_owned_mode_enabled")
+    edge_key = value.get("native_edge_public_key", "")
+    require(
+        type(edge_key) is str
+        and (
+            edge_key == ""
+            or (mode and re.fullmatch(r"[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]", edge_key))
+        ),
+        "invalid_native_edge_public_key",
+    )
+    require(
+        not boolean(value, "prefer_branded_workspace")
+        or (mode and "https://hub.foliocrew.app" in (value.get("browser_origin_aliases") or [])),
+        "invalid_brand_workspace_default",
+    )
     require(
         not mode
         or (
@@ -196,7 +217,10 @@ def validate_full_input(value):
 def compare_rollout_inputs(
     baseline_raw, candidate_raw, expected_baseline_sha256, owner_subject=None
 ):
-    require(type(baseline_raw) is bytes and type(candidate_raw) is bytes, "input_bytes_required")
+    require(
+        type(baseline_raw) is bytes and type(candidate_raw) is bytes,
+        "input_bytes_required",
+    )
     require(
         type(expected_baseline_sha256) is str
         and re.fullmatch(r"[a-f0-9]{64}", expected_baseline_sha256),
@@ -229,7 +253,10 @@ def compare_rollout_inputs(
         else owner_subject in candidate.get("agent_owned_allowed_owner_subjects", []),
         "productionMembershipVerified": False,
         "flags": {
-            name: {"before": baseline.get(name, False), "after": candidate.get(name, False)}
+            name: {
+                "before": baseline.get(name, False),
+                "after": candidate.get(name, False),
+            }
             for name in FLAGS
         },
         "activationAuthorized": False,

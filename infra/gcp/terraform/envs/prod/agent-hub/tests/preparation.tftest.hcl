@@ -262,6 +262,35 @@ run "credential_records_have_no_index_or_ttl_requirement" {
     error_message = "Current and historical signed metadata must use direct document IDs without accidental index growth or TTL deletion."
   }
 }
+
+run "branded_edge_and_workspace_preserve_canonical_service_identity" {
+  command = plan
+  variables {
+    browser_origin_aliases             = ["https://hub.foliocrew.app"]
+    native_edge_public_key             = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    prefer_branded_workspace           = true
+    agent_owned_mode_enabled           = true
+    agent_owned_allowed_owner_subjects = [sha256("synthetic-owner")]
+    connector                          = { oauth_enabled = true, muse_clients = [{ client_id = "synthetic-muse", redirect_uris = ["https://agent.example.invalid/callback"] }] }
+    sources                            = { user_origin = "https://user.example.invalid", portfolio_origin = "https://portfolio.example.invalid", portfolio_caller_email = "example-portfolio@example-project-1234.iam.gserviceaccount.com", trusted_portfolio_callers = { "112010400000000710080" = "example-portfolio@example-project-1234.iam.gserviceaccount.com" } }
+  }
+  assert {
+    condition = (
+      output.creation_configuration.environment.HUB_NATIVE_EDGE_PUBLIC_KEY == var.native_edge_public_key &&
+      output.creation_configuration.environment.CORS_ORIGINS == "https://hub.foliocrew.app,https://web.example.invalid" &&
+      output.creation_configuration.environment.HUB_AGENT_OWNER_URL == "https://hub.foliocrew.app/agents" &&
+      output.creation_configuration.environment.HUB_SERVICE_AUDIENCE == var.deployment.hub_origin &&
+      output.creation_configuration.environment.HUB_OAUTH_ISSUER == var.deployment.hub_origin
+    )
+    error_message = "The branded edge and Owner redirect must preserve the canonical service audience and primary issuer."
+  }
+}
+
+run "reject_brand_default_without_admission" {
+  command = plan
+  variables { prefer_branded_workspace = true }
+  expect_failures = [var.prefer_branded_workspace]
+}
 run "reject_old_browser_mode" {
   command = plan
   variables { persistent_mode_enabled = true }
