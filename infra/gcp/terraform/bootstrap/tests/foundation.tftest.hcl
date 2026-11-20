@@ -1020,3 +1020,25 @@ run "explicit_shared_image_builder_rollback_retains_narrow_grants" {
     error_message = "An explicit administrator rollback may restore only the original tuple and must keep the narrow grants."
   }
 }
+
+run "provision_only_user_invitation_secrets_and_runtime_grants" {
+  command = plan
+  variables {
+    user_invitation_secrets_enabled = true
+  }
+
+  assert {
+    condition = (
+      toset(keys(google_secret_manager_secret.user_invitation)) == toset([
+        "foliocrew-invitation-admin-uid", "foliocrew-invitation-mail-key"
+      ]) &&
+      alltrue([for secret in google_secret_manager_secret.user_invitation :
+      secret.project == var.project_id && secret.replication[0].user_managed[0].replicas[0].location == var.region]) &&
+      length(google_secret_manager_secret_iam_member.user_invitation_runtime) == 2 &&
+      alltrue([for grant in google_secret_manager_secret_iam_member.user_invitation_runtime :
+        grant.role == "roles/secretmanager.secretAccessor" &&
+      grant.member == "serviceAccount:${local.user_deployment.inputs.runtime_account_id}@${var.project_id}.iam.gserviceaccount.com"])
+    )
+    error_message = "Each User invitation secret must grant access only to the existing User runtime identity."
+  }
+}
