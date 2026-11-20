@@ -875,6 +875,57 @@ test("a cold User vault verifies a new Passkey against its signed archive contin
   });
 });
 
+test("an independent recovery kit can stage a new Passkey for a transferred vault in fresh storage", async () => {
+  const { uid, current, lifecycle, kit } = await browser.withDatabase(async (db) => {
+    const { session, uid, h, material, vault, state } = await initialize(db);
+    await session.verifyLifecycle(vault, state);
+    const handover = await signedTransition(h, uid, vault, state, material);
+    const { nextHead, archive } = decoded(handover.signedTransition);
+    const current = {
+      ...vault,
+      version: vault.version + 1,
+      registryHistory: [handover.firstBundle],
+      userAuthority: {
+        signedTransition: handover.signedTransition,
+        registryStart: nextHead,
+        registry: nextHead,
+        archive,
+        sources: [],
+        sourcesDigest: await h.core.sha(h.core.canonical([])),
+      },
+    };
+    const lifecycle = await lifecycleState(h, { vault: current });
+    const exporter = db.client(uid, db.store());
+    await exporter.unlockForResults(current, material());
+    const kit = await exporter.createRecoveryKit(current, lifecycle);
+    return { uid, current, lifecycle, kit };
+  });
+
+  await browser.withDatabase(async (db) => {
+    const h = browser.h;
+    const storage = db.store();
+    const restored = db.client(uid, storage);
+    const credentialId = h.core.b64(new Uint8Array(32).fill(17));
+    await restored.importRecoveryKit(current, lifecycle, kit.file, kit.code);
+    const pin = await storage.get(current.archive.ownerSubject + ":pin");
+    assert.equal(pin.registryEpoch, current.userAuthority.registry.registryEpoch);
+    const packet = await restored.prepareArchiveChange(
+      current,
+      lifecycle,
+      {
+        credentialId,
+        prfSalt: h.core.b64(new Uint8Array(32).fill(18)),
+        secret: new Uint8Array(32).fill(19).buffer,
+      },
+      "recovery",
+    );
+    assert.equal(packet.mode, "recovery");
+    assert.equal(packet.archive.credentialId, credentialId);
+    assert.equal(packet.archive.rootKeyId, current.rootKeyId);
+    assert.ok(packet.authorization);
+  });
+});
+
 test("a transferred vault shows deletion only after its exact signed removal and supports recovery", async () => {
   await browser.withDatabase(async (db) => {
     const { session, uid, h, material, vault, state } = await initialize(db);
