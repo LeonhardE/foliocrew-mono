@@ -61,6 +61,55 @@ run "legacy_profile_stays_closed" {
     condition     = toset(keys(local.environment)) == toset(["FIREBASE_PROJECT_ID", "CORS_ORIGINS", "FIRESTORE_DATABASE", "USER_STORE_BACKEND", "MARKET_API_BASE_URL"]) && length(local.hub_trust_environment) == 0
     error_message = "Use the closed User environment while Hub trust is absent."
   }
+  assert {
+    condition     = length(local.workspace_invitation_environment) == 0 && length(local.workspace_invitation_secrets) == 0
+    error_message = "Existing User plans must not enable invitation management or reference any invitation secrets."
+  }
+}
+
+run "pin_invitation_secrets_and_one_callback_workload" {
+  command = plan
+  variables {
+    hub_trust = {
+      USER_SERVICE_AUDIENCE    = "https://user-api-111222333444.us-central1.run.app"
+      USER_DELEGATION_AUDIENCE = "https://user-api-111222333444.us-central1.run.app/internal/v2"
+      USER_DELEGATION_ISSUER   = "https://agent-hub-api-111222333444.us-central1.run.app"
+      USER_TRUSTED_HUB_CALLERS = jsonencode({
+        "123456789012345678901" = "alpha-hub-runtime@demo-user-alpha.iam.gserviceaccount.com"
+      })
+    }
+    workspace_invitation = {
+      admin_secret_version = "2"
+      mail_secret_version  = "11"
+      callback_subject     = "999900001111222233333"
+    }
+  }
+  assert {
+    condition = (
+      local.workspace_invitation_secrets.FOLIOCREW_INVITATION_ADMIN_UID.secret == "projects/demo-user-alpha/secrets/foliocrew-invitation-admin-uid" &&
+      local.workspace_invitation_secrets.FOLIOCREW_INVITATION_ADMIN_UID.version == "2" &&
+      local.workspace_invitation_secrets.FOLIOCREW_INVITATION_MAIL_KEY.secret == "projects/demo-user-alpha/secrets/foliocrew-invitation-mail-key" &&
+      local.workspace_invitation_secrets.FOLIOCREW_INVITATION_MAIL_KEY.version == "11" &&
+      jsondecode(local.environment.USER_INVITATION_AUTH_CALLER)["999900001111222233333"] == "workspace-admission@demo-user-alpha.iam.gserviceaccount.com" &&
+      local.environment.FOLIOCREW_INVITATIONS_ENABLED == "1" &&
+      local.environment.FOLIOCREW_WORKSPACE_ACCESS_RESTRICTED == "0" &&
+      !contains(keys(local.environment), "FOLIOCREW_INVITATION_ADMIN_UID") &&
+      !contains(keys(local.environment), "FOLIOCREW_INVITATION_MAIL_KEY")
+    )
+    error_message = "The plan must use exact secret versions and one dedicated callback, with membership enforcement off by default."
+  }
+}
+
+run "reject_latest_secret_alias" {
+  command = plan
+  variables {
+    workspace_invitation = {
+      admin_secret_version = "latest"
+      mail_secret_version  = "11"
+      callback_subject     = "999900001111222233333"
+    }
+  }
+  expect_failures = [var.workspace_invitation]
 }
 
 run "explicit_disabled_stays_closed" {

@@ -93,6 +93,32 @@ User reads and writes existing lists in `user-data`. Resume writes after
 the authenticated read check, then verify a post-cutover write and a
 compatible rollback revision that uses the same database.
 
+## Workspace invitation secrets
+
+The administrative bootstrap has an independent `user_invitation_secrets_enabled` input.
+Its reviewed plan provisions two empty Secret Manager resources in the selected region and
+grants `roles/secretmanager.secretAccessor` on each to the existing User runtime account.
+Check that Secret Manager is enabled before planning. The bootstrap state stores names and IAM
+metadata, with no secret versions or payloads.
+
+Populate `foliocrew-invitation-admin-uid` with the existing authenticated owner's Firebase UID
+and `foliocrew-invitation-mail-key` with the provider's domain-scoped, send-only API key using
+the approved secret entry channel. Use the owner's Firebase UID. Keep both values out of
+Terraform, profiles, local logs, and source files.
+
+The User root's optional `workspace_invitation` input references the numeric versions and the
+numeric subject of `workspace-admission@PROJECT.iam.gserviceaccount.com`. It uses the User
+origin pinned in `hub_trust`. The consumer marker connects this input to the reviewed managed
+User projection after the profile foundation is deployed. Stage it with
+`restrict_workspace_access` disabled until Firebase
+blocking triggers, dependent services and the existing owner's sign-in and vault access pass
+validation.
+
+Rotate the mail key by publishing a new version, reviewing the changed version reference, and
+verifying a synthetic email before revoking the previous provider key. The two bootstrap secrets
+are deletion-protected. Disable the User configuration to stop invitation administration and
+leave the versioned secrets available for rollback.
+
 ## Offline verification
 
 Initialize the pinned provider with the backend disabled, then run the synthetic plans:

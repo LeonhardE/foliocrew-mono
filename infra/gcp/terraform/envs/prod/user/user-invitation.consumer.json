@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "target": "user",
+  "configurationContract": "user-invitations.v1",
+  "terraformVariable": "workspace_invitation"
+}

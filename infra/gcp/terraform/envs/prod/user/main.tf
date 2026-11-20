@@ -22,7 +22,7 @@ locals {
     USER_STORE_BACKEND  = "firestore"
     MARKET_API_BASE_URL = var.deployment.market_origin
     }, local.hub_trust_environment, local.report_trust_environment, local.web_recovery_environment,
-  local.private_prepare_environment, local.private_current_environment)
+  local.private_prepare_environment, local.private_current_environment, local.workspace_invitation_environment)
 }
 
 provider "google" {
@@ -67,7 +67,7 @@ module "user" {
   ingress           = "INGRESS_TRAFFIC_ALL"
 
   environment        = local.environment
-  secret_environment = {}
+  secret_environment = local.workspace_invitation_secrets
 
   # Public invocation already uses invokerIamDisabled=true. Do not add an
   # allUsers grant or mistake this no-new-IAM choice for a private service.
