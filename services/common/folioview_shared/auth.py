@@ -18,6 +18,8 @@ _APP_NAME = "financial-analysis-api"
 _app_lock = Lock()
 _bearer = HTTPBearer(auto_error=False)
 _NO_STORE = {"Cache-Control": "no-store"}
+_WORKSPACE_CLAIM = "foliocrew_workspace"
+_WORKSPACE_ADMITTED = "admitted-v1"
 
 
 class CurrentUser(BaseModel):
@@ -108,6 +110,16 @@ def require_google_user(
         or not uid
     ):
         raise _unauthorized()
+
+    if (
+        os.getenv("FOLIOCREW_REQUIRE_ADMISSION_CLAIM") == "1"
+        and claims.get(_WORKSPACE_CLAIM) != _WORKSPACE_ADMITTED
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="A workspace invitation is required.",
+            headers=_NO_STORE,
+        )
 
     return CurrentUser(
         uid=uid,

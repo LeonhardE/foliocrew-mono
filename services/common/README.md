@@ -1,5 +1,17 @@
 # Shared service foundations
 
+## Workspace admission claim
+
+After Firebase workspace admission is validated, a service can require its
+`foliocrew_workspace: admitted-v1` claim by setting `FOLIOCREW_REQUIRE_ADMISSION_CLAIM=1`.
+The shared dependency still verifies the configured Firebase project, Google provider, and
+token revocation. It returns 403 for a verified login without the admission claim. This path
+leaves public Market and the separately verified workload credentials outside the user gate.
+
+Set the flag only for a reviewed consuming service after rehearsing new and existing sessions,
+token refresh, and removal of member access. An authorized suspension must disable the Firebase
+account and revoke refresh tokens before relying on the already issued token's admission claim.
+
 `folioview-shared` contains opt-in identity, private HTTP, bounded persistence and
 [encrypted workspace](folioview_shared/encrypted/README.md) foundations. Importing
 the package does not register routes, initialize credentials or contact a cloud
