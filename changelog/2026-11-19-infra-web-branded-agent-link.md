@@ -9,6 +9,7 @@ Manage Web's branded Agent link admission and default separately from its authen
 ## Changes
 
 - Admit the exact branded endpoint through the existing reviewed Web edge configuration.
+- Advertise stage support to the deployment runner.
 - Select the branded copy default only with the explicit preferred stage.
 
 ## Validation
