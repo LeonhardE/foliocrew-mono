@@ -503,6 +503,8 @@ def validate_target(value):
         require(not has_user_trust or target == "user")
         has_user_rollout = "userPrivateRollout" in value
         require(not has_user_rollout or has_user_trust)
+        has_user_invitations = "userInvitations" in value
+        require(not has_user_invitations or has_user_trust)
         has_browser_origins = "browserOrigins" in value
         require(not has_browser_origins or target in MANAGED_BROWSER_ORIGIN_TARGETS)
         fields(
@@ -511,6 +513,7 @@ def validate_target(value):
             | ({"build"} if target == "web" else set())
             | ({"userHubTrust"} if has_user_trust else set())
             | ({"userPrivateRollout"} if has_user_rollout else set())
+            | ({"userInvitations"} if has_user_invitations else set())
             | ({"portfolioHubTrust"} if has_portfolio_trust else set())
             | ({"webOwner"} if has_web_owner else set())
             | ({"workspaceEdge"} if has_workspace_edge else set())
@@ -636,7 +639,8 @@ def validate_target(value):
             base = {
                 name: item
                 for name, item in value.items()
-                if name not in {"userHubTrust", "userPrivateRollout", "browserOrigins"}
+                if name
+                not in {"userHubTrust", "userPrivateRollout", "userInvitations", "browserOrigins"}
             }
             configuration = trust["configuration"]
             require(type(configuration) is dict)
@@ -666,6 +670,23 @@ def validate_target(value):
                         trust["webDeployment"]["runtimeAccountId"],
                     )
                 )
+            if has_user_invitations:
+                invitations = value["userInvitations"]
+                require(type(invitations) is list and len(invitations) == 4)
+                admin_version, mail_version, callback_subject, restricted = invitations
+                for version in (admin_version, mail_version):
+                    matches(re.compile(r"[1-9][0-9]{0,18}\Z"), version)
+                matches(re.compile(r"[1-9][0-9]{5,30}\Z"), callback_subject)
+                require(type(restricted) is bool)
+                require(bool(configuration["environment"]["USER_SERVICE_AUDIENCE"]))
+                require(base["inputs"]["runtime_account_id"] != "workspace-admission")
+                existing_subjects = {
+                    configuration.get("hubSubject"),
+                    configuration.get("ownerRecoveryWebSubject"),
+                }
+                if has_user_rollout:
+                    existing_subjects.add(value["userPrivateRollout"][2])
+                require(callback_subject not in existing_subjects)
         if has_web_owner:
             owner = value["webOwner"]
             fields(owner, {"server", "public"})
@@ -729,6 +750,14 @@ def terraform_inputs(instance):
             "portfolio_subject": subject,
             "portfolio_account_id": account,
         }
+    if "userInvitations" in value:
+        admin, mail, subject, restricted = value["userInvitations"]
+        result["workspace_invitation"] = {
+            "admin_secret_version": admin,
+            "mail_secret_version": mail,
+            "callback_subject": subject,
+            "restrict_workspace_access": restricted,
+        }
     if "portfolioHubTrust" in value:
         result["hub_trust"] = dict(value["portfolioHubTrust"]["configuration"]["environment"])
     if "webOwner" in value:
@@ -774,6 +803,33 @@ def add_workspace_edge(instance, edge, *, expected_sha256):
     instance = parse_target(canonical(instance))
     require(instance["target"] == "web" and digest(instance) == expected_sha256)
     return parse_target(canonical({**instance, "workspaceEdge": edge}))
+
+
+def add_user_invitations(
+    instance,
+    *,
+    admin_secret_version,
+    mail_secret_version,
+    callback_subject,
+    restrict_workspace_access,
+    expected_sha256,
+):
+    """Attach exact version references to a reviewed managed User instance."""
+    instance = parse_target(canonical(instance))
+    require(instance["target"] == "user" and digest(instance) == expected_sha256)
+    return parse_target(
+        canonical(
+            {
+                **instance,
+                "userInvitations": [
+                    admin_secret_version,
+                    mail_secret_version,
+                    callback_subject,
+                    restrict_workspace_access,
+                ],
+            }
+        )
+    )
 
 
 def compile_target(profile, target):

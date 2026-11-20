@@ -207,6 +207,19 @@ def require_web_owner_consumer(directory):
     )
 
 
+def require_user_invitation_consumer(directory):
+    require_consumer_marker(
+        directory / "user-invitation.consumer.json",
+        {
+            "schemaVersion": 1,
+            "target": "user",
+            "configurationContract": "user-invitations.v1",
+            "terraformVariable": "workspace_invitation",
+        },
+        "User source has not adopted the reviewed invitation configuration contract.",
+    )
+
+
 def require_workspace_edge_consumer(directory, *, agent_links=False):
     require_consumer_marker(
         directory / "workspace-edge.consumer.json",
@@ -395,6 +408,8 @@ def registry(root, target, instance=None):
         )
     if instance is not None and "userHubTrust" in instance:
         require_trust_consumer(directory)
+    if instance is not None and "userInvitations" in instance:
+        require_user_invitation_consumer(directory)
     if instance is not None and "portfolioHubTrust" in instance:
         require_trust_consumer(directory, "portfolio")
     if instance is not None and "webOwner" in instance:

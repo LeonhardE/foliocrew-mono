@@ -43,6 +43,73 @@ def compiled(value=None):
 
 
 class UserHubTrustConfigurationTests(unittest.TestCase):
+    def test_invitation_configuration_preserves_rollout_and_rejects_unreviewed_inputs(self):
+        from test_browser_origin_configuration import with_aliases
+
+        value = with_aliases(user=["https://workspace.example.test"])
+        value["userHubTrust"]["ownerRecoveryWebSubject"] = "999000111222333444555"
+        artifacts = profile.compile_user_hub_trust_artifacts(value)
+        deployment = artifacts["deployment-config.candidate.json"]
+        occupied_subject = "777888999000111222333"
+        baseline = profile.add_user_private_rollout(
+            deployment,
+            profile.compile_target(value, "portfolio"),
+            phase="active",
+            owner="a" * 64,
+            portfolio_subject=occupied_subject,
+            expected_sha256=profile.digest(deployment),
+        )
+        invite = {
+            "admin_secret_version": "2",
+            "mail_secret_version": "3",
+            "callback_subject": "550005500055000550005",
+            "restrict_workspace_access": False,
+        }
+        reviewed = profile.add_user_invitations(
+            baseline, expected_sha256=profile.digest(baseline), **invite
+        )
+        projected = profile.terraform_inputs(reviewed)
+        self.assertEqual(projected.pop("workspace_invitation"), invite)
+        self.assertEqual(projected, profile.terraform_inputs(baseline))
+        self.assertEqual(reviewed["userHubTrust"], baseline["userHubTrust"])
+        self.assertEqual(reviewed["userPrivateRollout"], baseline["userPrivateRollout"])
+        for override in (
+            {"expected_sha256": "0" * 64},
+            {"admin_secret_version": "latest"},
+            {"mail_secret_version": 1},
+            {"restrict_workspace_access": "false"},
+            {"callback_subject": occupied_subject},
+            {"callback_subject": value["userHubTrust"]["hubSubject"]},
+            {"callback_subject": value["userHubTrust"]["ownerRecoveryWebSubject"]},
+        ):
+            arguments = {"expected_sha256": profile.digest(baseline), **invite, **override}
+            with self.subTest(override=override), self.assertRaises(profile.ProfileError):
+                profile.add_user_invitations(baseline, **arguments)
+        for target in (profile.compile_target(value, "user"), profile.compile_target(value, "web")):
+            with self.assertRaises(profile.ProfileError):
+                profile.add_user_invitations(
+                    target, expected_sha256=profile.digest(target), **invite
+                )
+
+    def test_invitation_target_requires_explicit_source_consumer(self):
+        pipeline = profiles.pipeline
+        expected = {
+            "schemaVersion": 1,
+            "target": "user",
+            "configurationContract": "user-invitations.v1",
+            "terraformVariable": "workspace_invitation",
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            target = Path(temp)
+            with self.assertRaisesRegex(RuntimeError, "has not adopted"):
+                pipeline.require_user_invitation_consumer(target)
+            marker = target / "user-invitation.consumer.json"
+            marker.write_text(json.dumps({**expected, "terraformVariable": "environment"}))
+            with self.assertRaisesRegex(RuntimeError, "has not adopted"):
+                pipeline.require_user_invitation_consumer(target)
+            marker.write_text(json.dumps(expected))
+            pipeline.require_user_invitation_consumer(target)
+
     def test_private_rollout_attaches_only_to_reviewed_user_and_portfolio_deployments(self):
         from test_browser_origin_configuration import with_aliases
 
