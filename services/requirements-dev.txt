@@ -2,3 +2,4 @@
 -r market-data-service/requirements-dev.txt
 -r user-service/requirements-dev.txt
 -r config-service/requirements-dev.txt
+-r workspace-admission/requirements-dev.txt

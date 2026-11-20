@@ -1,0 +1,37 @@
+# Verify the package in isolation. Endpoint registration is handled by Firebase.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file=services/workspace-admission/Dockerfile
+      - --tag=workspace-admission-test:$BUILD_ID
+      - .
+
+  - name: gcr.io/cloud-builders/docker
+    id: isolated-workspace-admission-health
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -eu
+        trap 'docker rm --force workspace-admission-smoke >/dev/null 2>&1 || true' EXIT
+        docker run --detach --network=none --name=workspace-admission-smoke workspace-admission-test:$BUILD_ID
+        docker exec -i workspace-admission-smoke python - <<'PYTHON'
+        import json
+        import time
+        from urllib.request import urlopen
+        for attempt in range(40):
+            try:
+                with urlopen("http://127.0.0.1:8080/health", timeout=1) as response:
+                    assert json.load(response) == {"status": "ok", "service": "workspace-admission"}
+                break
+            except OSError:
+                if attempt == 39:
+                    raise
+                time.sleep(0.25)
+        PYTHON
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1200s

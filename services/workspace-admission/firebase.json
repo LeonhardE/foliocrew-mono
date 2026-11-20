@@ -1,0 +1,20 @@
+{
+  "functions": [
+    {
+      "source": ".",
+      "codebase": "workspace-admission",
+      "runtime": "python313",
+      "ignore": [
+        "firebase.json",
+        "README.md",
+        "Dockerfile",
+        "docs",
+        "tests",
+        "smoke_server.py",
+        "requirements-dev.txt",
+        "venv",
+        "__pycache__"
+      ]
+    }
+  ]
+}
