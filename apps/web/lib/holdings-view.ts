@@ -60,7 +60,6 @@ export function holdingsViewRequest(
     key(e.rootJwk.y) &&
     key(e.rootKeyId) &&
     positive(e.registrySequence) &&
-    e.registrySequence <= 32 &&
     digest(e.checkpointDigest) &&
     positive(e.keyEpoch) &&
     ref(e.resourceRef) &&

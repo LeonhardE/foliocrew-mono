@@ -68,6 +68,26 @@ test("actual view boundary accepts only legal two-null hints empty sources and r
     assert.deepEqual(await r.json(), value);
   }
 });
+test("a current registry sequence above 32 reaches Portfolio with its exact read preconditions", async (t) => {
+  const b = await stack();
+  t.after(() => b.close());
+  const owner = b.mount();
+  await owner.login("synthetic_view_owner");
+  const request = f.request();
+  request.expected.registrySequence = 33;
+  b.setUpstream((url, init) => {
+    assert.equal(url, PORTFOLIO + path);
+    assert.deepEqual(JSON.parse(new TextDecoder().decode(init.body)), request);
+    return response(f.view("sync_required"));
+  });
+  const reply = await owner.value.requestPrivate("portfolio", path, owner.value.sessionKey, {
+    ...options(),
+    json: request,
+  });
+  assert.equal(reply.status, 200);
+  assert.equal((await reply.json()).mode, "sync_required");
+  assert.equal(b.producerCalls().length, 1);
+});
 test("bad view metadata receipt cross-associations and nested fields fail the entire response rather than becoming hints", async (t) => {
   const b = await stack();
   t.after(() => b.close());

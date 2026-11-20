@@ -34,7 +34,6 @@ const validScope = (v: unknown): v is ResourceDisplayScope =>
   keyId(v.rootKeyId) &&
   positive(v.version) &&
   positive(v.registrySequence) &&
-  v.registrySequence <= 32 &&
   hex(v.checkpointDigest) &&
   positive(v.keyEpoch);
 export type ResourceDisplay =
