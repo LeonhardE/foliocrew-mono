@@ -2,15 +2,20 @@
 
 import os
 import unittest
+from importlib.util import find_spec
 from unittest.mock import patch
 
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from starlette.requests import Request
 
-from folioview_shared import auth
+if find_spec("firebase_admin") is not None:
+    from folioview_shared import auth
+else:
+    auth = None
 
 
+@unittest.skipIf(auth is None, "Private identity consumers supply the Firebase SDK")
 class WorkspaceAdmissionClaimTests(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch.dict(os.environ, {}, clear=True))
