@@ -2634,16 +2634,7 @@ export class VaultCore {
       throw new VaultError("stale_recovery_kit");
     }
     await this.installMaster(master, vault);
-    // Successful recovery has now observed the current directory. Remember that
-    // high-water mark rather than the recovery kit's older lower bound.
-    this.pin = {
-      ownerSubject: await this.owner,
-      vaultId: vault.vaultId,
-      rootKeyId: vault.rootKeyId,
-      registrySequence: registry.checkpoint.registrySequence,
-      checkpointDigest: registry.digest,
-      keyEpoch: registry.checkpoint.keyEpoch,
-    };
+    // verifyLifecycle has already set the current registry pin, including its epoch.
     this.registry = registry;
     this.vault = vault;
     this.recoveryMaster = master;
