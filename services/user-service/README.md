@@ -41,6 +41,10 @@ Cloud Run uses `USER_STORE_BACKEND=firestore`, `FIREBASE_PROJECT_ID` (or
 Cloud Run refuses SQLite or Auth/Firestore emulator configuration. Client objects
 may be reused, but user responses are never cached.
 
+For isolated invitation testing, set `FOLIOCREW_INVITATION_STAGING_ORIGIN` to
+`https://<FIREBASE_PROJECT_ID>.web.app`. The service labels these messages as staging and
+validates the exact Firebase Hosting origin before sending. Omit this setting in production.
+
 Local development can use `USER_STORE_BACKEND=sqlite`. Optional
 `CHANNEL_FOLLOWS_DB_PATH` overrides the local path; otherwise the service reuses
 `WATCHLIST_DB_PATH` with separate tables. See [.env.example](.env.example). The

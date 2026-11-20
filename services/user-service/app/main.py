@@ -15,6 +15,9 @@ from .resource_api import V2MetadataErrors
 from .resource_api import internal as metadata_router
 from .resource_api import public as initialization_router
 from .watchlist import router as watchlist_router
+from .workspace_invitations import internal as invitation_admission_router
+from .workspace_invitations import require_workspace_member
+from .workspace_invitations import router as workspace_invitations_router
 
 app = create_app(
     "FolioView User API",
@@ -23,13 +26,16 @@ app = create_app(
     private_prefixes=("/api/", "/internal/"),
 )
 app.add_middleware(V2MetadataErrors)
-app.include_router(watchlist_router)
-app.include_router(channel_follows_router)
-app.include_router(fx_follows_router)
-app.include_router(initialization_router)
+workspace_access = [Depends(require_workspace_member)]
+app.include_router(watchlist_router, dependencies=workspace_access)
+app.include_router(channel_follows_router, dependencies=workspace_access)
+app.include_router(fx_follows_router, dependencies=workspace_access)
+app.include_router(initialization_router, dependencies=workspace_access)
 app.include_router(metadata_router)
-app.include_router(private_resources_router)
+app.include_router(private_resources_router, dependencies=workspace_access)
 app.include_router(private_resource_internal_router)
+app.include_router(workspace_invitations_router)
+app.include_router(invitation_admission_router)
 
 
 @app.get("/health")
@@ -37,6 +43,6 @@ def health() -> dict[str, str]:
     return {"status": "ok", "service": "user"}
 
 
-@app.get("/api/v1/me", response_model=CurrentUser)
+@app.get("/api/v1/me", response_model=CurrentUser, dependencies=workspace_access)
 def current_user(user: Annotated[CurrentUser, Depends(require_google_user)]) -> CurrentUser:
     return user
