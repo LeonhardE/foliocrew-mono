@@ -33,8 +33,13 @@ The registry is versioned/closed, bounds entries and paths, and requires unique
 IDs, directories, service names and Cloud Build files. Backend IDs match their
 directory basename. IDs/path segments cannot inject shell options or escape
 the repository; symbolic links are rejected. Every backend supplies
-`app/main.py`, `requirements.txt`, `requirements-dev.txt`, a Dockerfile and
-discoverable Python tests. Web retains its existing source/Docker/test contract.
+`requirements.txt`, `requirements-dev.txt`, a Dockerfile and discoverable Python tests.
+A Cloud Run backend uses `app/main.py`. A Firebase Functions backend declares
+`"runtime": "firebase_functions"` and provides `main.py` and `firebase.json`.
+Its image is used for test and smoke checks. The active Firebase registration stays
+`build_only` and is ineligible for the ordinary Cloud Run deploy and first-provision paths.
+Its Firebase trigger registration is a separately reviewed action.
+Web retains its existing source/Docker/test contract.
 Optional backend Ruff configuration is discovered from its own `pyproject.toml`.
 
 An unregistered runnable directory fails CI, including nonstandard/hidden
