@@ -176,6 +176,9 @@ function mountProvider({
     "@/lib/agent-link": { loadAgentLinkConfiguration: fetchLinkConfig },
     "@/lib/persistent-owner-routes": persistentRoutes,
     "@/lib/user-recovery-route": recoveryRoutes,
+    "@/lib/workspace-invitations": require("./resource-library-helpers.cjs").compile(
+      "../lib/workspace-invitations.ts",
+    ),
     "@/lib/holdings-view": require("./holdings-view-helpers.cjs"),
     "@/lib/task-detail-read": require("./task-overview-helpers.cjs").detail,
     "@/lib/task-overview-request": require("./task-overview-helpers.cjs").request,

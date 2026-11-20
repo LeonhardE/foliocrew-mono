@@ -1,6 +1,7 @@
 "use client";
 import { holdingsViewRequest } from "@/lib/holdings-view";
 import { USER_RECOVERY_PROXY, userRecoveryRoute } from "@/lib/user-recovery-route";
+import { invitationRoute } from "@/lib/workspace-invitations";
 import { taskDetailRequest } from "@/lib/task-detail-read";
 import { taskOverviewRequest } from "@/lib/task-overview-request";
 import {
@@ -47,6 +48,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8
 // An unset service origin keeps the current deployment usable during migration.
 const USER_API_BASE_URL = process.env.NEXT_PUBLIC_USER_API_BASE_URL || API_BASE_URL;
 const CONFIG_API_BASE_URL = process.env.NEXT_PUBLIC_CONFIG_API_BASE_URL || API_BASE_URL;
+const INVITATION_REQUIRED = process.env.NEXT_PUBLIC_FOLIOCREW_WORKSPACE_ACCESS_RESTRICTED === "1";
 
 export type PrivateService = "user" | "config" | "portfolio" | "agent-hub";
 type PrivateMethod = "GET" | "PUT" | "DELETE" | "POST" | "PATCH";
@@ -572,6 +574,7 @@ type AuthState = {
 
 type AuthContextValue = AuthState & {
   ownerConfigStatus: OwnerConfigStatus;
+  privateWorkspaceAvailable: boolean;
   ownerCapabilities: OwnerCapabilities;
   portfolioConfigured: boolean;
   agentHubConfigured: boolean;
@@ -716,6 +719,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       if (response.status === 401) {
         message = "Your session could not be verified. Sign out and sign in again.";
+      } else if (response.status === 403 && INVITATION_REQUIRED) {
+        message = "Your Google account needs an invitation to access the workspace.";
       } else if (response.status === 503) {
         message = "Sign-in is temporarily unavailable. Please try again.";
       }
@@ -909,7 +914,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let maxBodyBytes = 589824;
     let validatedJson = options.json;
     const recoveryRead = service === "user" ? userRecoveryRoute(path) : null;
-    if (recoveryRead) {
+    if (service === "user" && invitationRoute(path, method) !== null) {
+      origin = "";
+      maxBodyBytes = 512;
+    } else if (recoveryRead) {
       if (
         !exact(options.json, recoveryRead.keys) ||
         options.json.profile !== recoveryRead.profile ||
@@ -1223,6 +1231,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       ...state,
       ownerConfigStatus: ownerConfig.status,
+      privateWorkspaceAvailable: !INVITATION_REQUIRED || state.status === "authenticated",
       ownerCapabilities: ownerConfig.flags,
       portfolioConfigured:
         (ownerConfig.status === "ready" && ownerConfig.flags.portfolio) ||

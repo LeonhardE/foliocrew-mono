@@ -172,6 +172,7 @@ function render(f, { locale = "en", component = "panel", mode = "unlock", unlock
     "./SettingsPanel.module.css": settingsStyles,
     "./IndependentSetupPanel": { __esModule: true, default: () => null },
     "./SettingsSecurityPanel": security,
+    "./SettingsInvitations": { __esModule: true, default: () => null },
     "./CurrencyPreferencesProvider": {
       useCurrencyPreferences: () => ({
         authenticated: f.workspace.authenticated,

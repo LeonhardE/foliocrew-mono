@@ -1469,6 +1469,12 @@ html[data-theme="light"] .dialog-close {
   }
 }
 
+.workspace-invitation-notice {
+  color: var(--muted);
+  font-size: 14px;
+  margin: 0 0 16px;
+}
+
 .workspace-page {
   width: 100%;
   max-width: 1200px;

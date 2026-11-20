@@ -81,6 +81,7 @@ function mountPanel(overrides = {}, locale = "en") {
     "./SettingsPanel.module.css": { default: {} },
     "./IndependentSetupPanel": { __esModule: true, default: () => null },
     "./SettingsSecurityPanel": { __esModule: true, default: () => null },
+    "./SettingsInvitations": { __esModule: true, default: () => null },
     "./CurrencyPreferencesProvider": { useCurrencyPreferences: () => currencyState },
     "@/lib/currency-preferences": currencyContracts,
     "next-intl": {

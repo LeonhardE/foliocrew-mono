@@ -1,5 +1,6 @@
 {
   "nav": {
+    "invitationRequired": "需要收到邀请才能打开工作区。",
     "skip": "跳到图表",
     "home": "Foliocrew 首页",
     "primary": "工作台导航",
@@ -149,6 +150,7 @@
     "popup": "请允许本站弹出窗口，然后重新登录。",
     "networkGoogle": "无法连接 Google，请检查网络后重试。",
     "signIn": "Google 登录暂不可用，你仍可继续浏览。",
+    "invitationRequired": "你的 Google 账号需要收到邀请才能访问工作区。",
     "verify": "无法验证账户，请重试。",
     "verifyTimeout": "账户验证超时，请重试。",
     "session": "登录状态无法验证，请退出后重新登录。",
@@ -157,6 +159,38 @@
     "unknown": "操作未完成，请稍后重试。"
   },
   "settings": {
+    "invitations": {
+      "title": "用户管理",
+      "inviteUser": "邀请用户",
+      "email": "主 Gmail 地址",
+      "review": "核对邀请",
+      "confirmSend": "向 {email} 发送邀请？",
+      "confirmRevoke": "撤销发给 {email} 的邀请？",
+      "send": "发送邀请",
+      "revoke": "撤销",
+      "cancel": "取消",
+      "invalidEmail": "请输入该 Google 账号的主 Gmail 地址。",
+      "requestFailed": "邀请操作失败，请重试。",
+      "working": "正在更新邀请…",
+      "updated": "{email} · {status}",
+      "list": "邀请列表",
+      "refresh": "刷新邀请列表",
+      "empty": "还没有邀请。",
+      "retry": "重试发送",
+      "retryFor": "重试向 {email} 发送邀请",
+      "revokeFor": "撤销发给 {email} 的邀请",
+      "reissue": "再次邀请",
+      "reissueFor": "再次邀请 {email}",
+      "more": "显示更多",
+      "status": {
+        "sending": "正在发送",
+        "send_failed": "发送失败",
+        "invited": "已发送",
+        "joined": "已加入",
+        "expired": "已过期",
+        "revoked": "已撤销"
+      }
+    },
     "eyebrow": "你的工作台",
     "title": "设置",
     "description": "让 Foliocrew 更符合你的使用习惯。",

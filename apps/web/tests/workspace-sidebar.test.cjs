@@ -15,7 +15,7 @@ function nodes(tree, predicate) {
   return [...(predicate(tree) ? [tree] : []), ...nodes(tree.props?.children, predicate)];
 }
 
-function mountSidebar({ mobile = false } = {}) {
+function mountSidebar({ mobile = false, privateNavigationDisabled = false } = {}) {
   const cells = [];
   const effects = [];
   const navigations = [];
@@ -118,6 +118,7 @@ function mountSidebar({ mobile = false } = {}) {
         index = 0;
         tree = module.exports.WorkspaceSidebar({
           activeView,
+          privateNavigationDisabled,
           onNavigate: (view) => {
             navigations.push(view);
             activeView = view;
@@ -146,6 +147,20 @@ const button = (tree, label) => {
   assert.equal(matches.length, 1, `Expected one ${label} button`);
   return matches[0];
 };
+
+test("uninvited visitors can select Market and private destinations have no href", () => {
+  const sidebar = mountSidebar({ privateNavigationDisabled: true });
+  const tree = sidebar.render();
+  assert.equal(button(tree, "Markets").props.href, "/market");
+  const disabled = nodes(tree, (node) => node.props?.["aria-disabled"] === "true");
+  assert.equal(disabled.length, 4);
+  for (const node of disabled) {
+    assert.equal(node.props.role, "link");
+    assert.equal(node.props.href, undefined);
+    assert.equal(node.props.onClick, undefined);
+  }
+  sidebar.unmount();
+});
 
 test("the sidebar starts collapsed and keeps named navigation actions when expanded and collapsed again", () => {
   const sidebar = mountSidebar();
