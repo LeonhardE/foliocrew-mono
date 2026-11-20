@@ -9,6 +9,7 @@ Carry the Web Agent link admission and preference stages through the managed dep
 ## Changes
 
 - Accept two explicit stages for the fixed branded Workbench and enabled Owner Hub.
+- Require the stage-aware Web consumer before planning a configured stage.
 - Preserve the existing edge projection when the stage is absent.
 
 ## Validation

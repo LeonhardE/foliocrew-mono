@@ -80,6 +80,12 @@ class WorkspaceEdgeTests(unittest.TestCase):
                 runner.require_workspace_edge_consumer(directory)
             path.write_text(json.dumps(marker))
             runner.require_workspace_edge_consumer(directory)
+            with self.assertRaisesRegex(RuntimeError, "Agent link stages"):
+                runner.require_workspace_edge_consumer(directory, agent_links=True)
+            (directory / "workspace-edge-agent-links.consumer.json").write_text(
+                json.dumps({**marker, "configurationContract": "workspace-edge-agent-links.v1"})
+            )
+            runner.require_workspace_edge_consumer(directory, agent_links=True)
 
     def test_agent_link_modes_require_the_fixed_workbench_and_active_owner_hub(self):
         artifacts = profile.compile_web_owner_deployment_artifacts(selected())

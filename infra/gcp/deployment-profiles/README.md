@@ -585,7 +585,8 @@ option. The private signing key stays in the Worker.
 The exact `https://hub.foliocrew.app` edge with an enabled managed Owner Hub can
 include `agentLinkMode`. Use `admitted` during production verification to accept
 branded handoffs while retaining the existing copy default. Advance to `preferred`
-after acceptance. Omit this field to preserve the original edge projection.
+after acceptance. A separate Web consumer marker is required when this field is
+supplied. Omit it to preserve the original edge projection.
 
 Render the updated `_DEPLOYMENT_CONFIG` with `canonical` and
 `_DEPLOYMENT_SHA256` with `digest`. The generic runner accepts the optional
