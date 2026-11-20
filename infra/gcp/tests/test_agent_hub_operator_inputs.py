@@ -77,9 +77,38 @@ def compare(before, after, **options):
 
 
 class HubOperatorInputTests(unittest.TestCase):
+    def test_brand_settings_keep_the_legacy_defaults_and_require_exact_inputs(self):
+        base = fixture()
+        brand = "https://hub.foliocrew.app"
+        hub.validate_full_input(base)
+        hub.validate_full_input(
+            {
+                **base,
+                "browser_origin_aliases": [brand],
+                "prefer_branded_workspace": True,
+                "native_edge_public_key": "a" * 42 + "A",
+            }
+        )
+        for fields, outcome in (
+            ({"prefer_branded_workspace": True}, "invalid_brand_workspace_default"),
+            ({"native_edge_public_key": "a" * 43}, "invalid_native_edge_public_key"),
+            (
+                {"native_edge_public_key": "A" * 43, "agent_owned_mode_enabled": False},
+                "invalid_native_edge_public_key",
+            ),
+        ):
+            with (
+                self.subTest(outcome=outcome),
+                self.assertRaisesRegex(hub.InputError, outcome),
+            ):
+                hub.validate_full_input({**base, **fields})
+
     def test_owner_browser_admission_is_exact_and_separate_from_the_rollout_flags(self):
         baseline = fixture()
-        candidate = {**baseline, "browser_origin_aliases": ["https://alpha.example.invalid"]}
+        candidate = {
+            **baseline,
+            "browser_origin_aliases": ["https://alpha.example.invalid"],
+        }
         hub.validate_full_input(candidate)
         for rejected in (
             ["https://*.example.invalid"],
@@ -97,7 +126,9 @@ class HubOperatorInputTests(unittest.TestCase):
         with self.assertRaisesRegex(hub.InputError, "protected_inputs_changed"):
             hub.compare_rollout_inputs(before, after, hashlib.sha256(before).hexdigest())
 
-    def test_complete_supported_input_changes_only_flags_and_reports_no_private_values(self):
+    def test_complete_supported_input_changes_only_flags_and_reports_no_private_values(
+        self,
+    ):
         before = fixture()
         after = {**before, **dict.fromkeys(hub.FLAGS, True)}
         report = compare(before, after, owner_subject=OWNER)
@@ -108,7 +139,14 @@ class HubOperatorInputTests(unittest.TestCase):
         self.assertTrue(
             all(row == {"before": False, "after": True} for row in report["flags"].values())
         )
-        for private in [OWNER, OTHER, CANARY, "synthetic-muse", "c" * 64, "portfolio@example"]:
+        for private in [
+            OWNER,
+            OTHER,
+            CANARY,
+            "synthetic-muse",
+            "c" * 64,
+            "portfolio@example",
+        ]:
             self.assertNotIn(private, json.dumps(report))
 
     def test_defaults_remain_closed_including_when_personal_mode_is_already_true(self):

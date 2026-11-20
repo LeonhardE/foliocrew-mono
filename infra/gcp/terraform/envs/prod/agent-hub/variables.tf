@@ -48,6 +48,33 @@ variable "bootstrap_image" {
   }
 }
 
+variable "native_edge_public_key" {
+  description = "Optional canonical base64url Ed25519 public key for the dedicated branded Agent Worker."
+  type        = string
+  default     = ""
+  nullable    = false
+  validation {
+    condition = var.native_edge_public_key == "" || (
+      can(regex("^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$", var.native_edge_public_key)) &&
+      var.agent_owned_mode_enabled
+    )
+    error_message = "Use a canonical 32-byte Ed25519 public key only with personal Agent mode enabled."
+  }
+}
+
+variable "prefer_branded_workspace" {
+  description = "Use the branded workspace as the first Owner origin and credential handoff destination."
+  type        = bool
+  default     = false
+  nullable    = false
+  validation {
+    condition = !var.prefer_branded_workspace || (
+      var.agent_owned_mode_enabled && contains(var.browser_origin_aliases, "https://hub.foliocrew.app")
+    )
+    error_message = "The branded workspace must already be an admitted Owner origin when selected."
+  }
+}
+
 variable "sources" {
   description = "Explicit fixed producer origins and Portfolio's complete workload identity; absent values leave producer operations unavailable. No content credentials."
   type = object({

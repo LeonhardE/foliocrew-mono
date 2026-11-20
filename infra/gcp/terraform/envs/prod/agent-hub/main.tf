@@ -2,6 +2,9 @@ locals {
   project_id    = var.deployment.project_id
   region        = var.deployment.region
   web_origin    = var.deployment.web_origin
+  brand_web     = "https://hub.foliocrew.app"
+  owner_origin  = var.prefer_branded_workspace ? local.brand_web : local.web_origin
+  owner_origins = distinct(concat([local.owner_origin, local.web_origin], var.browser_origin_aliases))
   runtime_email = "${var.deployment.runtime_account_id}@${local.project_id}.iam.gserviceaccount.com"
   agent_clients = concat([for client in var.connector.muse_clients : {
     provider                = "muse"
@@ -21,7 +24,7 @@ locals {
     HUB_TASK_CENTER_ENABLED                     = var.task_center_enabled ? "1" : "0"
     HUB_AGENT_OWNED_ALLOWED_OWNER_SUBJECTS_JSON = jsonencode(var.agent_owned_allowed_owner_subjects)
     HUB_AGENT_OWNED_CREDENTIALS_ENABLED         = var.agent_owned_mode_enabled ? "1" : "0"
-    HUB_AGENT_OWNER_URL                         = var.agent_owned_mode_enabled ? "${local.web_origin}/agents" : ""
+    HUB_AGENT_OWNER_URL                         = var.agent_owned_mode_enabled ? "${local.owner_origin}/agents" : ""
     HUB_PERSISTENT_RESOURCE_CONSENTS_ENABLED    = var.agent_owned_mode_enabled ? "1" : "0"
     HUB_PERSISTENT_PUBLICATIONS_ENABLED         = var.agent_owned_mode_enabled ? "1" : "0"
     HUB_PERSISTENT_EXECUTION_ENABLED            = var.agent_owned_mode_enabled ? "1" : "0"
@@ -42,7 +45,7 @@ locals {
       FIREBASE_PROJECT_ID           = local.project_id
       FIRESTORE_DATABASE            = "agent-hub"
       AGENT_HUB_STORE_BACKEND       = "firestore"
-      CORS_ORIGINS                  = join(",", concat([local.web_origin], var.browser_origin_aliases))
+      CORS_ORIGINS                  = join(",", local.owner_origins)
       HUB_SERVICE_AUDIENCE          = var.deployment.hub_origin
       HUB_KMS_SIGNING_KEY_VERSION   = "${google_kms_crypto_key.delegation.id}/cryptoKeyVersions/1"
       HUB_CATALOGUE_CALLER_EMAIL    = local.runtime_email
@@ -55,7 +58,9 @@ locals {
       HUB_OAUTH_ISSUER              = var.deployment.hub_origin
       HUB_OAUTH_CONSENT_URL         = "${var.deployment.hub_origin}/agent/v3/account/consent.html"
       HUB_OAUTH_CLIENTS_JSON        = jsonencode(local.agent_clients)
-    }, local.agent_owned_environment, local.private_authority_environment)
+      }, local.agent_owned_environment, local.private_authority_environment, var.native_edge_public_key == "" ? {} : {
+      HUB_NATIVE_EDGE_PUBLIC_KEY = var.native_edge_public_key
+    })
   }
 }
 

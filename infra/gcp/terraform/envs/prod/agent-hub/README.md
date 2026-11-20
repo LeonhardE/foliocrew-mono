@@ -71,11 +71,17 @@ require their separate acceptance window.
 
 Review the per-target [browser origin candidate](../../../../deployment-profiles/README.md#browser-origin-candidates-profile-v6)
 before setting optional `browser_origin_aliases` in the separate Agent Hub operator inputs.
-The canonical Web origin stays first in `CORS_ORIGINS` so existing account-link consent pages
-keep opening that workspace by default. `HUB_AGENT_OWNER_URL` also stays bound to the canonical
-Web origin. The Hub service audience and OAuth issuer continue to come from `deployment.hub_origin`.
-Apply admission through a reviewed Hub plan. The task-center rollout comparison still treats
-these aliases as protected inputs.
+The canonical Web origin stays first in `CORS_ORIGINS` and supplies
+`HUB_AGENT_OWNER_URL` by default. When both browser origins have passed the
+handoff and rollback checks, `prefer_branded_workspace` puts the admitted
+`https://hub.foliocrew.app` first and moves the credential handoff to the
+same workspace. Both origins remain in the admission list.
+
+The workload audience and default OAuth issuer continue to use
+`deployment.hub_origin`. Set `native_edge_public_key` after the compatible
+Hub revision is serving to admit the branded Agent Worker. Store the
+matching private key in Cloudflare. Review both inputs through a complete
+Hub plan. The task-center rollout comparison treats them as protected.
 
 ## Ownership and staged creation
 
