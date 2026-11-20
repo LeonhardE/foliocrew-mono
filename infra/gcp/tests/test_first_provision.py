@@ -31,7 +31,7 @@ IMAGE_NAME = f"{REGION}-docker.pkg.dev/{PROJECT}/financial-analysis/synthetic-ap
 DIGEST = "sha256:" + "b" * 64
 
 
-def synthetic_registry(root):
+def synthetic_registry(root, *, firebase=False):
     """Create no cloud resources; all future target files live in a temporary root."""
     data = json.loads((ROOT / "scripts/service-targets.json").read_text())
     data["targets"].append(
@@ -42,6 +42,7 @@ def synthetic_registry(root):
             "service": "synthetic-api",
             "cloudbuild": "infra/gcp/cloudbuild.synthetic.yaml",
             "release_mode": "build_only",
+            **({"runtime": "firebase_functions"} if firebase else {}),
         }
     )
 
@@ -62,8 +63,13 @@ def synthetic_registry(root):
         write(directory + "/Dockerfile")
         write(target["cloudbuild"])
         if target["kind"] == "backend":
+            entry = (
+                ("main.py", "firebase.json")
+                if target.get("runtime") == "firebase_functions"
+                else ("app/main.py",)
+            )
             for name in (
-                "app/main.py",
+                *entry,
                 "requirements.txt",
                 "requirements-dev.txt",
                 "tests/test_app.py",
@@ -105,6 +111,12 @@ def captured_trigger():
 
 
 class FirstProvisionTests(unittest.TestCase):
+    def test_firebase_functions_do_not_enter_cloud_run_first_provision(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            registry = synthetic_registry(Path(temporary), firebase=True)
+            with self.assertRaisesRegex(ValueError, "requires a Cloud Run target"):
+                first.prepare_request({}, {}, registry=registry, target_id="synthetic-service")
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="repo001-first-provision-")
         self.addCleanup(temporary.cleanup)
