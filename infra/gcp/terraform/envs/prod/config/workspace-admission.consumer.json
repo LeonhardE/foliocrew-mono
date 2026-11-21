@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "target": "config",
+  "configurationContract": "workspace-admission.v1",
+  "terraformVariable": "require_workspace_admission"
+}

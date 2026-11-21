@@ -46,12 +46,12 @@ module "config" {
   startup_cpu_boost = true
   ingress           = "INGRESS_TRAFFIC_ALL"
 
-  environment = {
+  environment = merge({
     CORS_ORIGINS         = local.browser_cors_origins
     FIREBASE_PROJECT_ID  = local.project_id
     FIRESTORE_DATABASE   = "(default)"
     CONFIG_STORE_BACKEND = "firestore"
-  }
+  }, var.require_workspace_admission ? { FOLIOCREW_REQUIRE_ADMISSION_CLAIM = "1" } : {})
   secret_environment = {}
 
   # Public invocation already uses invokerIamDisabled=true. Do not add an
