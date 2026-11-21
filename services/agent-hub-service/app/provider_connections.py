@@ -602,7 +602,7 @@ class ProviderConnectionService(AgentCredentialService):
                     **args,
                     candidate_lease=credential["lease"],
                     candidate_identity=credential["identity"],
-                    audience=self.audience,
+                    audience=self._connection_audience(conn),
                     review=review,
                     legacy_credentials=legacy,
                 )

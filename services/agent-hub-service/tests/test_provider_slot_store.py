@@ -9,6 +9,7 @@ from fixtures import OTHER_UID, UID
 from test_persistent_identity_store import CONNECTION
 
 from app.agent_credentials import setup_path
+from app.native_origin import BRAND_ORIGIN, BRAND_RESOURCE
 from app.native_transport import NativePrincipal
 from app.persistent_agents import stored_identity
 from app.provider_connections import ProviderConnectionService, require_provider_current
@@ -191,6 +192,19 @@ class ProviderConnectionTests(unittest.TestCase):
         self.assertEqual(result["slot"]["currentCredential"]["connectionId"], CONNECTION)
         self.assertEqual(result["retainedSelections"], [])
         self.assertTrue(result["requiresFreshGrants"])
+        self.assertEqual(self.service.receipt(UID, self.f.vault, "muse", operation), result)
+        self.gate()
+
+    def test_brand_connection_activates_with_its_registered_audience(self):
+        path = document_path("hub_oauth_connections", self.f.owner, CONNECTION)
+        self.store.transact(
+            lambda unit: unit.put(path, {**unit.get(path), "nativeResource": BRAND_RESOURCE})
+        )
+        credential, operation = self.fx.command(audience=BRAND_ORIGIN)
+        packet, operation = self.packet(credential, operation)
+        result = self.apply(packet, operation)
+        self.assertEqual(result["credentialReceipt"]["lease"]["audience"], BRAND_ORIGIN)
+        self.assertEqual(result["slot"]["currentCredential"]["connectionId"], CONNECTION)
         self.assertEqual(self.service.receipt(UID, self.f.vault, "muse", operation), result)
         self.gate()
 
