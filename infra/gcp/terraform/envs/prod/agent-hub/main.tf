@@ -58,8 +58,10 @@ locals {
       HUB_OAUTH_ISSUER              = var.deployment.hub_origin
       HUB_OAUTH_CONSENT_URL         = "${var.deployment.hub_origin}/agent/v3/account/consent.html"
       HUB_OAUTH_CLIENTS_JSON        = jsonencode(local.agent_clients)
-      }, local.agent_owned_environment, local.private_authority_environment, var.native_edge_public_key == "" ? {} : {
-      HUB_NATIVE_EDGE_PUBLIC_KEY = var.native_edge_public_key
+      }, local.agent_owned_environment, local.private_authority_environment,
+      var.require_workspace_admission ? { FOLIOCREW_REQUIRE_ADMISSION_CLAIM = "1" } : {},
+      var.native_edge_public_key == "" ? {} : {
+        HUB_NATIVE_EDGE_PUBLIC_KEY = var.native_edge_public_key
     })
   }
 }
