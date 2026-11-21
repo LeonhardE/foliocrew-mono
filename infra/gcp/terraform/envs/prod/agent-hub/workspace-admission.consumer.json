@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "target": "agent-hub",
+  "configurationContract": "workspace-admission.v1",
+  "terraformVariable": "require_workspace_admission"
+}
