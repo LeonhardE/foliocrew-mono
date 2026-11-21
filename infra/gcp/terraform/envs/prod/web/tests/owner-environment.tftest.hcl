@@ -373,3 +373,37 @@ run "reject_mismatched_user_handover_and_current_owners" {
   }
   expect_failures = [var.owner_environment]
 }
+
+run "enable_invitation_management" {
+  command = plan
+
+  variables {
+    owner_environment = {
+      FOLIOVIEW_OWNER_FIREBASE_PROJECT_ID = "demo-web-alpha"
+      FOLIOVIEW_PORTFOLIO_OWNER_ENABLED   = "false"
+      FOLIOVIEW_PORTFOLIO_ORIGIN          = ""
+      FOLIOVIEW_PORTFOLIO_AUDIENCE        = ""
+      FOLIOVIEW_HUB_OWNER_ENABLED         = "false"
+      FOLIOVIEW_HUB_ORIGIN                = ""
+      FOLIOVIEW_USER_OWNER_ENABLED        = "true"
+      FOLIOVIEW_USER_ORIGIN               = "https://user-api-111222333444.us-central1.run.app"
+    }
+    workspace_invitation_mode = "management"
+  }
+
+  assert {
+    condition = (
+      local.environment.FOLIOCREW_INVITATION_UI_ENABLED == "1" &&
+      local.environment.FOLIOCREW_WORKSPACE_ACCESS_RESTRICTED == "0"
+    )
+    error_message = "Management mode must expose the invitation UI before admission is required."
+  }
+}
+
+run "reject_invitation_mode_without_user_connection" {
+  command = plan
+  variables {
+    workspace_invitation_mode = "required"
+  }
+  expect_failures = [var.workspace_invitation_mode]
+}
