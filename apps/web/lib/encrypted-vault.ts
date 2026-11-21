@@ -1044,9 +1044,14 @@ export class EncryptedVaultSession {
     file: string,
     code: string,
   ): Promise<{ needsDeviceRegistration: boolean }> {
-    const g = this.generation,
-      prior = await this.lifecycleLocal(vault);
+    const g = this.generation;
     try {
+      const prior = await this.lifecycleLocal(vault);
+      if (vault.userAuthority) {
+        const pin = await this.storage.get(this.owner + ":pin");
+        this.assert(g);
+        await this.verifyOriginalRegistryBridge(vault, pin, true);
+      }
       const result = await this.rpc("importRecoveryKit", { vault, state, file, code, prior });
       this.assert(g);
       this.vaultId = vault.vaultId;
