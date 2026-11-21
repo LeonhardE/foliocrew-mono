@@ -802,10 +802,10 @@ export function useHoldingsWorkspace() {
   );
 
   const ownerSession = useCallback(
-    (subject: string) =>
+    (subject: string, sharedUnlock = true) =>
       new EncryptedVaultSession(subject, {
-        sharedUnlock: true,
-        onInvalidated: () => sharedHandlers.current.lock(),
+        sharedUnlock,
+        onInvalidated: sharedUnlock ? () => sharedHandlers.current.lock() : undefined,
         readOriginalRegistryHead: (json, signal) =>
           api(
             "user",
@@ -4233,7 +4233,7 @@ export function useHoldingsWorkspace() {
           throw new WorkspaceError("invalid_operation");
         if (file.length > 131_072 || code.length > 128) throw new WorkspaceError("invalid_data");
         terminate();
-        const instance = new EncryptedVaultSession(uid);
+        const instance = ownerSession(uid, false);
         recoverySession.current = instance;
         try {
           const fresh = await readCurrent(signal);
@@ -4297,7 +4297,16 @@ export function useHoldingsWorkspace() {
           }
         }
       }),
-    [completeArchiveChange, owner, perform, readCurrent, readLifecycle, terminate, uid],
+    [
+      completeArchiveChange,
+      owner,
+      ownerSession,
+      perform,
+      readCurrent,
+      readLifecycle,
+      terminate,
+      uid,
+    ],
   );
 
   const inspectArchiveChange = useCallback(

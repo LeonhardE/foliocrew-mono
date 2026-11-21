@@ -345,8 +345,9 @@ function harness({
     static async hasArchiveDeletion(uid) {
       return deletionPending?.uid === uid;
     }
-    constructor(uid) {
+    constructor(uid, options) {
       this.uid = uid;
+      this.options = options;
       this.locked = false;
       instances.push(this);
       if (sessionOverrides) Object.assign(this, sessionOverrides(this));
@@ -1665,6 +1666,10 @@ test("independent kit recovery works while locked without the old Passkey and re
   await h.render().recoverWithKit('{"ciphertext":"SYNTHETIC_ENCRYPTED_KIT"}', "R".repeat(43));
   let model = h.render();
   assert.equal(h.counts().recoveryImports, 1);
+  const recovery = h.instances.at(-1);
+  assert.equal(recovery.options.sharedUnlock, false);
+  assert.equal(typeof recovery.options.readOriginalRegistryHead, "function");
+  assert.equal(typeof recovery.options.readOriginalRegistryPage, "function");
   assert.equal(h.counts().passkeyCalls, 0, "Recovery must not request the missing old credential");
   assert.equal(h.counts().replacementCalls, 1);
   assert.equal(model.phase, "locked");

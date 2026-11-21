@@ -2,7 +2,11 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const { createBrowserFixture } = require("./vault-browser-fixture.cjs");
 const { createOwner, createTask, keyProofs, decoded } = require("./full-flow-crypto-fixture.cjs");
-const { lifecycleState, renewalAccepted } = require("./vault-key-renewal-fixture.cjs");
+const {
+  lifecycleState,
+  archiveAccepted,
+  renewalAccepted,
+} = require("./vault-key-renewal-fixture.cjs");
 
 let browser;
 test.before(async () => {
@@ -407,7 +411,7 @@ test("the original Passkey opens a transferred vault and upgrades the stored reg
   });
 });
 
-test("the original Passkey opens a renewed archive after the new epoch omits revoked certificates", async () => {
+test("the original Passkey and a recovery kit reopen a renewed archive after the new epoch omits revoked certificates", async () => {
   await browser.withDatabase(async (db) => {
     const { h } = browser;
     const old = await createOwner(h);
@@ -526,6 +530,90 @@ test("the original Passkey opens a renewed archive after the new epoch omits rev
       readOriginalRegistryPage: page,
     });
     assert.equal((await oldServer.unlockForResults(current, old.material())).canWriteState, true);
+
+    const lifecycle = {
+      ...renewed.state,
+      vaultVersion: current.version,
+      registrySequence: nextHead.registrySequence,
+      checkpointDigest: nextHead.checkpointDigest,
+      keyEpoch: nextHead.keyEpoch,
+      originalCheckpoints: renewed.vault.registryHistory.map((bundle) => bundle.checkpoint),
+    };
+    const kit = await reload.createRecoveryKit(current, lifecycle);
+    await browser.withDatabase(async (fresh) => {
+      browser.time(2000);
+      const storage = fresh.store();
+      const readHeads = [];
+      const proofTransport = {
+        readOriginalRegistryHead: async (request) => {
+          readHeads.push(request.target);
+          return headProof(request);
+        },
+        readOriginalRegistryPage: async () =>
+          assert.fail("the signed terminal bundle contains the historical certificates"),
+      };
+      const recovered = fresh.client(old.uid, storage, proofTransport);
+      const replacement = () => ({
+        credentialId: h.core.b64(new Uint8Array(32).fill(17)),
+        prfSalt: h.core.b64(new Uint8Array(32).fill(18)),
+        secret: new Uint8Array(32).fill(19).buffer,
+      });
+      assert.equal(
+        (await recovered.importRecoveryKit(current, lifecycle, kit.file, kit.code))
+          .needsDeviceRegistration,
+        true,
+      );
+      assert.deepEqual(readHeads, [previousHead]);
+      const change = await recovered.prepareArchiveChange(
+        current,
+        lifecycle,
+        replacement(),
+        "recovery",
+      );
+      assert.equal(change.archive.rootKeyId, current.rootKeyId);
+      assert.equal(change.archive.credentialId, replacement().credentialId);
+
+      const command = change.authorization.command;
+      const approval = decoded(command);
+      const approvalReceipt = {
+        profile: lifecycle.profile,
+        ownerSubject: owner,
+        vaultId: current.vaultId,
+        rootKeyId: current.rootKeyId,
+        operationId: approval.stableOperationId,
+        action: approval.action,
+        lifecycleVersion: lifecycle.lifecycleVersion + 1,
+        archiveRevision: lifecycle.archiveRevision,
+        archiveDigest: lifecycle.archiveDigest,
+        commandFingerprint: await h.core.signingFingerprint(command),
+        acceptedAt: old.now(),
+      };
+      const saved = await archiveAccepted(
+        h,
+        current,
+        {
+          ...lifecycle,
+          lifecycleVersion: approvalReceipt.lifecycleVersion,
+          history: [...lifecycle.history, { command, receipt: approvalReceipt }],
+        },
+        change,
+        old.now(),
+      );
+      const { originalCheckpoints, ...state } = saved.state;
+      saved.vault.userAuthority.archive = {
+        state: "active",
+        version: state.lifecycleVersion + 1,
+        digest: state.archiveDigest,
+      };
+      saved.vault.userAuthority.archiveLifecycle = { state, originalCheckpoints };
+      await recovered.finishArchiveChange(saved.vault, saved.state, change.operationId);
+      const reader = fresh.client(old.uid, storage, proofTransport);
+      assert.equal(
+        (await reader.unlockForResults(saved.vault, replacement())).canWriteState,
+        false,
+      );
+      assert.deepEqual(readHeads, [previousHead, previousHead]);
+    });
   });
 });
 
