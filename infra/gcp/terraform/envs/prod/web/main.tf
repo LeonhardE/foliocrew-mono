@@ -5,6 +5,10 @@ locals {
   agent_link_mode  = try(var.workspace_edge.agent_link_mode, null)
   environment = tomap(merge(
     var.owner_environment == null ? {} : var.owner_environment,
+    var.workspace_invitation_mode == null ? {} : {
+      FOLIOCREW_INVITATION_UI_ENABLED       = "1"
+      FOLIOCREW_WORKSPACE_ACCESS_RESTRICTED = var.workspace_invitation_mode == "required" ? "1" : "0"
+    },
     var.workspace_edge == null ? {} : {
       FOLIOCREW_EDGE_BROWSER_ORIGIN = var.workspace_edge.browser_origin
       FOLIOCREW_EDGE_PUBLIC_KEY     = var.workspace_edge.public_key
