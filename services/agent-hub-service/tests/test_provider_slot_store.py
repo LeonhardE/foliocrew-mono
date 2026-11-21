@@ -3,6 +3,7 @@
 import copy
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import Mock
 
 import test_owned_credentials as owned
 from fixtures import OTHER_UID, UID
@@ -10,15 +11,17 @@ from test_persistent_identity_store import CONNECTION
 
 from app.agent_credentials import setup_path
 from app.native_origin import BRAND_ORIGIN, BRAND_RESOURCE
-from app.native_transport import NativePrincipal
+from app.native_transport import USER_AUTHORITY_TRANSITION, NativePrincipal
 from app.persistent_agents import stored_identity
 from app.provider_connections import ProviderConnectionService, require_provider_current
-from app.store import document_path
+from app.store import document_path, private_resource_writer_fence_path
+from app.user_vault_authority import CurrentUserVault, ScopedUserVaults
 from app.vaults import _current
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
 from folioview_shared.encrypted.crypto import _signed_parts, signing_input_fingerprint
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import b64url_encode
+from folioview_shared.encrypted.private_resources import PrivateRegistryCursor
 from folioview_shared.encrypted.provider_connections import (
     PROVIDER_CONNECTION_PROFILE,
     provider_review_digest,
@@ -207,6 +210,65 @@ class ProviderConnectionTests(unittest.TestCase):
         self.assertEqual(result["slot"]["currentCredential"]["connectionId"], CONNECTION)
         self.assertEqual(self.service.receipt(UID, self.f.vault, "muse", operation), result)
         self.gate()
+
+    def test_transferred_brand_activation_keeps_the_stale_slot_version_and_history(self):
+        legacy, legacy_operation = self.packet()
+        first = self.apply(legacy, legacy_operation)["slot"]
+        credential, operation, connection = self.pending_second_connection()
+        _, approval = _signed_parts(credential["approval"])
+        credential["approval"] = self.f.sign({**approval, "audience": BRAND_ORIGIN})
+        marker = {
+            "ownerSubject": self.f.owner,
+            "vaultId": self.f.vault,
+            "state": "transferred",
+            "writerEpoch": 2,
+            "transitionFingerprint": "d" * 64,
+        }
+        old_path = document_path("hub_oauth_connections", self.f.owner, CONNECTION)
+        new_path = document_path("hub_oauth_connections", self.f.owner, connection)
+
+        def transfer(unit):
+            old = {**unit.get(old_path), "status": "revoked"}
+            unit.put(old_path, old)
+            unit.put(
+                new_path,
+                {
+                    **unit.get(new_path),
+                    "nativeResource": BRAND_RESOURCE,
+                    USER_AUTHORITY_TRANSITION: marker["transitionFingerprint"],
+                },
+            )
+            unit.put(private_resource_writer_fence_path(self.f.owner), marker)
+            return old
+
+        retired = self.store.transact(transfer)
+        reader = Mock()
+        reader.read.return_value = CurrentUserVault(
+            {"ownerSubject": self.f.owner},
+            PrivateRegistryCursor(self.f.registry, 2),
+            marker,
+            self.service.now() + 8,
+        )
+        self.service.user_vaults = ScopedUserVaults(self.store, owner=self.f.owner, client=reader)
+        still_active = {**retired, "status": "active"}
+        self.store.transact(lambda unit: unit.put(old_path, still_active))
+        unreviewed, _ = self.packet(credential, operation)
+        with self.assertRaisesRegex(ContractError, "version_conflict"):
+            self.apply(unreviewed, operation)
+        self.assertEqual(self.store.transact(lambda unit: unit.get(old_path)), still_active)
+        self.store.transact(lambda unit: unit.put(old_path, retired))
+
+        review = self.state()
+        packet, operation = self.packet(credential, operation, state=review)
+        result = self.apply(packet, operation)
+        self.assertIsNone(review["slot"]["currentCredential"])
+        self.assertEqual(review["retirementCandidates"], [])
+        self.assertEqual(result["slot"]["slotVersion"], first["slotVersion"] + 1)
+        self.assertEqual(result["slot"]["slotGeneration"], first["slotGeneration"] + 1)
+        self.assertEqual(result["slot"]["currentCredential"]["connectionId"], connection)
+        self.assertEqual(self.store.transact(lambda unit: unit.get(old_path)), retired)
+        self.assertEqual(self.apply(packet, operation), result)
+        self.gate(connection)
 
     def test_cutover_also_works_with_production_style_buffered_writes(self):
         original_store = self.store
