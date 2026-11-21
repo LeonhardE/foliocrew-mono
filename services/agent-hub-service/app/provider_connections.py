@@ -95,6 +95,34 @@ def stored_slot(unit, owner, vault, provider):
     return row
 
 
+def _activation_slot(unit, owner, row, records, transition):
+    if row is None or transition is None:
+        return row
+    slot = row["slot"]
+    current = slot["currentCredential"]
+    if current is None:
+        return {**row, "retainedSelections": []}
+    if any(entry["reference"] == current for entry in records):
+        return row
+    previous = unit.get(document_path("hub_oauth_connections", owner, current["connectionId"]))
+    if previous is None or any(
+        previous.get(key) != expected
+        for key, expected in (
+            ("ownerSubject", owner),
+            ("vaultId", slot["vaultId"]),
+            ("provider", slot["provider"]),
+            ("connectionId", current["connectionId"]),
+            ("clientId", current["clientId"]),
+        )
+    ):
+        raise StoreUnavailable
+    if previous.get("status") != "revoked" or previous.get(USER_AUTHORITY_TRANSITION) == transition:
+        return None
+    # The previous authority cannot contribute an active credential or grants, but
+    # the reviewed slot still has to compare against its real version and history.
+    return {**row, "slot": {**slot, "currentCredential": None}, "retainedSelections": []}
+
+
 def require_provider_current(unit, owner, vault, connection, conn, row, now):
     """No extra read for unmigrated connections; installed markers never fail open."""
     marker = conn.get("providerSlotId")
@@ -236,16 +264,22 @@ class ProviderConnectionService(AgentCredentialService):
                 _current(unit, owner, self.now(), vault)
             else:
                 user_scope.require_current(unit, self.now())
-            return self._provider_state(unit, owner, vault, provider, transition=transition)
+            return self._provider_state(
+                unit, owner, vault, provider, transition=transition, for_activation=True
+            )
 
         return self.store.transact(read)
 
-    def _provider_state(self, unit, owner, vault, provider, *, transition=None):
+    def _provider_state(
+        self, unit, owner, vault, provider, *, transition=None, for_activation=False
+    ):
         row = stored_slot(unit, owner, vault, provider)
         records, blockers = self.inventory(
             unit, owner, vault, provider, row, batch=True, transition=transition
         )
-        if transition is not None and row is not None:
+        if for_activation:
+            row = _activation_slot(unit, owner, row, records, transition)
+        elif transition is not None and row is not None:
             current = row["slot"]["currentCredential"]
             if current is not None and not any(entry["reference"] == current for entry in records):
                 row = None
@@ -540,6 +574,9 @@ class ProviderConnectionService(AgentCredentialService):
             if saved is not None:
                 return replay(saved)
             user_scope = self.user_vaults.read(uid, vault)
+        transition = (
+            None if user_scope is None else user_scope.writer_fence["transitionFingerprint"]
+        )
 
         def write(unit):
             saved = unit.get(path)
@@ -547,6 +584,14 @@ class ProviderConnectionService(AgentCredentialService):
                 return replay(saved)
             _, registry = self._authority_registry(unit, owner, vault, user_scope)
             current = stored_slot(unit, owner, vault, provider)
+            if activate:
+                legacy, blockers = self.inventory(
+                    unit, owner, vault, provider, current, transition=transition
+                )
+                scoped_current = _activation_slot(unit, owner, current, legacy, transition)
+                if blockers or (current is not None and scoped_current is None):
+                    raise ContractError("version_conflict")
+                current = scoped_current
             slot = None if current is None else current["slot"]
             args = dict(
                 registry=registry,
@@ -558,9 +603,6 @@ class ProviderConnectionService(AgentCredentialService):
             )
             credential = None
             if activate:
-                legacy, blockers = self.inventory(unit, owner, vault, provider, current)
-                if blockers:
-                    raise ContractError("version_conflict")
                 review = validate_provider_connection_schema(
                     "ProviderConnectionReview", command["review"]
                 )
