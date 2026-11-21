@@ -119,6 +119,8 @@ USER_HUB_TRUST_FIELDS = {
 }
 HUB_SUBJECT = re.compile(r"[1-9][0-9]{0,127}\Z")
 WEB_OWNER_FLAGS = {"portfolio", "agentHub"}
+WORKSPACE_ADMISSION_TARGETS = {"config", "portfolio", "agent-hub"}
+WEB_INVITATION_MODES = {"management", "required"}
 WEB_OWNER_USER_RECOVERY_FIELDS = {"FOLIOVIEW_USER_OWNER_ENABLED", "FOLIOVIEW_USER_ORIGIN"}
 WEB_OWNER_USER_SCOPE_FIELDS = {"FOLIOVIEW_USER_HANDOVER_OWNER", "FOLIOVIEW_USER_CURRENT_OWNER"}
 WEB_OWNER_ENVIRONMENT_FIELDS = {
@@ -497,6 +499,12 @@ def validate_target(value):
         require(not has_workspace_edge or target == "web")
         has_web_owner = "webOwner" in value
         require(not has_web_owner or target == "web")
+        has_web_invitations = "webInvitations" in value
+        require(not has_web_invitations or (has_web_owner and target == "web"))
+        has_admission = "requireWorkspaceAdmission" in value
+        require(not has_admission or target in WORKSPACE_ADMISSION_TARGETS)
+        if has_admission:
+            require(value["requireWorkspaceAdmission"] is True)
         has_portfolio_trust = "portfolioHubTrust" in value
         require(not has_portfolio_trust or target == "portfolio")
         has_user_trust = "userHubTrust" in value
@@ -516,6 +524,8 @@ def validate_target(value):
             | ({"userInvitations"} if has_user_invitations else set())
             | ({"portfolioHubTrust"} if has_portfolio_trust else set())
             | ({"webOwner"} if has_web_owner else set())
+            | ({"webInvitations"} if has_web_invitations else set())
+            | ({"requireWorkspaceAdmission"} if has_admission else set())
             | ({"workspaceEdge"} if has_workspace_edge else set())
             | ({"browserOrigins"} if has_browser_origins else set()),
         )
@@ -693,7 +703,7 @@ def validate_target(value):
             base = {
                 name: item
                 for name, item in value.items()
-                if name not in {"webOwner", "workspaceEdge"}
+                if name not in {"webOwner", "workspaceEdge", "webInvitations"}
             }
             server = owner["server"]
             parse_web_owner_server(canonical(server), instance=base, expected_sha256=digest(server))
@@ -706,6 +716,9 @@ def validate_target(value):
             # This managed contract supports numbered origins only. Legacy
             # sidecar parsing keeps its broader previously reviewed contract.
             environment = server["environment"]
+            if has_web_invitations:
+                require(value["webInvitations"] in WEB_INVITATION_MODES)
+                require(environment.get("FOLIOVIEW_USER_OWNER_ENABLED") == "true")
             if environment["FOLIOVIEW_HUB_OWNER_ENABLED"] == "true":
                 require(
                     environment["FOLIOVIEW_HUB_ORIGIN"]
@@ -714,7 +727,11 @@ def validate_target(value):
         if has_portfolio_trust:
             trust = value["portfolioHubTrust"]
             fields(trust, {"configuration", "hubDeployment"})
-            base = {name: item for name, item in value.items() if name != "portfolioHubTrust"}
+            base = {
+                name: item
+                for name, item in value.items()
+                if name not in {"portfolioHubTrust", "requireWorkspaceAdmission"}
+            }
             validate_portfolio_hub_trust(trust["configuration"], base, trust["hubDeployment"])
         require(len(canonical(value)) <= MAX_TARGET_BYTES)
     except (KeyError, TypeError, ValueError, AttributeError, RecursionError):
@@ -762,6 +779,10 @@ def terraform_inputs(instance):
         result["hub_trust"] = dict(value["portfolioHubTrust"]["configuration"]["environment"])
     if "webOwner" in value:
         result["owner_environment"] = dict(value["webOwner"]["server"]["environment"])
+    if "webInvitations" in value:
+        result["workspace_invitation_mode"] = value["webInvitations"]
+    if "requireWorkspaceAdmission" in value:
+        result["require_workspace_admission"] = True
     if "browserOrigins" in value:
         result["browser_origin_aliases"] = list(value["browserOrigins"])
     if "workspaceEdge" in value:
@@ -830,6 +851,22 @@ def add_user_invitations(
             }
         )
     )
+
+
+def add_web_invitations(instance, mode, *, expected_sha256):
+    """Attach a reviewed invitation mode to the existing Web owner configuration."""
+    instance = parse_target(canonical(instance))
+    require(instance["target"] == "web" and digest(instance) == expected_sha256)
+    return parse_target(canonical({**instance, "webInvitations": mode}))
+
+
+def require_workspace_admission(instance, *, expected_sha256):
+    """Require newly issued workspace claims on the selected dependent service."""
+    instance = parse_target(canonical(instance))
+    require(
+        instance["target"] in WORKSPACE_ADMISSION_TARGETS and digest(instance) == expected_sha256
+    )
+    return parse_target(canonical({**instance, "requireWorkspaceAdmission": True}))
 
 
 def compile_target(profile, target):

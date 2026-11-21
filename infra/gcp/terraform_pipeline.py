@@ -414,6 +414,28 @@ def registry(root, target, instance=None):
         require_trust_consumer(directory, "portfolio")
     if instance is not None and "webOwner" in instance:
         require_web_owner_consumer(directory)
+    if instance is not None and "webInvitations" in instance:
+        require_consumer_marker(
+            directory / "web-invitations.consumer.json",
+            {
+                "schemaVersion": 1,
+                "target": "web",
+                "configurationContract": "web-invitations.v1",
+                "terraformVariable": "workspace_invitation_mode",
+            },
+            "Web source has not adopted the reviewed invitation configuration.",
+        )
+    if instance is not None and "requireWorkspaceAdmission" in instance:
+        require_consumer_marker(
+            directory / "workspace-admission.consumer.json",
+            {
+                "schemaVersion": 1,
+                "target": target,
+                "configurationContract": "workspace-admission.v1",
+                "terraformVariable": "require_workspace_admission",
+            },
+            f"{target} source has not adopted the reviewed workspace admission requirement.",
+        )
     if instance is not None and "browserOrigins" in instance:
         require_browser_origins_consumer(directory, target)
     if instance is not None and "workspaceEdge" in instance:
