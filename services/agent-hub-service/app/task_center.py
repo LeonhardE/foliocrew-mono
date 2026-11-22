@@ -4,6 +4,10 @@ Persisted enrollment is a permanent execution fence, independent of rollout flag
 Old manifests/receipts keep their wire format; attribution is an immutable sidecar.
 """
 
+import re
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
 from folioview_shared.encrypted.crypto import _signed_parts, signing_input_fingerprint
 from folioview_shared.encrypted.errors import ContractError
@@ -19,6 +23,7 @@ from folioview_shared.encrypted.task_center import (
     plan_task_rules,
     require_assignment_current,
     require_run_current,
+    scheduled_occurrence,
     validate_assignment,
     validate_definition,
 )
@@ -52,6 +57,27 @@ def preparation_path(owner, vault, task, ident, base, *, kind="legacy_unknown"):
     if kind != "legacy_unknown":
         return document_path("hub_center_preparations", owner, vault, task, ident, kind, base)
     return document_path("hub_center_preparations", owner, vault, task, ident, base)
+
+
+def scheduled_base_id(value):
+    return isinstance(value, str) and re.fullmatch(r"schedule_[a-f0-9]{64}", value) is not None
+
+
+def matching_scheduled_occurrence(definition, base, *, now):
+    schedule = definition["schedule"]
+    if schedule is None or not scheduled_base_id(base):
+        return None
+    try:
+        day = datetime.fromtimestamp(now, ZoneInfo(schedule["timeZone"])).date()
+    except (OverflowError, ValueError):
+        return None
+    for offset in (0, 1):
+        occurrence = scheduled_occurrence(
+            definition, local_date=(day - timedelta(days=offset)).isoformat(), now=now
+        )
+        if occurrence and occurrence["baseTriggerId"] == base:
+            return occurrence
+    return None
 
 
 def trigger_path(owner, vault, task, trigger):
@@ -603,15 +629,18 @@ class TaskCenterAgentService(PersistentExecutionService):
                     "triggerKind": "legacy_unknown",
                 }
             trigger = assignment_trigger_id(a, request["baseTriggerId"])
+            created_at = self.now()
+            occurrence = matching_scheduled_occurrence(d, request["baseTriggerId"], now=created_at)
             unit.put(
                 p,
                 {
                     "request": snapshot(request),
                     "triggerId": trigger,
-                    "createdAt": self.now(),
+                    "createdAt": created_at,
                     "runId": None,
                     "resultId": None,
                     "stage": "waiting",
+                    **({"scheduledOccurrence": occurrence} if occurrence else {}),
                 },
             )
             unit.put(

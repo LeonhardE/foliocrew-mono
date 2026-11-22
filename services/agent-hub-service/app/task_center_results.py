@@ -18,7 +18,7 @@ from folioview_shared.encrypted.task_center import TASK_CENTER_PROFILE, validate
 
 from .persistent_results import PAGE_SIZE, PersistentResultService, result_path, stored_result
 from .store import StoreUnavailable, document_path
-from .task_center import TaskCenterOwnerService, definition_row
+from .task_center import TaskCenterOwnerService, definition_row, preparation_path, scheduled_base_id
 
 
 def index_path(owner, vault, task):
@@ -80,6 +80,43 @@ def validate_attribution(value, context):
     if value["credential"]["connectionId"] != context["connectionId"]:
         raise StoreUnavailable
     return value
+
+
+def _scheduled_preparation_path(binding):
+    if (
+        binding is not None
+        and binding["trigger"]["kind"] == "legacy_unknown"
+        and scheduled_base_id(binding["trigger"]["baseTriggerId"])
+    ):
+        return preparation_path(
+            binding["ownerSubject"],
+            binding["vaultId"],
+            binding["taskId"],
+            binding["assignmentId"],
+            binding["trigger"]["baseTriggerId"],
+        )
+    return None
+
+
+def _result_trigger_kind(binding, result_id, preparation):
+    if binding is None:
+        return "legacy_unknown"
+    kind = binding["trigger"]["kind"]
+    if kind == "legacy_unknown" and preparation:
+        occurrence = preparation.get("scheduledOccurrence")
+        if (
+            isinstance(occurrence, dict)
+            and occurrence.get("baseTriggerId") == binding["trigger"]["baseTriggerId"]
+            and type(occurrence.get("scheduledAt")) is int
+            and type(preparation.get("createdAt")) is int
+            and 0 <= occurrence["scheduledAt"] <= preparation["createdAt"]
+            and preparation.get("triggerId") == binding["triggerId"]
+            and preparation.get("runId") == binding["runId"]
+            and preparation.get("resultId") == result_id
+            and preparation.get("stage") == "result_received"
+        ):
+            return "scheduled"
+    return kind
 
 
 class _Batch:
@@ -175,14 +212,24 @@ class TaskCenterResultService(TaskCenterOwnerService):
             begin = max(0, before - limit)
             ids = list(reversed(page["resultIds"][begin:before]))
             batch = _Batch(unit.get_many([result_path(owner, vault, r) for r in ids]))
-            items = []
+            records = []
+            preparations = {}
             for ident in ids:
                 result = stored_result(batch, owner, vault, ident)
-                meta, c = result["metadata"], result["context"]
-                if meta["taskId"] != task:
+                if result["metadata"]["taskId"] != task:
                     if phase == "current":
                         raise StoreUnavailable
                     continue
+                records.append(result)
+                path = _scheduled_preparation_path(result.get("taskCenter"))
+                if path is not None:
+                    preparations[ident] = path
+            verified_slots = (
+                unit.get_many(tuple(dict.fromkeys(preparations.values()))) if preparations else {}
+            )
+            items = []
+            for result in records:
+                meta, c = result["metadata"], result["context"]
                 binding = result.get("taskCenter")
                 items.append(
                     {
@@ -194,9 +241,11 @@ class TaskCenterResultService(TaskCenterOwnerService):
                             "clientId": c["clientId"],
                         },
                         "attribution": binding,
-                        "triggerKind": "legacy_unknown"
-                        if binding is None
-                        else binding["trigger"]["kind"],
+                        "triggerKind": _result_trigger_kind(
+                            binding,
+                            meta["resultId"],
+                            verified_slots.get(preparations.get(meta["resultId"])),
+                        ),
                     }
                 )
             if begin:
