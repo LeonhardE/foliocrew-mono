@@ -25,7 +25,12 @@ from folioview_shared.encrypted.jsonutil import (
 )
 from folioview_shared.identity import owner_key
 
-from .agent_rollout import owner_allowed, require_owner_allowed
+from .agent_rollout import (
+    WORKSPACE_ADMISSION,
+    admitted_users_enabled,
+    owner_allowed,
+    require_owner_enrollment,
+)
 from .oauth import (
     _S256,
     _TOKEN,
@@ -345,7 +350,7 @@ class NativeTransportService(OwnerConnectionService):
 
     def _pending(self, unit, uid, request, browser):
         owner = owner_key(uid)
-        require_owner_allowed(owner)
+        require_owner_enrollment(owner)
         bucket = _pending_bucket(unit, self.now())
         row = bucket["entries"].get(request)
         if (
@@ -487,6 +492,10 @@ class NativeTransportService(OwnerConnectionService):
                 if fingerprint is not None:
                     conn[USER_AUTHORITY_TRANSITION] = fingerprint
                 index["connectionIds"].append(conn["connectionId"])
+            if admitted_users_enabled():
+                # Only a successful Owner approval can enable this connection
+                # for admitted users at token and signed execution endpoints.
+                conn[WORKSPACE_ADMISSION] = True
             conn.update(
                 transportStatus="awaiting_exchange",
                 authorizationId=pending["authorizationId"],
@@ -565,7 +574,7 @@ class NativeTransportService(OwnerConnectionService):
         ):
             return False
         return bool(
-            owner_allowed(context["ownerSubject"])
+            owner_allowed(context["ownerSubject"], connection=conn)
             and conn
             and conn.get("transportKind") == "persistent_runtime"
             and conn.get("nativeResource") == self.connection_resource

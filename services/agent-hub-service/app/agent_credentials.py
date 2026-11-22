@@ -121,7 +121,6 @@ class AgentCredentialService(PersistentAgentService):
             raise ContractError("key_authorization_required")
         from .agent_rollout import require_owner_allowed
 
-        require_owner_allowed(principal.owner_subject)
         owner, vault, registry, conn = self._credential_context(
             unit,
             principal.owner_uid,
@@ -130,6 +129,7 @@ class AgentCredentialService(PersistentAgentService):
             user_scope,
             active=True,
         )
+        require_owner_allowed(owner, connection=conn)
         if (
             principal.client_id not in self.client_ids
             or principal.client_id != conn["clientId"]
@@ -406,10 +406,10 @@ class AgentCredentialService(PersistentAgentService):
         return self.store.transact(read)
 
     def command(self, uid, vault, connection, command, operation, *, _unit=None, _user_scope=None):
-        from .agent_rollout import require_owner_allowed
+        from .agent_rollout import require_owner_allowed, require_owner_enrollment
 
         owner = owner_key(uid)
-        require_owner_allowed(owner)
+        require_owner_enrollment(owner)
         for value in (vault, connection):
             identifier(value)
         validate_schema("OperationIdentifier", operation)
@@ -449,6 +449,7 @@ class AgentCredentialService(PersistentAgentService):
             owner, _, registry, conn = self._credential_context(
                 unit, uid, vault, connection, user_scope
             )
+            require_owner_allowed(owner, connection=conn)
             self._require_credential_writer(unit, owner, user_scope)
             if _unit is None:
                 from .provider_connections import slot_path

@@ -187,11 +187,14 @@ reviewed OAuth client registrations, a nonempty `agent_owned_allowed_owner_subje
 list (at most 32 unique Owner subject hashes), and complete existing producer trust; it
 sets the Owner URL to the selected Web origin's `/agents` page. It does not
 approve any user's resources, install a native schedule or prove host retention.
-The admission list defaults to empty and is always emitted to the service. Only
-reviewed accounts can approve native connections, set up/replace credentials or
-execute with them; removed accounts are also fenced on existing tokens/PoP. Owner
-history and disconnect remain available. Invalid lists deny admission. This is
-not resource authorization; all existing cryptographic checks still apply.
+The pilot list defaults to empty and is always emitted to the service. Pilot
+accounts can keep their existing connections. Set
+`agent_owned_admitted_users_enabled` alongside `require_workspace_admission` and
+`agent_owned_mode_enabled` to admit invited workspace members. The Hub verifies
+Firebase admission on their browser requests and records it when they approve a
+connection. Token exchange, refresh and signed execution for invitees require
+that approval on the exact connection. Owner history and disconnect remain
+available. Resource consent and task authority still require separate signatures.
 
 `persistent_mode_enabled` is retained as a false-only compatibility input. Old
 operator files with `true` are refused instead of enabling the new mode. Review
