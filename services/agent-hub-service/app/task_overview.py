@@ -209,7 +209,13 @@ class TaskOverviewService:
                 vault = {
                     **{
                         key: authority[key]
-                        for key in ("vaultId", "rootKeyId", "rootJwk", "registryHistory")
+                        for key in (
+                            "ownerSubject",
+                            "vaultId",
+                            "rootKeyId",
+                            "rootJwk",
+                            "registryHistory",
+                        )
                     },
                     "priorRegistryHistory": original["registryHistory"],
                 }

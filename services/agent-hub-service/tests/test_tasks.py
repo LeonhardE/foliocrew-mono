@@ -20,6 +20,7 @@ from app.store import (
     document_path,
     private_resource_writer_fence_path,
 )
+from app.task_overview import TaskOverviewService
 from app.tasks import TaskService
 from app.user_vault_authority import CurrentUserVault, ScopedUserVaults
 from app.vaults import VaultService
@@ -279,6 +280,17 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(self.service.operation(UID, TASK, OP), first)
         self.assertEqual(self.service.operation(UID, task, operation), saved)
         self.assertEqual(len(self.service.list(UID)["items"]), 2)
+        overview = TaskOverviewService(
+            self.store, clock=lambda: self.clock, user_vaults=self.service.user_vaults
+        ).overview(
+            UID,
+            vault,
+            {"contractVersion": CONTRACT_VERSION, "knownPacketVersions": [], "packetLimit": 4},
+        )
+        self.assertEqual(
+            {item["taskId"]: item["packet"] for item in overview["packets"]["items"]},
+            {TASK: first, task: saved},
+        )
 
     def test_real_private_rules_roundtrip_and_history_are_ciphertext_only(self):
         first, replay = self.save()
