@@ -17,6 +17,7 @@ function harness({
   externalWatchlist = false,
   followsNeeded = true,
   online = true,
+  resumeCatalogueOnNavigation = false,
 } = {}) {
   let owner = "owner_A:1",
     workspaceScope = "vault_A:1",
@@ -129,7 +130,13 @@ function harness({
     do {
       index = 0;
       dirty = false;
-      result = useResourceLibrary({ active, externalWatchlist, workspaceScope, followsNeeded });
+      result = useResourceLibrary({
+        active,
+        externalWatchlist,
+        workspaceScope,
+        followsNeeded,
+        resumeCatalogueOnNavigation,
+      });
       if (flush)
         for (const entry of effects.splice(0)) {
           cells[entry.slot]?.cleanup?.();
@@ -715,6 +722,72 @@ test("rapid navigation cancels a refresh, keeps the prior snapshot and rejects i
   assert.equal(h.render().watchlist.data.items[0].symbol, "SYNTH");
   assert.equal(h.render().watchlist.stale, false);
   h.unmount();
+});
+
+test("rapid same-document navigation reuses one demand-started catalogue read", async () => {
+  const first = deferred();
+  const h = harness({
+    externalWatchlist: true,
+    followsNeeded: false,
+    resumeCatalogueOnNavigation: true,
+    transport: ({ route }) => (route.endsWith("/catalogue") ? first.promise : undefined),
+  });
+  try {
+    h.render();
+    await settle();
+    const read = h.calls[0];
+    assert.ok(read.route.endsWith("/catalogue"));
+    for (let index = 0; index < 3; index++) {
+      h.active(false);
+      h.render();
+      h.active(true);
+      h.render();
+    }
+    assert.equal(read.options.signal.aborted, false);
+    assert.equal(h.calls.length, 1);
+    first.resolve(response(catalogue()));
+    assert.ok((await h.ready()).catalogue.data);
+    h.active(false);
+    h.render();
+    h.active(true);
+    assert.ok((await h.ready()).catalogue.data);
+    assert.equal(h.calls.length, 1);
+    await h.render().reload("catalogue");
+    assert.equal(h.calls.length, 2, "an explicit refresh still contacts the server");
+  } finally {
+    h.unmount();
+  }
+});
+
+test("a catalogue read kept across routes still cancels when the document is hidden", async () => {
+  const first = deferred();
+  let delayed = true;
+  const h = harness({
+    externalWatchlist: true,
+    followsNeeded: false,
+    resumeCatalogueOnNavigation: true,
+    transport: ({ route }) => (delayed && route.endsWith("/catalogue") ? first.promise : undefined),
+  });
+  try {
+    h.render();
+    await settle();
+    h.active(false);
+    h.render();
+    h.visibility(false);
+    h.render();
+    assert.equal(h.calls[0].options.signal.aborted, true);
+    first.resolve(response(catalogue()));
+    assert.equal((await h.ready()).catalogue.data, null);
+    delayed = false;
+    h.visibility(true);
+    await h.ready();
+    assert.equal(h.calls.length, 1);
+    h.active(true);
+    assert.ok((await h.ready()).catalogue.data);
+    assert.equal(h.calls.length, 2);
+  } finally {
+    h.unmount();
+  }
 });
 
 test("a follows write invalidates cached discovery immediately, and uncertain navigation never repeats the write", async () => {

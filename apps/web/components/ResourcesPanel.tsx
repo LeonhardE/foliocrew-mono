@@ -978,6 +978,7 @@ function ResourcesView({
         workspaceScope={workspaceScope}
         holdingsPublication={publication}
         holdingsCatalogueNeeded={Boolean(names.scope)}
+        resumeCatalogueOnNavigation={Boolean(model.vault?.userAuthority)}
         resourceDisplay={model.resourceDisplay}
         active={active}
         watchlist={watchlist}

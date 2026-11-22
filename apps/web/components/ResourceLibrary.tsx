@@ -434,6 +434,7 @@ export default function ResourceLibrary({
   workspaceScope,
   holdingsPublication,
   holdingsCatalogueNeeded = true,
+  resumeCatalogueOnNavigation = false,
   resourceDisplay,
   ...props
 }: {
@@ -442,6 +443,7 @@ export default function ResourceLibrary({
   holdingsVersion?: string;
   holdingsPublication?: HoldingsPublication | null;
   holdingsCatalogueNeeded?: boolean;
+  resumeCatalogueOnNavigation?: boolean;
   resourceDisplay?: ResourceDisplayAccess;
   watchlist?: WatchlistModel;
   children: ReactNode | ((model: ResourceLibraryModel) => ReactNode);
@@ -463,6 +465,7 @@ export default function ResourceLibrary({
     externalWatchlist: Boolean(watchlist),
     followsNeeded: filter === "channel_follows",
     catalogueNeeded: filter === "holdings" && holdingsCatalogueNeeded,
+    resumeCatalogueOnNavigation,
     resourceDisplay,
     holdingsPublication,
   });

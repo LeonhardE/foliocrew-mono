@@ -81,6 +81,7 @@ export function useResourceLibrary({
   externalWatchlist = false,
   followsNeeded = true,
   catalogueNeeded = true,
+  resumeCatalogueOnNavigation = false,
   resourceDisplay,
   workspaceScope = null,
   holdingsPublication = null,
@@ -89,6 +90,7 @@ export function useResourceLibrary({
   externalWatchlist?: boolean;
   followsNeeded?: boolean;
   catalogueNeeded?: boolean;
+  resumeCatalogueOnNavigation?: boolean;
   resourceDisplay?: ResourceDisplayAccess;
   workspaceScope?: string | null;
   holdingsPublication?: HoldingsPublication | null;
@@ -112,9 +114,19 @@ export function useResourceLibrary({
     active,
     foreground,
     catalogueNeeded,
+    resumeCatalogueOnNavigation,
     resourceDisplay,
   });
-  live.current = { owner, scope, configured, active, foreground, catalogueNeeded, resourceDisplay };
+  live.current = {
+    owner,
+    scope,
+    configured,
+    active,
+    foreground,
+    catalogueNeeded,
+    resumeCatalogueOnNavigation,
+    resourceDisplay,
+  };
   const jobs = useRef(new Map<string, AbortController>());
   const serials = useRef({ catalogue: 0, watchlist: 0, follows: 0 });
   const writing = useRef<object | null>(null);
@@ -125,6 +137,7 @@ export function useResourceLibrary({
   const catalogueRead = useRef<{
     scope: string | null;
     serial: number;
+    canResume: boolean;
     pending: boolean;
     promise: Promise<CatalogueOutcome>;
     outcome?: CatalogueOutcome;
@@ -169,6 +182,7 @@ export function useResourceLibrary({
       key: string,
       hub: boolean,
       action: (signal: AbortSignal, assert: () => void) => Promise<T>,
+      finishAfterNavigation = false,
     ): Promise<T> => {
       const start = live.current;
       if (
@@ -196,7 +210,10 @@ export function useResourceLibrary({
           controller.signal.aborted ||
           now.owner !== owner ||
           now.scope !== scope ||
-          !now.active ||
+          (!now.active &&
+            (!finishAfterNavigation ||
+              !now.resumeCatalogueOnNavigation ||
+              Boolean(publication.current && !publication.current.confirmed))) ||
           !now.foreground ||
           (hub && !now.configured) ||
           (key === "catalogue" &&
@@ -341,11 +358,19 @@ export function useResourceLibrary({
         !live.current.foreground ||
         (!force && isFresh(source) && !stateRef.current[source].stale) ||
         (source === "follows" && writing.current) ||
-        (source === "catalogue" && (!configured || !live.current.catalogueNeeded))
+        (source === "catalogue" &&
+          (!configured ||
+            !live.current.catalogueNeeded ||
+            (!force &&
+              catalogueRead.current?.pending &&
+              catalogueRead.current.scope === scope &&
+              catalogueRead.current.serial === serials.current.catalogue)))
       )
         return;
       const display =
         source === "catalogue" && !force ? live.current.resourceDisplay?.prepare() : null;
+      const canResume =
+        source === "catalogue" && !force && !display && live.current.resumeCatalogueOnNavigation;
       const readKey = live.current.resourceDisplay?.readKey;
       const serial = ++serials.current[source];
       let finishCatalogue: ((outcome: CatalogueOutcome) => void) | undefined;
@@ -354,7 +379,7 @@ export function useResourceLibrary({
         const promise = new Promise<CatalogueOutcome>((resolve) => {
           finishCatalogue = resolve;
         });
-        catalogueRead.current = { scope, serial, pending: true, promise };
+        catalogueRead.current = { scope, serial, canResume, pending: true, promise };
       }
       const current = () =>
         live.current.owner === owner &&
@@ -374,8 +399,11 @@ export function useResourceLibrary({
         },
       }));
       try {
-        const data = await operation(source, source === "catalogue", (signal, assert) =>
-          api(source, signal, assert, undefined, display ?? undefined),
+        const data = await operation(
+          source,
+          source === "catalogue",
+          (signal, assert) => api(source, signal, assert, undefined, display ?? undefined),
+          canResume,
         );
         if (current()) {
           const at = Date.now(),
@@ -549,8 +577,6 @@ export function useResourceLibrary({
     };
   }, []);
   useEffect(() => {
-    for (const controller of jobs.current.values()) controller.abort();
-    jobs.current.clear();
     const uncertainWrite = Boolean(writing.current);
     writing.current = null;
     if (freshness.current.scope !== scope) {
@@ -563,8 +589,8 @@ export function useResourceLibrary({
       delete freshness.current.at.follows;
       delete freshness.current.at.catalogue;
     }
-    for (const source of ["catalogue", "watchlist", "follows"] as Source[])
-      ++serials.current[source];
+    ++serials.current.watchlist;
+    ++serials.current.follows;
     setState((previous) =>
       previous.scope === scope
         ? {
@@ -572,7 +598,6 @@ export function useResourceLibrary({
             busy: false,
             catalogue: {
               ...previous.catalogue,
-              loading: false,
               stale: Boolean(previous.catalogue.data && (previous.catalogue.stale || !configured)),
             },
             watchlist: { ...previous.watchlist, loading: false },
@@ -598,37 +623,59 @@ export function useResourceLibrary({
       if (!externalWatchlist) void reload("watchlist", false);
     }
     return () => {
-      for (const controller of jobs.current.values()) controller.abort();
+      for (const [key, controller] of jobs.current) {
+        if (key === "catalogue") continue;
+        controller.abort();
+        jobs.current.delete(key);
+      }
     };
   }, [owner, scope, active, foreground, configured, reload, externalWatchlist]);
+  const cancelCatalogue = useCallback(() => {
+    const controller = jobs.current.get("catalogue");
+    if (!controller && !catalogueRead.current?.pending) return;
+    controller?.abort();
+    ++serials.current.catalogue;
+    if (live.current.scope === scope)
+      setState((previous) =>
+        previous.scope === scope
+          ? { ...previous, catalogue: { ...previous.catalogue, loading: false } }
+          : previous,
+      );
+  }, [scope]);
+  // An automatic request already sent may finish across same-document navigation.
+  // Changes to its authority, demand or document visibility still cancel it.
+  useEffect(
+    () => cancelCatalogue,
+    [
+      cancelCatalogue,
+      foreground,
+      configured,
+      catalogueNeeded,
+      resourceDisplay?.readKey,
+      resumeCatalogueOnNavigation,
+      reload,
+    ],
+  );
+  useEffect(() => {
+    if (
+      !active &&
+      catalogueRead.current?.pending &&
+      (!catalogueRead.current.canResume || (currentPublication && !currentPublication.confirmed))
+    )
+      cancelCatalogue();
+  }, [active, currentPublication, cancelCatalogue]);
   useEffect(() => {
     if (owner && active && foreground && configured && catalogueNeeded && !writing.current)
       void reload("catalogue", false);
-    return () => {
-      // The private workspace prerequisite controls only discovery, never User writes.
-      const controller = jobs.current.get("catalogue");
-      // Completed matching receipts retain their original serial and 30-second timestamp.
-      if (controller || catalogueRead.current?.pending) {
-        controller?.abort();
-        ++serials.current.catalogue;
-      }
-      if (live.current.scope === scope)
-        setState((previous) =>
-          previous.scope === scope
-            ? { ...previous, catalogue: { ...previous.catalogue, loading: false } }
-            : previous,
-        );
-    };
   }, [
     owner,
-    scope,
     active,
     foreground,
     configured,
     catalogueNeeded,
     resourceDisplay?.readKey,
+    resumeCatalogueOnNavigation,
     reload,
-    externalWatchlist,
   ]);
   useEffect(() => {
     if (owner && active && foreground && followsNeeded) void reload("follows", false);
