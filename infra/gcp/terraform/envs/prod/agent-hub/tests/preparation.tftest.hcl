@@ -214,6 +214,7 @@ run "personal_mode_is_closed_and_scale_to_zero_by_default" {
       output.creation_configuration.environment.HUB_TASK_CENTER_ENABLED == "0" &&
       output.creation_configuration.environment.HUB_AGENT_OWNED_CREDENTIALS_ENABLED == "0" &&
       output.creation_configuration.environment.HUB_AGENT_OWNED_ALLOWED_OWNER_SUBJECTS_JSON == "[]" &&
+      !contains(keys(output.creation_configuration.environment), "HUB_AGENT_OWNED_ADMITTED_USERS_ENABLED") &&
       output.creation_configuration.environment.HUB_AGENT_OWNER_URL == "" &&
       alltrue([for name, value in output.creation_configuration.environment : value == "0" if startswith(name, "HUB_PERSISTENT_")]) &&
       output.creation_configuration.min_instances == 0 && output.creation_configuration.max_instances == 1 &&
@@ -228,6 +229,8 @@ run "explicit_personal_mode_uses_existing_hub_and_preregistered_providers" {
   variables {
     browser_origin_aliases             = ["https://alpha-workspace.example.invalid"]
     agent_owned_mode_enabled           = true
+    require_workspace_admission        = true
+    agent_owned_admitted_users_enabled = true
     agent_owned_allowed_owner_subjects = [sha256("synthetic-owner")]
     connector                          = { oauth_enabled = true, muse_clients = [{ client_id = "synthetic-muse", redirect_uris = ["https://agent.example.invalid/callback"] }] }
     agent_clients                      = [{ provider = "chatgpt", client_id = "synthetic-chatgpt", redirect_uris = ["https://other-agent.example.invalid/callback"] }]
@@ -238,6 +241,8 @@ run "explicit_personal_mode_uses_existing_hub_and_preregistered_providers" {
       output.creation_configuration.environment.HUB_PROVIDER_CONNECTION_SLOTS_ENABLED == "0" &&
       output.creation_configuration.environment.HUB_TASK_CENTER_ENABLED == "0" &&
       output.creation_configuration.environment.HUB_AGENT_OWNED_ALLOWED_OWNER_SUBJECTS_JSON == jsonencode(var.agent_owned_allowed_owner_subjects) &&
+      output.creation_configuration.environment.HUB_AGENT_OWNED_ADMITTED_USERS_ENABLED == "1" &&
+      output.creation_configuration.environment.FOLIOCREW_REQUIRE_ADMISSION_CLAIM == "1" &&
       output.creation_configuration.environment.HUB_AGENT_OWNER_URL == "https://web.example.invalid/agents" &&
       output.creation_configuration.environment.CORS_ORIGINS == "https://web.example.invalid,https://alpha-workspace.example.invalid" &&
       output.creation_configuration.environment.HUB_OAUTH_ISSUER == var.deployment.hub_origin &&
@@ -320,6 +325,11 @@ run "reject_malformed_owner_scope" {
   variables { agent_owned_allowed_owner_subjects = ["unreviewed-owner-uid"] }
   expect_failures = [var.agent_owned_allowed_owner_subjects]
 }
+run "reject_invitee_access_without_workspace_admission" {
+  command = plan
+  variables { agent_owned_admitted_users_enabled = true }
+  expect_failures = [var.agent_owned_admitted_users_enabled]
+}
 run "reject_owner_scope_over_admission_budget" {
   command = plan
   variables { agent_owned_allowed_owner_subjects = [for i in range(33) : sha256("synthetic-owner-${i}")] }
@@ -372,6 +382,8 @@ run "explicit_task_gates_change_only_two_existing_environment_entries" {
   variables {
     browser_origin_aliases             = ["https://alpha-workspace.example.invalid"]
     agent_owned_mode_enabled           = true
+    require_workspace_admission        = true
+    agent_owned_admitted_users_enabled = true
     agent_owned_allowed_owner_subjects = [sha256("synthetic-owner")]
     connector                          = { oauth_enabled = true, muse_clients = [{ client_id = "synthetic-muse", redirect_uris = ["https://agent.example.invalid/callback"] }] }
     agent_clients                      = [{ provider = "chatgpt", client_id = "synthetic-chatgpt", redirect_uris = ["https://other-agent.example.invalid/callback"] }]

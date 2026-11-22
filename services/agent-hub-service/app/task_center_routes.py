@@ -11,8 +11,9 @@ from folioview_shared.encrypted.crypto import _signed_parts
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.task_center import TASK_CENTER_PROFILE
 from folioview_shared.http import PrivateRoute
+from folioview_shared.identity import owner_key
 
-from .agent_rollout import uid_allowed
+from .agent_rollout import admitted_users_enabled, owner_allowed, uid_allowed
 from .agent_transport import recovery_transport
 from .api import Owner, _invoke, body
 from .manual_intents import ManualAgentService, ManualOwnerService
@@ -158,10 +159,18 @@ def endpoint(method):
                 raise ContractError("authorization_unavailable")
             from .store import document_path
 
-            indexed = service.store.transact(
-                lambda u: u.get(document_path("hub_oauth_owners", owner))
-            )
-            if indexed is None or not uid_allowed(indexed.get("ownerUid", "")):
+            def in_scope(unit):
+                indexed = unit.get(document_path("hub_oauth_owners", owner))
+                if indexed is None or owner_key(indexed.get("ownerUid", "")) != owner:
+                    return False
+                if owner_allowed(owner):
+                    return True
+                return admitted_users_enabled() and owner_allowed(
+                    owner,
+                    connection=unit.get(document_path("hub_oauth_connections", owner, connection)),
+                )
+
+            if not service.store.transact(in_scope):
                 raise ContractError("authorization_unavailable")
 
         _invoke(enabled)

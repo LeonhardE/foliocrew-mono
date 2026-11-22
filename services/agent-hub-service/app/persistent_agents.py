@@ -80,7 +80,7 @@ def require_managed_credential(row, *, now, audience=None, connection=None):
     if lease is not None:
         from .agent_rollout import require_owner_allowed
 
-        require_owner_allowed(row["identity"]["ownerSubject"])
+        require_owner_allowed(row["identity"]["ownerSubject"], connection=connection)
         require_current_credential(
             lease, identity=row["identity"], audience=audience or lease["audience"], now=now
         )

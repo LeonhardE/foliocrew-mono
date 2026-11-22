@@ -541,10 +541,10 @@ class ProviderConnectionService(AgentCredentialService):
                 raise ContractError("version_conflict")
 
     def command(self, uid, vault, provider, command, operation):
-        from .agent_rollout import require_owner_allowed
+        from .agent_rollout import require_owner_enrollment
 
         owner = owner_key(uid)
-        require_owner_allowed(owner)
+        require_owner_enrollment(owner)
         identifier(vault)
         provider_slot_id(owner, provider)
         validate_schema("OperationIdentifier", operation)

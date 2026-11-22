@@ -11,8 +11,14 @@ import test_native_transport as native
 import test_owned_credentials as credentials
 from fixtures import OTHER_UID, UID
 
-from app.agent_rollout import ENVIRONMENT, owner_allowed
+from app.agent_rollout import (
+    ADMITTED_USERS_ENVIRONMENT,
+    ENVIRONMENT,
+    WORKSPACE_ADMISSION,
+    owner_allowed,
+)
 from app.oauth import OAuthFailure
+from app.store import document_path
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.identity import owner_key
 
@@ -60,6 +66,48 @@ class AgentRolloutTests(unittest.TestCase):
                 h.service.pending(UID, request, native.BROWSER)
             with self.assertRaises(ContractError):
                 h.service.approve(UID, request, native.BROWSER, h.f.vault)
+
+    def test_expansion_keeps_previously_unapproved_connections_closed(self):
+        h = self.fixture(native.NativeTransportTests)
+        with self.restricted([h.f.owner]):
+            previous = h.connect()
+        with patch.dict(
+            os.environ,
+            {
+                ENVIRONMENT: "[]",
+                ADMITTED_USERS_ENVIRONMENT: "1",
+                "FOLIOCREW_REQUIRE_ADMISSION_CLAIM": "1",
+            },
+        ):
+            self.assertNotEqual(h.refresh(previous["refresh_token"])[0], 200)
+            current = h.connect()
+            self.assertEqual(h.service.authenticate(current["access_token"]).owner_uid, UID)
+            for key in (ADMITTED_USERS_ENVIRONMENT, "FOLIOCREW_REQUIRE_ADMISSION_CLAIM"):
+                with patch.dict(os.environ, {key: "0"}), self.assertRaises(OAuthFailure):
+                    h.service.authenticate(current["access_token"])
+
+    def test_invitee_execution_requires_admission_on_the_exact_connection(self):
+        h = self.fixture(fences.CredentialExecutionFenceTests)
+        r = h.result
+        path = document_path(
+            "hub_oauth_connections", h.helper.f.owner, h.helper.conn["connectionId"]
+        )
+        with patch.dict(
+            os.environ,
+            {
+                ENVIRONMENT: "[]",
+                ADMITTED_USERS_ENVIRONMENT: "1",
+                "FOLIOCREW_REQUIRE_ADMISSION_CLAIM": "1",
+            },
+        ):
+            with self.assertRaises(ContractError):
+                r.x.service.session(*r.x.args("session", {}))
+            h.helper.store.transact(
+                lambda u: u.put(path, {**u.get(path), WORKSPACE_ADMISSION: True})
+            )
+            self.assertIn("credentialLease", r.x.service.session(*r.x.args("session", {})))
+            self.assertEqual(r.submit(), r.submit())
+            self.assertEqual(len(r.history.owner_list(UID, h.helper.f.vault)["items"]), 1)
 
     def test_credential_replacement_is_denied_but_original_owner_history_survives(self):
         h = self.fixture(credentials.AgentCredentialTests)

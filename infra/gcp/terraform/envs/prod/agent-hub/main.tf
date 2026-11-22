@@ -60,6 +60,7 @@ locals {
       HUB_OAUTH_CLIENTS_JSON        = jsonencode(local.agent_clients)
       }, local.agent_owned_environment, local.private_authority_environment,
       var.require_workspace_admission ? { FOLIOCREW_REQUIRE_ADMISSION_CLAIM = "1" } : {},
+      var.agent_owned_admitted_users_enabled ? { HUB_AGENT_OWNED_ADMITTED_USERS_ENABLED = "1" } : {},
       var.native_edge_public_key == "" ? {} : {
         HUB_NATIVE_EDGE_PUBLIC_KEY = var.native_edge_public_key
     })

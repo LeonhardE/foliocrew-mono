@@ -70,6 +70,121 @@ class NativeTransportRoutes(unittest.TestCase):
         store.assert_not_called()
         self.assertEqual(response.headers["cache-control"], "no-store")
 
+    def test_invited_accounts_can_pair_and_refresh_with_verified_workspace_admission(self):
+        from dataclasses import replace
+        from urllib.parse import parse_qs, urlsplit
+
+        from fixtures import BOOT, OTHER_UID, UID, VaultFixture
+        from test_native_transport import NativeTransportTests
+        from test_oauth import CALLBACK, CLIENT, VERIFIER, authorization_params, configuration
+
+        from app.agent_rollout import ADMITTED_USERS_ENVIRONMENT, ENVIRONMENT
+        from app.native_transport import SCOPE, NativeTransportService
+        from app.oauth_config import Client
+        from app.vaults import VaultService
+
+        helper = NativeTransportTests()
+        helper.setUp()
+        self.addCleanup(helper.doCleanups)
+        self.app.dependency_overrides.pop(require_owner)
+        second = VaultFixture(OTHER_UID)
+        VaultService(helper.store, clock=lambda: helper.now).bootstrap(
+            OTHER_UID, second.bootstrap(), BOOT
+        )
+        chatgpt = Client(
+            "synthetic_chatgpt",
+            ["https://synthetic-chatgpt.example/callback"],
+            "none",
+            provider="chatgpt",
+        )
+        config = configuration()
+        config = replace(config, clients=(*config.clients, chatgpt))
+        service = NativeTransportService(helper.store, config, clock=lambda: helper.now)
+        self.app.dependency_overrides[get_native_transport] = lambda: service
+        claims = {"uid": UID, "firebase": {"sign_in_provider": "google.com"}}
+        headers = {
+            "Authorization": "Bearer synthetic_id_token",
+            "Origin": config.issuer,
+            "X-FolioView-Contract": CONTRACT_VERSION,
+        }
+        env = {
+            ADMITTED_USERS_ENVIRONMENT: "1",
+            ENVIRONMENT: "[]",
+            "FOLIOCREW_REQUIRE_ADMISSION_CLAIM": "1",
+            "HUB_PERSISTENT_TRANSPORT_ENABLED": "1",
+            "HUB_AGENT_OWNED_CREDENTIALS_ENABLED": "1",
+        }
+        with (
+            patch.dict(os.environ, env),
+            patch("app.native_transport_routes.OAuthConfig.environment", return_value=config),
+            patch("folioview_shared.auth._get_firebase_app"),
+            patch("folioview_shared.auth.auth.verify_id_token", return_value=claims),
+            TestClient(self.app, base_url=config.issuer) as client,
+        ):
+            caps = COOKIE_PATH + "/capabilities"
+            self.assertEqual(client.get(caps, headers=headers).status_code, 403)
+            owners = (
+                (helper.f, CLIENT, CALLBACK, "muse"),
+                (second, chatgpt.client_id, chatgpt.redirects[0], "chatgpt"),
+            )
+            for fixture, client_id, redirect, provider in owners:
+                with self.subTest(provider=provider):
+                    claims["uid"] = fixture.uid
+                    response = client.get(
+                        "/oauth/persistent/authorize",
+                        params=authorization_params(
+                            client_id=client_id,
+                            redirect_uri=redirect,
+                            scope=SCOPE,
+                            resource=service.config.resource,
+                        ),
+                        follow_redirects=False,
+                    )
+                    self.assertEqual(response.status_code, 303)
+                    request = parse_qs(urlsplit(response.headers["location"]).query)["request"][0]
+                    url = f"{COOKIE_PATH}/{request}"
+                    approval = {"contractVersion": CONTRACT_VERSION, "vaultId": fixture.vault}
+                    claims.pop("foliocrew_workspace", None)
+                    denied = client.post(url + "/approvals", json=approval, headers=headers)
+                    self.assertEqual(denied.status_code, 403)
+                    claims["foliocrew_workspace"] = "admitted-v1"
+                    self.assertTrue(client.get(caps, headers=headers).json()["accountLinkEnabled"])
+                    pending = client.post(
+                        url + "/pending",
+                        json={"contractVersion": CONTRACT_VERSION},
+                        headers=headers,
+                    )
+                    self.assertEqual(pending.json()["provider"], provider)
+                    self.assertEqual(pending.json()["authority"], "account_link_only")
+                    approved = client.post(url + "/approvals", json=approval, headers=headers)
+                    self.assertEqual(approved.status_code, 200, approved.text)
+                    code = parse_qs(urlsplit(approved.json()["redirectTo"]).query)["code"][0]
+                    form = {"client_id": client_id, "resource": service.config.resource}
+                    token = client.post(
+                        "/oauth/persistent/token",
+                        data={
+                            **form,
+                            "grant_type": "authorization_code",
+                            "code": code,
+                            "redirect_uri": redirect,
+                            "code_verifier": VERIFIER,
+                        },
+                    )
+                    self.assertEqual(token.status_code, 200, token.text)
+                    self.assertEqual(token.json()["scope"], SCOPE)
+                    refreshed = client.post(
+                        "/oauth/persistent/token",
+                        data={
+                            **form,
+                            "grant_type": "refresh_token",
+                            "refresh_token": token.json()["refresh_token"],
+                        },
+                    )
+                    self.assertEqual(refreshed.status_code, 200, refreshed.text)
+                    principal = service.authenticate(refreshed.json()["access_token"])
+                    self.assertEqual(principal.owner_subject, fixture.owner)
+                    self.assertEqual(principal.client_id, client_id)
+
     def test_two_parallel_scoped_windows_and_a_preceding_legacy_window_keep_their_own_cookie(self):
         from pathlib import Path
         from tempfile import TemporaryDirectory
