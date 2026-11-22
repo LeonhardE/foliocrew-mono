@@ -413,6 +413,9 @@ try:
         and retry["fingerprint"] != packet["fingerprint"]
     )
     owner("publicationReceipt", {"packet": retry, "receipt": original})
+    assert owner("transferredPublicationReceipt", {"packet": retry, "receipt": original}) == {
+        "operationId": packet["operationId"]
+    }
     assert (
         owner(
             "approve",
@@ -431,6 +434,7 @@ try:
         "A" if bad["envelope"]["jwe"]["ciphertext"][0] != "A" else "B"
     ) + bad["envelope"]["jwe"]["ciphertext"][1:]
     owner("publicationReceipt", {"packet": retry, "receipt": bad}, denied=True)
+    owner("transferredPublicationReceipt", {"packet": retry, "receipt": bad}, denied=True)
     bad = copy.deepcopy(original)
     bad["context"]["ownerEnvelopeFingerprint"] = "b" * 64
     owner("publicationReceipt", {"packet": retry, "receipt": bad}, denied=True)

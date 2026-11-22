@@ -1843,8 +1843,7 @@ export class PersistentOwner {
       if (
         !same(logical(c), logical(packet.context)) ||
         !same(c, receipt.context) ||
-        c.issuedAt > this.ctx.now() ||
-        c.registrySequence > this.ctx.vault.registryHistory.length
+        c.issuedAt > this.ctx.now()
       )
         fail();
       const registry = await this.registry(this.through(c.registrySequence), c.issuedAt);
