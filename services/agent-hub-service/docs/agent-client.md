@@ -36,6 +36,15 @@ The original 1.0.0 download remains byte-identical at its existing versioned URL
 Upgrades require an explicit reviewed version/pin and reuse the same private profile;
 downloading a newer client does not grant authority or require new authorization.
 
+### Transferred registry support in 1.3.2
+
+The current Hub session returns an Owner-signed registry start for transferred
+vaults. The client verifies the start and its continuation against the pinned
+Root, and verifies the approval against the checkpoint at the original approval
+sequence. Sessions for original vaults continue to start at sequence one.
+Hosts can explicitly select and verify the 1.3.2 download and retain their
+existing private profile. The pinned 1.3.1 download remains available.
+
 ### Explicit parser update in 1.3.1
 
 Client 1.3.1 bundles the reviewed shared linear Markdown destination collector.
@@ -49,7 +58,7 @@ its manifest records the normal updated shared core pin.
 The 1.3.0 source, build inputs, manifest and standalone distributions are retained
 byte-for-byte under `agent-client/releases/1.3.0/`; all older pinned downloads are
 unchanged. Only the three existing public asset names are served for each version.
-The current download is 1.3.1, still Node 24.12.0+ and at most 2MiB. Existing hosts
+The 1.3.1 download requires Node 24.12.0+ and is at most 2MiB. Existing hosts
 must explicitly review and adopt its version and SHA-256; publication does not
 silently update installed clients or native task instructions.
 

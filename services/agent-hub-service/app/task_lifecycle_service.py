@@ -8,7 +8,6 @@ from .task_center import definition_row, task_path
 from .task_center_results import TaskCenterResultService
 from .task_lifecycle import CLEANUP_FIELDS, cleanup_page, lifecycle_index
 from .tasks import _index, _response
-from .vaults import _current
 
 
 class TaskLifecycleService(TaskCenterResultService):
@@ -17,10 +16,11 @@ class TaskLifecycleService(TaskCenterResultService):
             from folioview_shared.encrypted.schema import validate_schema
 
             validate_schema("Identifier", cursor)
+        user_scope = self.user_vaults.read(uid, vault)
 
         def read(unit):
             owner = owner_key(uid)
-            v, _ = _current(unit, owner, self.now(), vault)
+            v, _ = self._vault_registry(unit, owner, vault, user_scope)
             index = _index(unit, owner, vault)
             items = []
             states = lifecycle_index(unit, owner, vault)["tasks"]
@@ -63,8 +63,10 @@ class TaskLifecycleService(TaskCenterResultService):
         return self.store.transact(read)
 
     def maintenance(self, uid, vault, task):
+        user_scope = self.user_vaults.read(uid, vault)
+
         def write(unit):
-            owner, *_ = self._owner_task(unit, uid, vault, task)
+            owner, *_ = self._owner_task(unit, uid, vault, task, user_scope=user_scope)
             row = definition_row(unit, owner, vault, task)
             d = None if row is None else row["definition"]
             if (

@@ -2,13 +2,18 @@
 
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import test_task_center_store as centers
 from fixtures import OTHER_UID, UID
 from test_oauth import TASK
 
 from app.manual_intents import ManualAgentService, ManualOwnerService
+from app.persistent_agents import USER_AUTHORITY_TRANSITION
+from app.store import document_path, private_resource_writer_fence_path
 from app.task_center import center_reference
+from app.user_vault_authority import CurrentUserVault, ScopedUserVaults
 from folioview_shared.encrypted.crypto import _signed_parts, signing_input_fingerprint
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.persistent_content import digest
@@ -120,6 +125,56 @@ class ManualIntentTests(unittest.TestCase):
                 )
             ]["stage"],
             "result_received",
+        )
+
+    def test_transferred_manual_controls_and_pickup_use_the_current_user_writer(self):
+        owner, vault = self.f.owner, self.f.vault
+        marker = {
+            "ownerSubject": owner,
+            "vaultId": vault,
+            "state": "transferred",
+            "writerEpoch": 2,
+            "transitionFingerprint": "d" * 64,
+        }
+
+        def transfer(unit):
+            for connection in self.fx.assignments:
+                path = document_path("hub_oauth_connections", owner, connection)
+                unit.put(
+                    path,
+                    {**unit.get(path), USER_AUTHORITY_TRANSITION: marker["transitionFingerprint"]},
+                )
+            unit.put(private_resource_writer_fence_path(owner), marker)
+            return unit.get(document_path("hub_vaults", owner))
+
+        old = self.fx.store.transact(transfer)
+        client = Mock()
+        client.read.return_value = CurrentUserVault(
+            {
+                **old,
+                "vaultVersion": old["version"],
+                "sources": [
+                    {
+                        "binding": {"ref": self.f.resource, "sourceEpoch": 1},
+                        "state": "active",
+                    }
+                ],
+            },
+            SimpleNamespace(registry=self.f.registry),
+            marker,
+            self.fx.fx.now + 8,
+        )
+        scopes = ScopedUserVaults(self.fx.store, owner=owner, client=client)
+        for service in (self.owner, self.agent, self.fx.execution):
+            service.user_vaults = scopes
+
+        receipt = self.create()
+        self.assertEqual(self.owner.manual(UID, vault, TASK, self.signed, self.operation), receipt)
+        run = self.begin(self.operation)
+        self.assertEqual(self.begin(self.operation), run)
+        self.assertEqual(
+            self.owner.manual_state(UID, vault, TASK, self.operation)["aggregate"]["state"],
+            "running",
         )
 
     def test_cancel_before_claim_is_idempotent_and_fences_late_pickup(self):

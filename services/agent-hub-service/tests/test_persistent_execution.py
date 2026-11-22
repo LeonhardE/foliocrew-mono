@@ -137,6 +137,8 @@ class PersistentExecutionTests(unittest.TestCase):
             "vaultVersion": 17,
             "rootJwk": self.f.root_public,
             "registryHistory": [self.f.bundle],
+            "registryStart": {"registryEpoch": 2, "registrySequence": 28},
+            "signedTransition": {"testFixture": "verified User authority transition"},
             "sources": [{"binding": {"ref": self.f.resource, "sourceEpoch": 1}, "state": "active"}],
         }
         client.read.return_value = CurrentUserVault(
@@ -150,6 +152,16 @@ class PersistentExecutionTests(unittest.TestCase):
         with patch("app.persistent_agents._current", side_effect=AssertionError("legacy registry")):
             session = self.service.session(*self.args("session", {}))
             self.assertEqual(session["registryHistory"], [self.f.bundle])
+            self.assertEqual(
+                session["registryStartProof"],
+                {
+                    "start": scopes.client.read.return_value.authority["registryStart"],
+                    "signedTransition": scopes.client.read.return_value.authority[
+                        "signedTransition"
+                    ],
+                },
+            )
+            self.assertNotIn("sources", session)
             self.assertEqual(len(self.service.tasks(*self.args("tasks", {}))["tasks"]), 1)
             run = self.begin()
             manifest = run["manifest"]

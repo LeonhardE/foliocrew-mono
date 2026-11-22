@@ -122,9 +122,10 @@ class TaskCenterResultService(TaskCenterOwnerService):
                     raise ValueError
             except (ContractError, ValueError, TypeError):
                 raise ContractError("unsupported_query") from None
+        user_scope = self.user_vaults.read(uid, vault)
 
         def read(unit):
-            owner, *_ = self._owner_task(unit, uid, vault, task)
+            owner, *_ = self._owner_task(unit, uid, vault, task, user_scope=user_scope)
             from .task_lifecycle import require_visible
 
             require_visible(unit, owner, vault, task)
