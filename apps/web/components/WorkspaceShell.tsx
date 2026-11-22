@@ -86,9 +86,15 @@ export default function WorkspaceShell() {
   const requestedView = workspaceView(pathname) ?? "markets";
   const privateNavigationDisabled = privateWorkspaceAvailable === false;
   const blockedView = privateNavigationDisabled && requestedView !== "markets";
-  const activeView = blockedView ? "markets" : requestedView === "inbox" ? "tasks" : requestedView;
-  const visited = useRef(new Set<string>());
-  visited.current.add(activeView);
+  const checkingAccess =
+    blockedView &&
+    (ownerConfigStatus === "loading" ||
+      ["loading", "verifying", "signing-in"].includes(authStatus));
+  const routeView = requestedView === "inbox" ? "tasks" : requestedView;
+  const navigationView = blockedView && !checkingAccess ? "markets" : routeView;
+  const activeView = checkingAccess ? null : navigationView;
+  const visited = useRef(new Set<WorkspaceView>());
+  if (activeView) visited.current.add(activeView);
   const marketsVisited = visited.current.has("markets");
   const encryptedWorkspace = useHoldingsWorkspace();
   const agentScope = JSON.stringify([
@@ -164,17 +170,17 @@ export default function WorkspaceShell() {
   useEffect(() => {
     scrollPositions.current = {};
   }, [encryptedWorkspace.owner]);
-  const previousView = useRef(activeView);
+  const previousView = useRef(navigationView);
   useEffect(() => {
-    if (previousView.current === activeView) return;
-    previousView.current = activeView;
+    if (previousView.current === navigationView) return;
+    previousView.current = navigationView;
     const frame = window.requestAnimationFrame?.(() =>
-      window.scrollTo?.({ top: scrollPositions.current[activeView] ?? 0, behavior: "instant" }),
+      window.scrollTo?.({ top: scrollPositions.current[navigationView] ?? 0, behavior: "instant" }),
     );
     return () => {
       if (frame !== undefined) window.cancelAnimationFrame?.(frame);
     };
-  }, [activeView]);
+  }, [navigationView]);
   const [taskRequest, setTaskRequest] = useState<TaskRequest | null>(null);
   const taskRequestSerial = useRef(0);
   useEffect(() => setTaskRequest(null), [encryptedWorkspace.owner]);
@@ -241,8 +247,8 @@ export default function WorkspaceShell() {
     return { ...instrument, ...quote, realIndexPrice };
   });
   const markNavigation = useWorkspaceJourney({
-    view: activeView,
-    access: journeyAccess(encryptedWorkspace, ownerConfigStatus),
+    view: navigationView,
+    access: checkingAccess ? "checking" : journeyAccess(encryptedWorkspace, ownerConfigStatus),
     owner: encryptedWorkspace.owner,
     marketState: stocks.some((stock) => stock.realIndexPrice)
       ? "ready"
@@ -253,7 +259,7 @@ export default function WorkspaceShell() {
   const navigate = (view: WorkspaceView, intent: "page" | "handoff" = "page") => {
     if (privateNavigationDisabled && view !== "markets") return;
     markNavigation(intent === "page" ? view : null);
-    scrollPositions.current[activeView] = window.scrollY ?? 0;
+    scrollPositions.current[navigationView] = window.scrollY ?? 0;
     if (view !== "inbox") clearInboxResultLink();
     // All workspace views already live in this layout. A server transition can
     // reload an older client after deployment and destroy its in-memory keys.
@@ -482,20 +488,18 @@ export default function WorkspaceShell() {
         </a>
       )}
       <WorkspaceSidebar
-        activeView={activeView}
+        activeView={navigationView}
         privateNavigationDisabled={privateNavigationDisabled}
         onNavigate={navigate}
         workspace={encryptedWorkspace}
       />
       {!pickerOpen && activeView === "markets" && <WatchlistNotification watchlist={watchlist} />}
       <main className="workspace-content" id="workspace-content">
-        {blockedView &&
-          ownerCapabilities?.invitationRequired &&
-          !["loading", "verifying", "signing-in"].includes(authStatus) && (
-            <p role="status" className="workspace-invitation-notice">
-              {t("nav.invitationRequired")}
-            </p>
-          )}
+        {blockedView && (checkingAccess || ownerCapabilities?.invitationRequired) && (
+          <p role="status" className="workspace-invitation-notice">
+            {t(checkingAccess ? "account.checking" : "nav.invitationRequired")}
+          </p>
+        )}
         <div className="workspace-page" hidden={activeView !== "settings"}>
           {!privateNavigationDisabled && visited.current.has("settings") && (
             <SettingsPanel workspace={encryptedWorkspace} />

@@ -147,7 +147,12 @@ function hooks() {
   };
 }
 /** Compose current workspace navigation with its real watchlist and resource hooks. */
-function flow({ hash = "", search = "", owner = "A:1" } = {}) {
+function flow({
+  hash = "",
+  search = "",
+  owner = "A:1",
+  access = { ownerConfigStatus: "ready" },
+} = {}) {
   const pageHooks = hooks(),
     libraryHooks = hooks();
   const windows = eventTarget(),
@@ -254,6 +259,7 @@ function flow({ hash = "", search = "", owner = "A:1" } = {}) {
     AgentsPanel = () => null,
     Sidebar = () => null,
     WatchlistAction = () => null;
+  const marketReads = [];
   const noData = () => ({ data: null, loading: false, hasSettled: true, error: "" });
   const Dashboard = compile(
     "../components/WorkspaceShell.tsx",
@@ -265,7 +271,7 @@ function flow({ hash = "", search = "", owner = "A:1" } = {}) {
           throw new Error("Workspace routes must not request a new server build");
         },
       },
-      "./AuthProvider": { useAuth: () => ({ ownerConfigStatus: "ready" }) },
+      "./AuthProvider": { useAuth: () => access },
       "./useWorkspaceJourney": { useWorkspaceJourney: () => () => {} },
       "@/lib/workspace-routes": compile("../lib/workspace-routes.ts"),
       "react/jsx-runtime": { jsx, jsxs: jsx },
@@ -290,7 +296,12 @@ function flow({ hash = "", search = "", owner = "A:1" } = {}) {
       "@/components/InstrumentMetrics": { InstrumentMetrics: () => null },
       "@/components/FxRatesPanel": { __esModule: true, default: () => null },
       "@/components/WorkspaceSidebar": { WorkspaceSidebar: Sidebar },
-      "@/components/useCachedMarketResource": { useCachedMarketResource: noData },
+      "@/components/useCachedMarketResource": {
+        useCachedMarketResource(url) {
+          if (url) marketReads.push(url);
+          return noData();
+        },
+      },
       "@/components/useMarketResource": { useMarketResource: noData },
       "@/components/PersonalWatchlist": { PersonalWatchlist: () => null, WatchlistAction },
       "@/components/useWatchlist": { useWatchlist },
@@ -314,6 +325,7 @@ function flow({ hash = "", search = "", owner = "A:1" } = {}) {
     shared,
     calls,
     location,
+    marketReads,
     links,
     render,
     async ready() {
@@ -357,6 +369,43 @@ function flow({ hash = "", search = "", owner = "A:1" } = {}) {
     },
   };
 }
+
+test("reloading a private route waits for access without showing or fetching Markets", () => {
+  for (const path of ["/settings", "/agents", "/resources", "/tasks", "/inbox"]) {
+    const access = {
+      ownerConfigStatus: "loading",
+      privateWorkspaceAvailable: false,
+      status: "loading",
+    };
+    const h = flow({ access, owner: null });
+    h.location.pathname = path;
+    const market = (page) => find(page, (n) => n.props?.className === "market-view");
+    const mountedPanel = (page) =>
+      find(
+        page,
+        (n) => n.props?.className === "workspace-page" && !n.props.hidden && n.props.children,
+      );
+    for (const [ownerConfigStatus, status] of [
+      ["loading", "loading"],
+      ["loading", "anonymous"],
+      ["ready", "verifying"],
+    ]) {
+      Object.assign(access, { ownerConfigStatus, status });
+      const { page, active } = h.render();
+      assert.equal(active, path === "/inbox" ? "tasks" : path.slice(1));
+      assert.equal(market(page).props.hidden, true);
+      assert.equal(mountedPanel(page), null);
+      assert.ok(find(page, (n) => n.props?.children === "account.checking"));
+    }
+    Object.assign(access, { privateWorkspaceAvailable: true, status: "authenticated" });
+    const { page } = h.render();
+    assert.ok(mountedPanel(page));
+    assert.equal(market(page).props.hidden, true);
+    assert.deepEqual(h.marketReads, []);
+    assert.equal(h.location.pathname, path);
+    h.close();
+  }
+});
 
 test("public result links are closed canonical fragments and OAuth handoff retains priority", async () => {
   const h = flow({ owner: null });

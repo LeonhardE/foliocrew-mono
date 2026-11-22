@@ -218,6 +218,7 @@ export function WorkspaceSidebar({
                     key={view}
                     role="link"
                     aria-disabled="true"
+                    aria-current={activeView === view ? "page" : undefined}
                     aria-label={label}
                     title={compact ? label : undefined}
                     className={styles.navItem}
