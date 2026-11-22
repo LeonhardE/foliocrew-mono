@@ -30,6 +30,7 @@ import { useWatchlistQuotes } from "@/components/useWatchlistQuotes";
 import { WatchlistNotification } from "@/components/WatchlistNotification";
 import { clearInboxResultLink, isAgentConsentHandoff, readInboxResultLink } from "@/lib/inbox-link";
 import {
+  candleRangeChangePercent,
   CHART_RANGES,
   DEFAULT_INSTRUMENTS,
   formatChange,
@@ -237,6 +238,8 @@ export default function WorkspaceShell() {
     overviewPending: overview.loading || overview.refreshing,
   });
   const selectedQuote = watchlistQuotes.quotes[selected.symbol];
+  const chartChangePercent =
+    range === "1d" ? selectedQuote?.changePercent : candleRangeChangePercent(marketData?.candles);
   const stocks = DEFAULT_INSTRUMENTS.map((instrument) => {
     const quote = watchlistQuotes.quotes[instrument.symbol];
     const realIndexPrice =
@@ -648,8 +651,8 @@ export default function WorkspaceShell() {
               <div className="price-summary" aria-live="polite">
                 <div className="price-line">
                   <strong>{formatPrice(selectedQuote?.latestClose, selected, locale)}</strong>
-                  <span className={changeClass(selectedQuote?.changePercent)}>
-                    {formatChange(selectedQuote?.changePercent, locale)}
+                  <span className={changeClass(chartChangePercent)}>
+                    {formatChange(chartChangePercent, locale)}
                   </span>
                 </div>
                 <span className="price-caption">
@@ -657,7 +660,11 @@ export default function WorkspaceShell() {
                     ? `${selectedQuote.dataDate ?? "—"} · ${selected.instrumentType === "index" ? t("chart.indexPoints") : selected.currency}`
                     : t("chart.latest")}
                   <span>{t("chart.dailySnapshot")}</span>
-                  <span>{t("chart.previousClose")}</span>
+                  <span>
+                    {range === "1d"
+                      ? t("chart.previousClose")
+                      : t("chart.rangeChange", { range: range.toUpperCase() })}
+                  </span>
                   {selectedQuote?.isStale && <span>{t("market.cached")}</span>}
                 </span>
               </div>

@@ -555,36 +555,60 @@ test("a searched stock remains readable when the separate overview has failed", 
   assert.doesNotMatch(html, /Mock data|Simulated prices|NaN/);
 });
 
-test("all five time ranges request their own candles and retain an accurate interval label", () => {
-  for (const range of ["1d", "1w", "1m", "3m", "1y"]) {
+const priceSummary = (html) =>
+  html.split('class="price-summary"')[1].split('class="chart-toolbar"')[0];
+
+test("chart range changes follow its candles while the index strip and market radar stay daily", () => {
+  const daily = dailySnapshot("SPX", { instrumentType: "index", changePercent: -1.23 });
+  for (const [range, firstOpen, expectedChange] of [
+    ["1d", 100, "-1.23%"],
+    ["1w", 100, "+20.00%"],
+    ["1m", 150, "-20.00%"],
+    ["3m", 120, "+0.00%"],
+    ["1y", 80, "+50.00%"],
+  ]) {
     const requests = [];
+    const interval = range === "1d" ? "5m" : range === "1w" ? "30m" : "1d";
     const html = renderDashboard({
+      selectedSymbol: daily.symbol,
       range,
       requests,
-      overview: { data: null, loading: false, error: "" },
+      overview: { data: { stocks: [daily] }, loading: false, error: "" },
       chart: {
         data: {
-          ...dailySnapshot(),
-          symbol: "AAPL",
-          quote: dailySnapshot("AAPL", { changePercent: -1.23 }),
+          ...daily,
+          quote: daily,
           range,
-          interval: range === "1d" ? "5m" : range === "1w" ? "30m" : "1d",
-          candles: [{ time: "2026-10-20", open: 100, high: 106, low: 99, close: 105 }],
-          changePercent: -1.23,
+          interval,
+          candles: [
+            { time: "2026-10-19", open: firstOpen, high: 160, low: 70, close: 110 },
+            { time: "2026-10-20", open: 110, high: 122, low: 108, close: 120 },
+          ],
         },
         loading: false,
         error: "",
       },
     });
-    assert.equal(requests[1], `/api/stocks/AAPL/candles?range=${range}`);
-    assert.match(html, /data-chart="rendered"/);
-    assert.match(html, /-1\.23%/);
-    assert.match(
-      html,
-      new RegExp(
+    assert.equal(requests[1], `/api/stocks/SPX/candles?range=${range}`);
+    const header = priceSummary(html);
+    assert.ok(header.includes(`>${expectedChange}</span>`));
+    assert.match(header, />105.00<\/strong>/);
+    assert.ok(
+      header.includes(
         range === "1d"
+          ? english.chart.previousClose
+          : `${range.toUpperCase()} change from first open to last close`,
+      ),
+    );
+    const indexStrip = html.split('class="index-strip"')[1].split("</section>")[0];
+    assert.match(indexStrip, />-1\.23%<\/span>/);
+    assert.match(html, /<small class="negative">-1\.23%<\/small>/);
+    assert.match(html, /data-chart="rendered"/);
+    assert.ok(
+      html.includes(
+        interval === "5m"
           ? "5-minute candles"
-          : range === "1w"
+          : interval === "30m"
             ? "30-minute candles"
             : "Daily candles",
       ),
@@ -592,18 +616,42 @@ test("all five time ranges request their own candles and retain an accurate inte
   }
 });
 
-test("an old API response cannot masquerade as a different time range", () => {
-  const html = renderDashboard({
-    range: "1y",
-    overview: { data: null, loading: false, error: "" },
-    chart: {
-      data: { symbol: "AAPL", range: "1m", candles: [{ time: "2026-10-20", close: 999 }] },
-      loading: false,
-      error: "",
-    },
-  });
-  assert.doesNotMatch(html, /data-chart="rendered"|999/);
-  assert.match(html, /This time range is not available yet/);
+test("a longer range without matching usable candles never displays the daily change", () => {
+  const daily = dailySnapshot();
+  for (const history of [
+    null,
+    { symbol: "NFLX", range: "1y", candles: [{ open: 100, close: 120 }] },
+    { symbol: "AAPL", range: "1m", candles: [{ open: 100, close: 120 }] },
+    { symbol: "AAPL", range: "1y", candles: [] },
+  ]) {
+    const html = renderDashboard({
+      range: "1y",
+      overview: { data: { stocks: [daily] }, loading: false },
+      chart: { data: history, loading: history === null, error: "" },
+    });
+    const header = priceSummary(html);
+    assert.match(header, />—<\/span>/);
+    assert.doesNotMatch(header, /[+-]\d+\.\d+%/);
+    assert.doesNotMatch(html, /data-chart="rendered"/);
+    if (history?.range === "1m") assert.match(html, /This time range is not available yet/);
+  }
+});
+
+test("a single candle can show its range change and an unusable endpoint has no return", () => {
+  const { candleRangeChangePercent } = compile("../lib/market-data.ts", {});
+  assert.equal(candleRangeChangePercent([{ open: 100, close: 125 }]), 25);
+  for (const price of [0, null, undefined, NaN, Infinity, -40])
+    for (const candles of [
+      [
+        { open: price, close: 100 },
+        { open: 100, close: 110 },
+      ],
+      [
+        { open: 100, close: 110 },
+        { open: 110, close: price },
+      ],
+    ])
+      assert.equal(candleRangeChangePercent(candles), null);
 });
 
 test("a late time-range response cannot replace a newly selected range", async () => {

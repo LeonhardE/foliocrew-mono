@@ -112,6 +112,16 @@ export function formatPrice(
   }).format(value);
 }
 
+export function candleRangeChangePercent(candles: Candle[] | undefined): number | null {
+  if (!candles?.length) return null;
+  const open = candles[0]?.open;
+  const close = candles.at(-1)?.close;
+  if (!Number.isFinite(open) || open <= 0 || close == null || !Number.isFinite(close) || close <= 0)
+    return null;
+  const percent = ((close - open) / open) * 100;
+  return Number.isFinite(percent) ? percent : null;
+}
+
 export function formatChange(value: number | null | undefined, locale = "en") {
   if (value == null || !Number.isFinite(value)) return "—";
   return new Intl.NumberFormat(locale, {
