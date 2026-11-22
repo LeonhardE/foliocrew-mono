@@ -35,13 +35,32 @@ function checkOwnerLoop(useFacts) {
       `
       import {readFileSync} from 'node:fs';
       import {PersistentOwner} from './encrypted-persistent.mjs';
+      import {Registry,bytes,digest,parsed} from ${JSON.stringify(
+        pathToFileURL(path.join(repo, "packages/encrypted-workspace/dist/core.mjs")).href,
+      )};
       const v=JSON.parse(readFileSync(process.argv[2],'utf8'));
       const signer=jwk=>crypto.subtle.importKey('jwk',jwk,{name:'ECDSA',namedCurve:'P-256'},false,['sign']);
       const reader=jwk=>crypto.subtle.importKey('jwk',jwk,{name:'ECDH',namedCurve:'P-256'},false,['deriveBits']);
-      const owner=new PersistentOwner({actor:v.actor,ownerSubject:v.owner,vault:v.vault,
+      const context={actor:v.actor,ownerSubject:v.owner,vault:v.vault,
         root:await signer(v.rootPrivate),deviceSigningKey:await signer(v.devicePrivate),
-        deviceSigningKeyId:v.deviceKid,now:()=>v.now,reader:async()=>reader(v.recoveryPrivate)});
-      try{const result=v.op==='publicationReceipt'?await owner.publicationReceipt(v.args.packet,v.args.receipt):await owner[v.op](v.args);process.stdout.write(JSON.stringify(result))}
+        deviceSigningKeyId:v.deviceKid,now:()=>v.now,reader:async()=>reader(v.recoveryPrivate)};
+      if (v.op==='transferredPublicationReceipt') {
+        const history=v.vault.registryHistory;
+        const sequence=parsed(bytes(history.at(-1).checkpoint.payload),true).registrySequence;
+        if (sequence<=1) throw Error('Expected a nonzero registry offset');
+        context.vault={...v.vault,registryHistory:history.slice(-1),
+          userAuthority:{registryStart:{registrySequence:sequence}}};
+        context.userRegistry=async (successors,at)=>{
+          if (successors.length) throw Error('Unexpected registry successors');
+          const checkpoint=parsed(bytes(history.at(-1).checkpoint.payload),true);
+          return new Registry({rootJwk:v.vault.rootJwk,rootKeyId:v.vault.rootKeyId,
+            ownerSubject:v.owner,vaultId:v.vault.vaultId,rootEpoch:1,registrySequence:sequence,
+            checkpointDigest:await digest(checkpoint)}).load(history,at);
+        };
+      }
+      const owner=new PersistentOwner(context);
+      try{const result=['publicationReceipt','transferredPublicationReceipt'].includes(v.op)
+        ?await owner.publicationReceipt(v.args.packet,v.args.receipt):await owner[v.op](v.args);process.stdout.write(JSON.stringify(result))}
       catch(error){process.stderr.write('Owner rejected: '+(error.code??'rejected'));process.exitCode=1;}
     `,
     );
