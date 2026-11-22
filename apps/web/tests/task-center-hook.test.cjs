@@ -353,7 +353,7 @@ function mappedOverview() {
   };
   return {
     receipt,
-    acquire: async () => receipt,
+    acquireWithFallback: async () => receipt,
     invalidate() {
       assert.fail("passive detail reads discarded the shared overview");
     },

@@ -557,24 +557,33 @@ export function useTaskCenter(
       trash: [],
       trashCursor: null,
     });
-    if (!scope) return;
-    let stopped = false;
-    void (
-      overview
-        ? overview.acquire().then((r) => r.data.capabilities)
-        : api("/api/v3/task-center/capabilities")
-    )
-      .then((v) => {
-        if (!stopped) update({ enabled: v.enabled === true, capabilityState: "ready" }, scope);
-      })
-      .catch(() => {
-        if (!stopped) update({ capabilityState: "error" }, scope);
-      });
     return () => {
-      stopped = true;
       for (const c of controllers.current) c.abort();
     };
   }, [scope, api, update, overview]);
+  const capabilitiesReady = state.scope === scope && state.capabilityState === "ready";
+  useEffect(() => {
+    if (!scope || !active || capabilitiesReady) return;
+    const control = new AbortController();
+    const loadCapabilities = async () => {
+      const snapshot = await overview?.acquireWithFallback(control.signal);
+      if (
+        control.signal.aborted ||
+        live.current.scope !== scope ||
+        (overview && (!live.current.active || document.visibilityState === "hidden"))
+      )
+        return;
+      const v =
+        snapshot?.data.capabilities ??
+        (await api("/api/v3/task-center/capabilities", { signal: control.signal }));
+      if (!control.signal.aborted)
+        update({ enabled: v.enabled === true, capabilityState: "ready" }, scope);
+    };
+    void loadCapabilities().catch(() => {
+      if (!control.signal.aborted) update({ capabilityState: "error" }, scope);
+    });
+    return () => control.abort();
+  }, [scope, active, capabilitiesReady, api, update, overview]);
   const overviewReceipt = overview?.receipt;
   useEffect(() => {
     if (overviewReceipt && scope)

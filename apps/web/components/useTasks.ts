@@ -518,7 +518,7 @@ export function useTasks(
             }
             const snapshot =
               region === "tasks" && !force && overviewEnabled
-                ? await overview.current!.acquire(context.signal)
+                ? await overview.current!.acquireWithFallback(context.signal)
                 : null;
             const body =
               snapshot?.data.tasks ??
