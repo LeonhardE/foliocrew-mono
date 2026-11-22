@@ -276,6 +276,11 @@ class PersistentExecutionService(PersistentPublicationService):
                 "consentOperations": [] if policy is None else policy["operations"],
                 "registrySequence": registry.registry_sequence,
             }
+            if user_scope is not None:
+                result["registryStartProof"] = {
+                    "start": v["registryStart"],
+                    "signedTransition": v["signedTransition"],
+                }
             from .persistent_agents import stored_identity
 
             row = stored_identity(unit, owner, vault, connection)
@@ -577,7 +582,9 @@ class PersistentExecutionService(PersistentPublicationService):
             }
             from .task_center import bind_prepared_run
 
-            binding = bind_prepared_run(unit, owner, vault, connection, manifest)
+            binding = bind_prepared_run(
+                unit, owner, vault, connection, manifest, vault_row=v, registry=registry
+            )
             if binding is not None:
                 row["taskCenter"] = binding
             self.quota(unit, owner, connection)

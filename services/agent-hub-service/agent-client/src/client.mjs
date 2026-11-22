@@ -264,26 +264,32 @@ export class AgentClient {
     )
       deny("reauthorization_required");
     const anchor = this.#profile.pins ?? this.#credential.anchor;
+    const start = response.registryStartProof;
     const registry = await new Registry({
       ...anchor,
       rootJwk: response.rootJwk,
       ownerSubject: this.#actor.ownerSubject,
       vaultId: this.#actor.vaultId,
       rootEpoch: 1,
-    }).load(response.registryHistory, this.now());
+    }).load(response.registryHistory, this.now(), start);
     await registry.binding(response.binding, this.#identity, this.#actor, this.now());
     if (!same(response.binding, this.#credential.binding)) deny("recipient_binding_mismatch");
     const approvalPayload = parsed(bytes(this.#credential.approval.payload), true);
+    const approvalLength =
+      approvalPayload.registrySequence - (start?.start.registrySequence ?? 1) + 1;
+    if (
+      !Number.isSafeInteger(approvalLength) ||
+      approvalLength < 1 ||
+      approvalLength > response.registryHistory.length
+    )
+      deny("registry_chain_mismatch");
     const approvedRegistry = await new Registry({
       ...this.#credential.anchor,
       rootJwk: this.#credential.rootJwk,
       ownerSubject: this.#actor.ownerSubject,
       vaultId: this.#actor.vaultId,
       rootEpoch: 1,
-    }).load(
-      response.registryHistory.slice(0, approvalPayload.registrySequence),
-      approvalPayload.issuedAt,
-    );
+    }).load(response.registryHistory.slice(0, approvalLength), approvalPayload.issuedAt, start);
     await approvedRegistry.binding(
       response.binding,
       this.#identity,

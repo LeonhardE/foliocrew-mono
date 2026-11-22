@@ -25,7 +25,6 @@ from .task_center import (
 )
 from .task_lifecycle import require_visible
 from .task_lifecycle_service import TaskLifecycleService
-from .vaults import _current
 
 MAX_PENDING = 16
 
@@ -72,9 +71,8 @@ def _active(progress, expires, now):
     return now < (progress.get("runExpiresAt") or expires)
 
 
-def _verified(unit, owner, vault, task, row, definition, now):
+def _verified(unit, owner, vault, task, row, definition, now, *, vault_row, registry):
     require_visible(unit, owner, vault, task)
-    v, registry = _current(unit, owner, now, vault)
     _, payload = _signed_parts(row["control"])
     if not now < payload["intent"]["expiresAt"]:
         raise ContractError("key_authorization_required")
@@ -88,18 +86,23 @@ def _verified(unit, owner, vault, task, row, definition, now):
     if not {"control_write", "task_grant"} <= set(cert["capabilities"]):
         raise ContractError("key_authorization_required")
     original = registry
-    if payload["registrySequence"] != registry.registry_sequence:
+    sequence = payload["registrySequence"]
+    if sequence != registry.registry_sequence:
         original = None
-        for bundle in v["registryHistory"][: payload["registrySequence"]]:
+        for bundle in vault_row["registryHistory"]:
             original = verify_registry(
                 bundle,
-                root_jwk=v["rootJwk"],
-                pinned_root_key_id=v["rootKeyId"],
+                root_jwk=vault_row["rootJwk"],
+                pinned_root_key_id=vault_row["rootKeyId"],
                 owner_subject=owner,
                 vault_id=vault,
                 now=row["createdAt"],
                 previous=original,
             )
+            if original.registry_sequence >= sequence:
+                break
+        if original is None or original.registry_sequence != sequence:
+            raise ContractError("registry_conflict")
     return verify_manual_intent(
         row["control"],
         registry=original,
@@ -112,14 +115,24 @@ def _verified(unit, owner, vault, task, row, definition, now):
     )
 
 
-def manual_for_run(unit, definition, assignment, prepared, manifest):
+def manual_for_run(unit, definition, assignment, prepared, manifest, *, vault_row, registry):
     owner, vault, task = (definition[k] for k in ("ownerSubject", "vaultId", "taskId"))
     request = prepared["request"]["manualIntentId"]
     row = _intent(unit, owner, vault, task, request)
     progress = row["progress"][assignment["assignmentId"]]
     if row["cancelled"] or progress["stage"] != "waiting" or progress["claimedAt"] is None:
         raise ContractError("version_conflict")
-    proof = _verified(unit, owner, vault, task, row, definition, manifest["createdAt"])
+    proof = _verified(
+        unit,
+        owner,
+        vault,
+        task,
+        row,
+        definition,
+        manifest["createdAt"],
+        vault_row=vault_row,
+        registry=registry,
+    )
     progress = {
         **progress,
         "stage": "running",
@@ -252,9 +265,10 @@ class ManualOwnerService(TaskLifecycleService):
         validate_schema("OperationIdentifier", operation)
         if not isinstance(fingerprint, str) or not re.fullmatch(r"[a-f0-9]{64}", fingerprint):
             raise ContractError("malformed_request")
+        user_scope = self.user_vaults.read(uid, vault)
 
         def write(unit):
-            owner, *_ = self._owner_task(unit, uid, vault, task)
+            owner, *_ = self._owner_task(unit, uid, vault, task, user_scope=user_scope)
             path = document_path("hub_center_operations", owner, vault, operation)
             command = unit.get(path)
             intent = unit.get(intent_path(owner, vault, task, operation))
@@ -296,9 +310,12 @@ class ManualOwnerService(TaskLifecycleService):
         if payload.get("stableOperationId") != operation:
             raise ContractError("recipient_binding_mismatch")
         fingerprint = signing_input_fingerprint(signed)
+        user_scope = self.user_vaults.read(uid, vault)
 
         def write(unit):
-            owner, _, registry, meta = self._owner_task(unit, uid, vault, task)
+            owner, _, registry, meta = self._owner_task(
+                unit, uid, vault, task, user_scope=user_scope
+            )
             command = unit.get(document_path("hub_center_operations", owner, vault, operation))
             if command is not None:
                 raise ContractError("idempotency_conflict")
@@ -325,7 +342,7 @@ class ManualOwnerService(TaskLifecycleService):
                 if record is None:
                     raise ContractError("not_found")
                 a = record["assignment"]
-                self.live(unit, uid, vault, a["credential"]["connectionId"])
+                self.live(unit, uid, vault, a["credential"]["connectionId"], user_scope=user_scope)
                 current_assignment(
                     unit,
                     owner,
@@ -398,8 +415,10 @@ class ManualOwnerService(TaskLifecycleService):
         return self.store.transact(write)
 
     def manual_state(self, uid, vault, task, request):
+        user_scope = self.user_vaults.read(uid, vault)
+
         def read(unit):
-            owner, *_ = self._owner_task(unit, uid, vault, task)
+            owner, *_ = self._owner_task(unit, uid, vault, task, user_scope=user_scope)
             require_visible(unit, owner, vault, task)
             row = _intent(unit, owner, vault, task, request)
             return {
@@ -410,8 +429,10 @@ class ManualOwnerService(TaskLifecycleService):
         return self.store.transact(read)
 
     def manual_list(self, uid, vault, task):
+        user_scope = self.user_vaults.read(uid, vault)
+
         def read(unit):
-            owner, *_ = self._owner_task(unit, uid, vault, task)
+            owner, *_ = self._owner_task(unit, uid, vault, task, user_scope=user_scope)
             require_visible(unit, owner, vault, task)
             return {
                 "contractVersion": CONTRACT_VERSION,
@@ -431,8 +452,10 @@ class ManualOwnerService(TaskLifecycleService):
         return self.store.transact(read)
 
     def cancel_manual(self, uid, vault, task, request):
+        user_scope = self.user_vaults.read(uid, vault)
+
         def write(unit):
-            owner, *_ = self._owner_task(unit, uid, vault, task)
+            owner, *_ = self._owner_task(unit, uid, vault, task, user_scope=user_scope)
             require_visible(unit, owner, vault, task)
             row = _intent(unit, owner, vault, task, request)
             if row["cancelled"]:
@@ -522,7 +545,7 @@ class ManualAgentService(TaskCenterAgentService):
         user_scope = self._request_user_scope(owner, vault, connection)
 
         def write(unit):
-            *_, identity = self.authenticate(
+            _, vault_row, registry, _, identity = self.authenticate(
                 unit, owner, vault, connection, proof, path, request, user_scope=user_scope
             )
             task = request["taskId"]
@@ -551,7 +574,17 @@ class ManualAgentService(TaskCenterAgentService):
                 if old["request"] != request:
                     raise ContractError("idempotency_conflict")
                 if old["runId"] is None:
-                    _verified(unit, owner, vault, task, row, d, self.now())
+                    _verified(
+                        unit,
+                        owner,
+                        vault,
+                        task,
+                        row,
+                        d,
+                        self.now(),
+                        vault_row=vault_row,
+                        registry=registry,
+                    )
                 return {
                     "triggerId": old["triggerId"],
                     "request": old["request"],
@@ -559,7 +592,17 @@ class ManualAgentService(TaskCenterAgentService):
                     "manualControl": row["control"],
                     "runId": old["runId"],
                 }
-            _verified(unit, owner, vault, task, row, d, self.now())
+            _verified(
+                unit,
+                owner,
+                vault,
+                task,
+                row,
+                d,
+                self.now(),
+                vault_row=vault_row,
+                registry=registry,
+            )
             # FIFO per actor, independent across actors and from the scheduled domain.
             for previous in _queue(unit, owner, vault, task)["ids"]:
                 if previous == rid:

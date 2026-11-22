@@ -35,7 +35,6 @@ from .persistent_publications import (
 from .provider_connections import stored_slot
 from .store import StoreUnavailable, document_path
 from .tasks import _head, _index
-from .vaults import _current
 
 VERSIONS = ("taskVersion", "executionEpoch", "ruleVersion", "lifecycleEpoch")
 
@@ -130,7 +129,7 @@ def current_assignment(unit, owner, vault, task, connection, fingerprint):
     return row["definition"], a, slot["slot"]
 
 
-def bind_prepared_run(unit, owner, vault, connection, manifest):
+def bind_prepared_run(unit, owner, vault, connection, manifest, *, vault_row, registry):
     task, trigger = manifest["taskId"], manifest["triggerId"]
     if not enrolled(unit, owner, vault, task):
         if trigger.startswith("tc_"):
@@ -162,7 +161,7 @@ def bind_prepared_run(unit, owner, vault, connection, manifest):
     if kind == "manual":
         from .manual_intents import manual_for_run
 
-        manual = manual_for_run(unit, d, a, p, manifest)
+        manual = manual_for_run(unit, d, a, p, manifest, vault_row=vault_row, registry=registry)
     binding = bind_task_run(
         d,
         a,
@@ -233,11 +232,11 @@ def task_metadata(unit, owner, vault, task):
 
 
 class TaskCenterOwnerService(PersistentPublicationService):
-    def _owner_task(self, unit, uid, vault, task):
+    def _owner_task(self, unit, uid, vault, task, *, user_scope):
         for value in (vault, task):
             validate_schema("Identifier", value)
         owner = owner_key(uid)
-        v, registry = _current(unit, owner, self.now(), vault)
+        v, registry = self._vault_registry(unit, owner, vault, user_scope)
         return owner, v, registry, task_metadata(unit, owner, vault, task)
 
     def _state(self, unit, owner, vault, task, meta):
@@ -273,9 +272,10 @@ class TaskCenterOwnerService(PersistentPublicationService):
     def state(self, uid, vault, task):
         for value in (vault, task):
             validate_schema("Identifier", value)
+        user_scope = self.user_vaults.read(uid, vault)
 
         def read(unit):
-            owner, _, _, meta = self._owner_task(unit, uid, vault, task)
+            owner, _, _, meta = self._owner_task(unit, uid, vault, task, user_scope=user_scope)
             return self._state(unit, owner, vault, task, meta)
 
         return self.store.transact(read)
@@ -284,9 +284,10 @@ class TaskCenterOwnerService(PersistentPublicationService):
         for value in (vault, task):
             validate_schema("Identifier", value)
         validate_schema("OperationIdentifier", operation)
+        user_scope = self.user_vaults.read(uid, vault)
 
         def read(unit):
-            owner, *_ = self._owner_task(unit, uid, vault, task)
+            owner, *_ = self._owner_task(unit, uid, vault, task, user_scope=user_scope)
             old = unit.get(document_path("hub_center_operations", owner, vault, operation))
             if old is None or old.get("cancelled") or old["taskId"] != task:
                 raise ContractError("not_found")
@@ -313,9 +314,12 @@ class TaskCenterOwnerService(PersistentPublicationService):
         if payload.get("stableOperationId") != operation:
             raise ContractError("recipient_binding_mismatch")
         fp = signing_input_fingerprint(signed)
+        user_scope = self.user_vaults.read(uid, vault)
 
         def write(unit):
-            owner, _, registry, meta = self._owner_task(unit, uid, vault, task)
+            owner, _, registry, meta = self._owner_task(
+                unit, uid, vault, task, user_scope=user_scope
+            )
             op = document_path("hub_center_operations", owner, vault, operation)
             old = unit.get(op)
             if old is not None:
@@ -423,7 +427,9 @@ class TaskCenterOwnerService(PersistentPublicationService):
                         raise ContractError("key_authorization_required")
                     slot = slotrow["slot"]
                     connection = slot["currentCredential"]["connectionId"]
-                    _, _, _, _, identity = self.live(unit, uid, vault, connection)
+                    _, _, _, _, identity = self.live(
+                        unit, uid, vault, connection, user_scope=user_scope
+                    )
                 assigned = plan_assignment(
                     signed,
                     **args,
@@ -466,9 +472,10 @@ class TaskCenterOwnerService(PersistentPublicationService):
             raise ContractError("malformed_request")
         for i in ids:
             validate_schema("Identifier", i)
+        user_scope = self.user_vaults.read(uid, vault)
 
         def read(unit):
-            owner, *_ = self._owner_task(unit, uid, vault, task)
+            owner, *_ = self._owner_task(unit, uid, vault, task, user_scope=user_scope)
             row = definition_row(unit, owner, vault, task)
             if row is None:
                 raise ContractError("not_found")
