@@ -59,6 +59,54 @@ class TaskOverviewTests(unittest.TestCase):
     def query(self, **changes):
         return self.service.overview(UID, self.vault, {**self.payload, **changes})
 
+    def test_timing_logs_cover_success_and_bound_the_failure_details(self):
+        logger = "uvicorn.error.hub_task_overview"
+        with self.assertLogs(logger, level="INFO") as success:
+            self.assertEqual(self.query()["profile"], PROFILE)
+        self.assertEqual(len(success.output), 1)
+        self.assertIn("outcome=ok failed_stage=none attempts=1", success.output[0])
+        for stage in (
+            "authority",
+            "transaction",
+            "index_reads",
+            "registry",
+            "row_reads",
+            "compose",
+            "total",
+        ):
+            self.assertRegex(success.output[0], rf" {stage}_ms=\d+\.\d{{3}}")
+
+        with (
+            self.assertLogs(logger, level="INFO") as authority,
+            patch.object(
+                self.service.user_vaults, "read", side_effect=ContractError("source_unavailable")
+            ),
+            self.assertRaisesRegex(ContractError, "source_unavailable"),
+        ):
+            self.query()
+        self.assertIn(
+            "outcome=source_unavailable failed_stage=authority attempts=0", authority.output[0]
+        )
+
+        store_failure = StoreUnavailable()
+        store_failure.add_note("synthetic private detail")
+        with (
+            self.assertLogs(logger, level="INFO") as storage,
+            patch.object(
+                task_overview._OverviewSnapshot,
+                "fetch",
+                side_effect=store_failure,
+            ),
+            self.assertRaises(StoreUnavailable),
+        ):
+            self.query()
+        self.assertIn(
+            "outcome=store_unavailable failed_stage=index_reads attempts=1", storage.output[0]
+        )
+        for line in success.output + authority.output + storage.output:
+            for value in (UID, self.owner, self.vault, "synthetic private detail"):
+                self.assertNotIn(value, line)
+
     def seed_reports(self, persistent_count, foreground_count):
         self.persistent_ids, self.foreground_ids = [], []
         for n in range(persistent_count):

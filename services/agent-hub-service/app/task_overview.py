@@ -1,6 +1,7 @@
 """One bounded Owner task display snapshot, never a generic batch proxy."""
 
 import copy
+import logging
 import re
 import secrets
 import time
@@ -32,6 +33,7 @@ from .vaults import _current, identifier
 PROFILE = "folioview.owner-task-overview.v1"
 MAX_BODY_BYTES = 16_384
 MAX_READ_BYTES = 8 * 1024 * 1024
+_TIMING_LOGGER = logging.getLogger("uvicorn.error.hub_task_overview")
 
 
 class _OverviewSnapshot:
@@ -150,9 +152,24 @@ class TaskOverviewService:
         owner = owner_key(uid)
         issued_token = secrets.token_urlsafe(24)
         capabilities = owner_capabilities(uid)
-        current = self.user_vaults.read(uid, vault_id)
+        phases = dict.fromkeys(
+            ("authority", "transaction", "index_reads", "registry", "row_reads", "compose"), 0.0
+        )
+        started = stage_started = time.perf_counter()
+        stage = "authority"
+        attempts = 0
+
+        def advance(next_stage):
+            nonlocal stage, stage_started
+            finished = time.perf_counter()
+            phases[stage] += finished - stage_started
+            stage, stage_started = next_stage, finished
+            return finished
 
         def read(unit):
+            nonlocal attempts
+            attempts += 1
+            advance("index_reads")
             tasks = TaskService(self.store, clock=self.clock)
             now = tasks.now()
             reports = PersistentOwnerResultService(self.store, clock=lambda: now)
@@ -178,6 +195,7 @@ class TaskOverviewService:
                 and root.get("vaultId") == vault_id
             ):
                 view.fetch([document_path("hub_vault_lifecycle", owner, vault_id)])
+            advance("registry")
             if current is None:
                 if view.get(fence_path) is not None:
                     raise ContractError("source_unavailable")
@@ -195,6 +213,7 @@ class TaskOverviewService:
                     },
                     "priorRegistryHistory": original["registryHistory"],
                 }
+            advance("row_reads")
             task_page = tasks._list(
                 view, owner, vault, now=now, limit=32, cursor=None, issued_token=issued_token
             )
@@ -247,6 +266,7 @@ class TaskOverviewService:
                         )
                     )
             view.fetch(final_paths)
+            advance("compose")
             persistent = reports._list(view, owner, vault_id, limit=20, selected=None)
             result = {
                 "contractVersion": CONTRACT_VERSION,
@@ -267,10 +287,36 @@ class TaskOverviewService:
                     if error.code != "payload_too_large":
                         raise
                     result["packets"] = None
+            advance("transaction")
             view.flush()
             return result
 
-        return self.store.transact(read)
+        outcome = "unexpected"
+        try:
+            current = self.user_vaults.read(uid, vault_id)
+            advance("transaction")
+            result = self.store.transact(read)
+            outcome = "ok"
+            return result
+        except ContractError as error:
+            outcome = error.code
+            raise
+        except StoreUnavailable:
+            outcome = "store_unavailable"
+            raise
+        finally:
+            failed_stage = "none" if outcome == "ok" else stage
+            total = advance("done") - started
+            _TIMING_LOGGER.info(
+                "hub_task_overview outcome=%s failed_stage=%s attempts=%d authority_ms=%.3f "
+                "transaction_ms=%.3f index_reads_ms=%.3f registry_ms=%.3f row_reads_ms=%.3f "
+                "compose_ms=%.3f total_ms=%.3f",
+                outcome,
+                failed_stage,
+                attempts,
+                *(duration * 1000 for duration in phases.values()),
+                total * 1000,
+            )
 
 
 def get_overview():
