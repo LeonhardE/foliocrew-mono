@@ -11,6 +11,7 @@ Root-signed Owner-only start.
 
 - Verify the transition, first checkpoint, and continuity against the pinned Root, start, and head.
 - Keep the original sequence-one verification for callers without transfer proof.
+- Initialize the report parser's final typed-array slots with a fixed offset.
 
 ## Validation
 

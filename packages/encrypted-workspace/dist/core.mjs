@@ -27357,7 +27357,7 @@ function us(e) {
     i = new Uint32Array(t + 1),
     r = new Uint32Array(t + 1),
     f = new Uint32Array(t + 1);
-  for (let m of [p, u, c, l, i, r]) m[t] = t;
+  for (let m of [p, u, c, l, i, r]) m.fill(t, -1);
   for (let m = t - 1; m >= 0; m--) {
     let a = e[m],
       s = /\s/.test(a);
