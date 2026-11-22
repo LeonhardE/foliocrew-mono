@@ -316,7 +316,7 @@ test("legacy task settings wait for the selected assignment and retain it when d
   }
 });
 
-test("resource handoffs wait for a confirmed catalogue and keep read failure retry visible before starting the task", () => {
+test("resource handoffs wait for the catalogue and let owners review task-specific resource rules", () => {
   const { hooks, jsx, all } = require("./resource-ui-harness.cjs"),
     h = hooks();
   let started = 0,
@@ -339,6 +339,9 @@ test("resource handoffs wait for a confirmed catalogue and keep read failure ret
       started++;
       model.form = form;
     },
+    setForm(form) {
+      model.form = form;
+    },
     reloadCatalogue() {},
   };
   const request = { owner: "owner_A", nonce: 1, binding: { ref: { kind: "watchlist" } } };
@@ -358,7 +361,16 @@ test("resource handoffs wait for a confirmed catalogue and keep read failure ret
       react: h.react,
       "react/jsx-runtime": { jsx, jsxs: jsx },
       "next-intl": { useLocale: () => "en", useTranslations: () => (v) => v },
-      "@/lib/task-forms": { defaultTask: () => ({ outputSpec: {} }) },
+      "@/lib/task-forms": {
+        defaultTask: () => ({
+          outputSpec: {},
+          inputPolicy: {
+            allowPartial: false,
+            allowUnknownAsOf: false,
+            maxFetchedAgeSeconds: 86400,
+          },
+        }),
+      },
       "@/lib/task-center-schedule": { nextCenterOccurrence: () => null },
       "@/lib/task-types": { bindingKey: JSON.stringify },
       "./ReportDialog": { ReportDialog: () => null },
@@ -390,6 +402,32 @@ test("resource handoffs wait for a confirmed catalogue and keep read failure ret
   draw();
   assert.equal(started, 1);
   assert.equal(consumed, 1);
+  model.setForm({ ...model.form, name: "Synthetic task", goal: "Use only the test resource" });
+  const next = (view) => all(view, (n) => n.type === "button" && n.props.children === "next")[0];
+  next(draw()).props.onClick();
+  const ruleInput = (label) => {
+    const row = all(draw(), (n) => n.type === "label" && n.props.children.includes?.(label))[0];
+    assert.ok(row, label);
+    return all(row, (n) => n.type === "input")[0];
+  };
+  assert.equal(ruleInput("unknownAsOf").props.checked, false);
+  assert.equal(ruleInput("partial").props.checked, false);
+  assert.equal(ruleInput("maxAge").props.value, 1440);
+  ruleInput("unknownAsOf").props.onChange({ target: { checked: true } });
+  ruleInput("partial").props.onChange({ target: { checked: true } });
+  ruleInput("maxAge").props.onChange({ target: { value: "4320" } });
+  assert.deepEqual(
+    { ...model.form.inputPolicy },
+    {
+      allowPartial: true,
+      allowUnknownAsOf: true,
+      maxFetchedAgeSeconds: 259200,
+    },
+  );
+  next(draw()).props.onClick();
+  const review = draw();
+  for (const label of ["unknownAsOf", "partial", "maxAge"])
+    assert.ok(all(review, (n) => n.type === "div" && n.props.children.includes?.(label)).length);
   h.close();
 });
 

@@ -66,6 +66,7 @@ export function TaskCenterView({
   onEditingChange?: (editing: boolean) => void;
 }) {
   const t = useTranslations("taskCenter"),
+    tTask = useTranslations("tasks"),
     locale = useLocale();
   const [choosingRun, setChoosingRun] = useState(false),
     [runAgents, setRunAgents] = useState<string[]>([]);
@@ -819,6 +820,64 @@ export function TaskCenterView({
                       })}
                     </fieldset>
                     <fieldset>
+                      <legend>{tTask("inputPolicy")}</legend>
+                      <label className={styles.check}>
+                        <input
+                          type="checkbox"
+                          checked={form.inputPolicy.allowPartial}
+                          onChange={(e) =>
+                            model.setForm({
+                              ...form,
+                              inputPolicy: {
+                                ...form.inputPolicy,
+                                allowPartial: e.target.checked,
+                              },
+                            })
+                          }
+                        />
+                        {tTask("partial")}
+                      </label>
+                      <label className={styles.check}>
+                        <input
+                          type="checkbox"
+                          checked={form.inputPolicy.allowUnknownAsOf}
+                          onChange={(e) =>
+                            model.setForm({
+                              ...form,
+                              inputPolicy: {
+                                ...form.inputPolicy,
+                                allowUnknownAsOf: e.target.checked,
+                              },
+                            })
+                          }
+                        />
+                        {tTask("unknownAsOf")}
+                      </label>
+                      <label>
+                        {tTask("maxAge")}
+                        <input
+                          type="number"
+                          min={1}
+                          max={10080}
+                          value={
+                            form.inputPolicy.maxFetchedAgeSeconds < 0
+                              ? ""
+                              : form.inputPolicy.maxFetchedAgeSeconds / 60
+                          }
+                          onChange={(e) =>
+                            model.setForm({
+                              ...form,
+                              inputPolicy: {
+                                ...form.inputPolicy,
+                                maxFetchedAgeSeconds:
+                                  e.target.value === "" ? -1 : Number(e.target.value) * 60,
+                              },
+                            })
+                          }
+                        />
+                      </label>
+                    </fieldset>
+                    <fieldset>
                       <legend>{t("executors")}</legend>
                       {available.map((v) => (
                         <label className={styles.check} key={v.connection.provider}>
@@ -973,6 +1032,14 @@ export function TaskCenterView({
                       <dd>
                         {model.bindings.map((b) => t(`kinds.${b.ref.kind}`)).join("、") ||
                           t("none")}
+                      </dd>
+                      <dt>{tTask("inputPolicy")}</dt>
+                      <dd>
+                        <div>
+                          {tTask("maxAge")} {form.inputPolicy.maxFetchedAgeSeconds / 60}
+                        </div>
+                        {form.inputPolicy.allowPartial && <div>{tTask("partial")}</div>}
+                        {form.inputPolicy.allowUnknownAsOf && <div>{tTask("unknownAsOf")}</div>}
                       </dd>
                       <dt>{t("executors")}</dt>
                       <dd>{providers.map(providerName).join("、") || t("noExecutor")}</dd>
