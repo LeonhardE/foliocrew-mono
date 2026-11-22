@@ -524,6 +524,11 @@ export function useHoldingsWorkspace() {
     state: SourceMetadata["state"];
   } | null>(null);
   const vaultGeneration = useRef(0);
+  const resumedDisplayVault = useRef<{
+    vault: Vault;
+    serial: number;
+    checkedAt: number;
+  } | null>(null);
   const recoverySession = useRef<EncryptedVaultSession | null>(null);
   const sharedHandlers = useRef({ lock: () => {}, reload: async () => {} });
   const renewalHoldingsReview = useRef<{
@@ -550,6 +555,7 @@ export function useHoldingsWorkspace() {
 
   const terminate = useCallback(() => {
     ++vaultGeneration.current;
+    resumedDisplayVault.current = null;
     displayCache.current.bind(null);
     session.current?.instance.lock();
     recoverySession.current?.lock();
@@ -1830,6 +1836,7 @@ export function useHoldingsWorkspace() {
       return unlock({ forResults: true });
     return perform("loading", async ({ assertActive, signal }) => {
       const result = await readCurrent(signal);
+      const checkedAt = Date.now();
       assertActive();
       terminate();
       if (await reconcileArchiveDeletion(result, signal, assertActive)) return;
@@ -1864,6 +1871,12 @@ export function useHoldingsWorkspace() {
                 assertActive,
               )
             : null;
+          if (displayVault.userAuthority)
+            resumedDisplayVault.current = {
+              vault: displayVault,
+              serial: serial.current,
+              checkedAt,
+            };
           setState({
             ...empty,
             owner,
@@ -3008,6 +3021,7 @@ export function useHoldingsWorkspace() {
     const change = () => {
       if (document.visibilityState === "hidden") {
         displayCache.current.clear();
+        resumedDisplayVault.current = null;
         ++selectionSerial.current;
         ++serial.current;
         current.current?.controller.abort();
@@ -3066,10 +3080,26 @@ export function useHoldingsWorkspace() {
       signal: AbortSignal,
       forState = false,
       readCurrentResponse?: () => Promise<Response>,
+      reuseOwnerResume = false,
     ): Promise<Vault> => {
       const instance = liveSession(),
         generation = vaultGeneration.current;
       assertInboxSession(instance, generation);
+      const resumed = resumedDisplayVault.current;
+      resumedDisplayVault.current = null;
+      if (reuseOwnerResume && !forState && resumed) {
+        const age = Date.now() - resumed.checkedAt;
+        // Hand the freshly verified startup read to the first automatic display only.
+        if (
+          auth.ownerCapabilities?.userVault &&
+          resumed.vault === stateRef.current.vault &&
+          resumed.serial === serial.current &&
+          !signal.aborted &&
+          age >= 0 &&
+          age < 5000
+        )
+          return resumed.vault;
+      }
       // Agent actions supply their cancellable admission-aware GET transport.
       // Keep the same bounded parser, Owner fences and Worker verification here.
       const refreshed =

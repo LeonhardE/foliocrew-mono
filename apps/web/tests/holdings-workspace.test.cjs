@@ -159,6 +159,8 @@ function harness({
   needsDeviceRegistration = false,
   sharedUnlock = false,
   sharedResume = false,
+  userVault = false,
+  now = Date.now,
   viewMode = "sync_required",
   sessionOverrides,
   passkeyMaterial,
@@ -793,6 +795,12 @@ function harness({
   }
   const requestPrivate = async (service, route, owner, options = {}) => {
     requests.push({ service, route, owner, options });
+    if (userVault && route === "/api/v3/private-resources/vaults/current/read")
+      return Response.json({
+        ...options.json,
+        vault: remoteVault,
+        proof: { sources: [] },
+      });
     if (route.startsWith("/api/v3/holdings/sources/") && route.endsWith("/view/query")) {
       if (viewReply) return typeof viewReply === "function" ? viewReply(route, options) : viewReply;
       const resourceId = route.split("/")[5];
@@ -1203,6 +1211,7 @@ function harness({
           ...auth,
           portfolioConfigured,
           agentHubConfigured,
+          ownerCapabilities: { userVault },
           requestPrivate,
           signIn: async () => {},
         }),
@@ -1238,7 +1247,14 @@ function harness({
         },
       },
     },
-    { document },
+    {
+      document,
+      Date: class extends Date {
+        static now() {
+          return now();
+        }
+      },
+    },
   );
   function render({ flush = true } = {}) {
     let model;
@@ -3186,6 +3202,40 @@ test("a fresh page resumes its verified owner's shared unlock without a Passkey"
   assert.equal(h.render().phase, "locked");
   assert.ok(h.instances.every((instance) => instance.locked));
   h.unmount();
+});
+
+test("only the first automatic display can use a recent verified User shared resume", async () => {
+  const route = "/api/v3/private-resources/vaults/current/read";
+  for (const attempt of ["automatic", "expire", "explicit"]) {
+    let clock = 100000;
+    const h = harness({
+      sharedUnlock: true,
+      sharedResume: true,
+      userVault: true,
+      now: () => clock,
+      sessionOverrides: () => ({ hasPendingArchiveWork: async () => false }),
+    });
+    try {
+      let model = await ready(h);
+      for (let i = 0; model.phase === "checking" && i < 50; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        model = h.render();
+      }
+      assert.equal(model.phase, "unlocked");
+      assert.ok(model.vault.userAuthority);
+      const reads = () => h.requests.filter((r) => r.route === route);
+      assert.equal(reads().length, 1);
+      if (attempt === "expire") clock += 5000;
+      const signal = new AbortController().signal;
+      await model.refreshVault(signal, false, undefined, attempt !== "explicit");
+      assert.equal(reads().length, attempt === "automatic" ? 1 : 2);
+      await h.render().refreshVault(signal, false, undefined, true);
+      assert.equal(reads().length, attempt === "automatic" ? 2 : 3);
+      assert.equal(new Set(reads().map((r) => r.options.json.nonce)).size, reads().length);
+    } finally {
+      h.unmount();
+    }
+  }
 });
 
 test("a locked peer adopts an unlock notification, but a new login cannot invent an unlocked session", async () => {
