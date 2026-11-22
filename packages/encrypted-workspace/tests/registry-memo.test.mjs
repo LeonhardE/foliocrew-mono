@@ -201,6 +201,97 @@ function sameAuthority(a, b) {
 }
 const f = await fixture(23);
 
+test("a Root-signed transferred start admits a continuous suffix and keeps the exact head pinned", async () => {
+  const transferred = await fixture();
+  const prior = {
+    registryEpoch: 1,
+    registrySequence: 27,
+    checkpointDigest: "a".repeat(64),
+    keyEpoch: 1,
+  };
+  const first = await bundle(transferred, transferred.certificates, null, {
+    registrySequence: 28,
+    previousDigest: prior.checkpointDigest,
+  });
+  const firstCheckpoint = parsed(bytes(first.checkpoint.payload), true);
+  const start = {
+    registryEpoch: 2,
+    registrySequence: 28,
+    checkpointDigest: await digest(firstCheckpoint),
+    keyEpoch: 1,
+  };
+  const transition = {
+    contractVersion: CONTRACT,
+    profile: "folioview.owner-registry-transition.v1",
+    ownerSubject: transferred.owner,
+    vaultId: transferred.vault,
+    rootKeyId: transferred.root.kid,
+    operationId: "synthetic_registry_transfer",
+    previousVaultVersion: 3,
+    nextVaultVersion: 4,
+    previousHead: prior,
+    nextHead: start,
+    ownerKeyIds: transferred.certificates.map(({ payload }) => payload.keyId),
+    archive: { state: "active", version: 1, digest: "b".repeat(64) },
+    issuedAt: firstCheckpoint.issuedAt,
+  };
+  const signedTransition = await sign(
+    transition,
+    transferred.root.privateKey,
+    transferred.root.kid,
+    "fv-control+jws",
+  );
+  const proof = { start, signedTransition };
+  const chain = [first];
+  for (let i = 0; i < 6; i++) {
+    chain.push(await bundle(transferred, transferred.certificates, chain.at(-1)));
+  }
+  const head = await anchor(transferred, chain);
+  const registry = await new DistributedRegistry(head).load(chain, 1000, proof);
+  assert.equal(registry.sequence, 34);
+  assert.equal(registry.snapshots.has(27), false);
+  assert.equal(registry.history.get(28), start.checkpointDigest);
+
+  await assert.rejects(new DistributedRegistry(head).load(chain, 1000), /registry_chain_mismatch/);
+  await assert.rejects(
+    new DistributedRegistry(head).load(chain.slice(1), 1000, proof),
+    /registry_chain_mismatch/,
+  );
+  await assert.rejects(
+    new DistributedRegistry(head).load(chain.slice(0, -1), 1000, proof),
+    /registry_rollback/,
+  );
+  const wrongStart = { ...proof, start: { ...start, checkpointDigest: "0".repeat(64) } };
+  await assert.rejects(
+    new DistributedRegistry(head).load(chain, 1000, wrongStart),
+    /registry_conflict/,
+  );
+  const unrelatedRoot = await pair();
+  const forged = await sign(
+    transition,
+    unrelatedRoot.privateKey,
+    transferred.root.kid,
+    "fv-control+jws",
+  );
+  await assert.rejects(
+    new DistributedRegistry(head).load(chain, 1000, { ...proof, signedTransition: forged }),
+  );
+  const incomplete = { ...transition, ownerKeyIds: transition.ownerKeyIds.slice(1) };
+  const incompleteSignature = await sign(
+    incomplete,
+    transferred.root.privateKey,
+    transferred.root.kid,
+    "fv-control+jws",
+  );
+  await assert.rejects(
+    new DistributedRegistry(head).load(chain, 1000, {
+      ...proof,
+      signedTransition: incompleteSignature,
+    }),
+    /key_authorization_required/,
+  );
+});
+
 test("23-generation source and distribution retain authority with 598 to 70 signatures and 575 to 47 static checks", async () => {
   const noReuse = clone(f.history);
   for (const b of noReuse)
