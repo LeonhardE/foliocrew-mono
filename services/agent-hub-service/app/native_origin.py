@@ -35,7 +35,7 @@ POST_PATHS = {"/mcp/v3", "/oauth/persistent/token", "/oauth/persistent/revoke"}
 GET_ASSET = re.compile(
     r"/agent/v3/(?:account/1\.0\.0/(?:consent\.html|account\.css|"
     r"account-consent-page\.mjs|account-bridge\.mjs|integrity\.json)|"
-    r"client/(?:1\.0\.[01]|1\.1\.0|1\.2\.0|1\.3\.[01])/"
+    r"client/(?:1\.0\.[01]|1\.1\.0|1\.2\.0|1\.3\.[012])/"
     r"(?:client\.mjs|integrity\.json|THIRD_PARTY_NOTICES\.md))"
 )
 ACCOUNT_FLOW = re.compile(

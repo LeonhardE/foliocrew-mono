@@ -11,6 +11,7 @@ from unittest.mock import patch
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 
+from app.agent_client_assets import FILES, VERSION
 from app.main import app
 from app.native_origin import BRAND_ORIGIN, PROOF_HEADER, PROOF_VERSION
 from app.store import SQLiteHubStore
@@ -50,6 +51,9 @@ class BrandedNativeOriginTests(unittest.TestCase):
                     "HUB_PERSISTENT_TRANSPORT_ENABLED": "1",
                     "HUB_PERSISTENT_MCP_ENABLED": "1",
                     "HUB_AGENT_OWNED_CREDENTIALS_ENABLED": "1",
+                    "HUB_PERSISTENT_RESOURCE_CONSENTS_ENABLED": "1",
+                    "HUB_PERSISTENT_PUBLICATIONS_ENABLED": "1",
+                    "HUB_PERSISTENT_EXECUTION_ENABLED": "1",
                     "HUB_AGENT_OWNER_URL": "https://owner.example/agents",
                     "CORS_ORIGINS": "https://owner.example",
                 },
@@ -106,3 +110,20 @@ class BrandedNativeOriginTests(unittest.TestCase):
                 self.client.get(PROTECTED, headers=self.proof("GET", PROTECTED)).status_code, 403
             )
             self.assertEqual(self.client.get(PROTECTED).status_code, 200)
+
+    def test_latest_client_and_previous_pin_download_through_verified_edge(self):
+        for version in ("1.3.1", VERSION):
+            for asset in FILES:
+                path = f"/agent/v3/client/{version}/{asset}"
+                with self.subTest(path=path):
+                    branded = self.client.get(path, headers=self.proof("GET", path))
+                    self.assertEqual(branded.status_code, 200)
+                    direct = self.client.get(path)
+                    self.assertEqual(direct.status_code, 200)
+                    self.assertEqual(branded.content, direct.content)
+        unknown = "/agent/v3/client/1.3.3/client.mjs"
+        self.assertEqual(
+            self.client.get(unknown, headers=self.proof("GET", unknown)).status_code, 404
+        )
+        path = f"/agent/v3/client/{VERSION}/client.mjs"
+        self.assertEqual(self.client.post(path, headers=self.proof("POST", path)).status_code, 404)
