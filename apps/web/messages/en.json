@@ -55,6 +55,7 @@
     "stock": "STOCK",
     "latest": "Latest available price",
     "previousClose": "Change vs. previous close",
+    "rangeChange": "{range} change from first open to last close",
     "indexPoints": "Index points",
     "timeRange": "Chart time range",
     "loading": "Loading market data…",

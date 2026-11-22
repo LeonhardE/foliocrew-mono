@@ -55,6 +55,7 @@
     "stock": "股票",
     "latest": "最新可用价格",
     "previousClose": "相对前一交易日收盘价",
+    "rangeChange": "{range} 涨跌（首根开盘至末根收盘）",
     "indexPoints": "指数点位",
     "timeRange": "图表时间范围",
     "loading": "正在加载行情…",
