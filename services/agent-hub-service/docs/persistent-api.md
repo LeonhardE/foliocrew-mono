@@ -627,11 +627,13 @@ Plan reports bind the exact assignment/rule/lifecycle versions and use independe
 CAS/original-operation receipts. Nullable rules are manual-only and cannot report
 an enabled empty native plan. Each executor starts `unconfirmed`; saving rules is
 not scheduling. Publication-only legacy plan reports cannot confirm enrolled task
-rules. Agent statements always say `nativeScheduleAttested:false`; Hub Run/result
-receipts do not prove what invoked the host. This implementation accepts only
-`legacy_unknown` trigger attribution. Verified manual dispatch/source attribution,
-trash/restore/purge consumers, Web integration and actual host acceptance remain
-ordered follow-up work; no scheduler, worker, new database, VM or capacity is added.
+rules. Agent statements report `nativeScheduleAttested:false`. For a preparation
+whose exact base trigger matches the authorized schedule and grace window, the
+task history shows `triggerKind: "scheduled"` once that preparation has a
+matching Run and saved result. The original Run binding and report receipt keep
+their wire formats. Read the provider's native history for actual dispatch and
+start times. A schedule-shaped identifier without a verified occurrence remains
+unknown. Manual intent attribution continues to use the verified Owner intent.
 
 ### Task trash and request-driven retention
 

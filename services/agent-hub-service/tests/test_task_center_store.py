@@ -17,7 +17,7 @@ from app.persistent_publications import PersistentPublicationService, stored_aut
 from app.persistent_results import PersistentOwnerResultService, PersistentResultService, result_id
 from app.resource_consents import ResourceConsentService
 from app.store import document_path
-from app.task_center import TaskCenterAgentService, center_reference
+from app.task_center import TaskCenterAgentService, center_reference, preparation_path
 from app.task_center_results import TaskCenterResultService
 from app.tasks import TaskService
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
@@ -31,7 +31,11 @@ from folioview_shared.encrypted.persistent_content import (
     seal_persistent_content,
 )
 from folioview_shared.encrypted.provider_connections import provider_review_digest, provider_slot_id
-from folioview_shared.encrypted.task_center import TASK_CENTER_PROFILE, assignment_id
+from folioview_shared.encrypted.task_center import (
+    TASK_CENTER_PROFILE,
+    assignment_id,
+    scheduled_occurrence,
+)
 
 ISSUER = "https://synthetic-hub.example"
 BASE = "/agent/v3/persistent/owners/{owner}/vaults/{vault}/connections/{connection}/"
@@ -327,6 +331,62 @@ class TaskCenterStoreTests(unittest.TestCase):
         self.assertEqual(
             self.history.owner_get(UID, self.f.vault, receipt1["resultId"])["receipt"], receipt1
         )
+
+    def test_verified_scheduled_slot_survives_cleanup_and_preserves_the_original_receipt(self):
+        self.definition = self.control(
+            "set_rules",
+            schedule={
+                "frequency": "daily",
+                "days": [],
+                "localTime": "19:17",
+                "timeZone": "America/Toronto",
+                "graceMinutes": 5,
+                "effectiveFrom": self.fx.now,
+                "dstGap": "skip",
+                "dstFold": "first",
+            },
+        )["definition"]
+        self.assignments[CONNECTION] = self.control(
+            "set_assignment",
+            fingerprint=self.authorities[CONNECTION]["fingerprint"],
+            assignment=self.assignments[CONNECTION],
+        )["assignment"]
+        self.fx.now = 1034
+        occurrence = scheduled_occurrence(self.definition, local_date="1969-12-31", now=self.fx.now)
+        run = self.begin(occurrence["baseTriggerId"])
+        receipt = self.submit(run)
+        # A schedule-looking identifier outside the signed rule never gains attribution.
+        unrelated = self.submit(self.begin("schedule_" + "f" * 64))
+        path = preparation_path(
+            self.f.owner,
+            self.f.vault,
+            TASK,
+            self.assignments[CONNECTION]["assignmentId"],
+            occurrence["baseTriggerId"],
+        )
+        preparation = self.store.transact(lambda unit: unit.get(path))
+        self.assertEqual(preparation["scheduledOccurrence"], occurrence)
+        self.definition = self.control("set_rules")["definition"]
+        self.control("remove_assignment", assignment=self.assignments[CONNECTION])
+
+        def feed():
+            page = self.owner.results(UID, self.f.vault, TASK, {"limit": 20, "cursor": None})
+            self.assertFalse(page["nativeScheduleAttested"])
+            return {row["metadata"]["resultId"]: row for row in page["items"]}
+
+        outcomes = feed()
+        self.assertEqual(outcomes[receipt["resultId"]]["triggerKind"], "scheduled")
+        self.assertEqual(outcomes[unrelated["resultId"]]["triggerKind"], "legacy_unknown")
+        self.assertEqual(
+            outcomes[receipt["resultId"]]["attribution"]["trigger"]["kind"], "legacy_unknown"
+        )
+        self.assertEqual(
+            self.history.owner_get(UID, self.f.vault, receipt["resultId"])["receipt"], receipt
+        )
+        self.store.transact(
+            lambda u: u.put(path, {**preparation, "resultId": unrelated["resultId"]})
+        )
+        self.assertEqual(feed()[receipt["resultId"]]["triggerKind"], "legacy_unknown")
 
     def test_removing_one_assignment_fences_its_reads_writes_but_retains_both_histories(self):
         one = self.begin()
