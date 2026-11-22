@@ -1,7 +1,7 @@
 {
   "contractVersion": "folioview.valuation.v1",
   "factsProfile": "folioview.holdings-facts.v2",
-  "frozenCoreSha256": "9154f84d3d03af2edb98cbb6471285b0ff12f03e39a51d501b5a0142458aecd4",
+  "frozenCoreSha256": "1622b137ec4dcdc2e3dc974754c9bd507d760e8b09a7fcb1567b9177306e2577",
   "schemaSha256": "d7844500991a4ad3362b160bc21d83424531034b202aa5f09a5a97aba4804163",
   "files": {
     "build.mjs": "8b112b504fec4da0dbb05201a47c5456cdcb5687f8c3e7d7fd5b9b85876c1410",

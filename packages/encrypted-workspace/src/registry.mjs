@@ -18,6 +18,32 @@ import {
   validate,
 } from "./crypto.mjs";
 const ROLES = ["root_sig", "device_sig", "device_enc", "agent_sig", "agent_enc", "recovery_enc"];
+const REQUIRED_OWNER_ROLES = ["device_sig", "device_enc", "recovery_enc"];
+
+async function verifiedTransfer(proof, anchor, rootJwk, now) {
+  exact(proof, ["start", "signedTransition"]);
+  const { start, signedTransition } = structuredClone(proof);
+  validate("PrivateRegistryHead", start);
+  const change = await verify(signedTransition, rootJwk, "fv-control+jws");
+  validate("PrivateRegistryTransition", change);
+  const { previousHead: previous, nextHead: next } = change;
+  if (
+    change.ownerSubject !== anchor.ownerSubject ||
+    change.vaultId !== anchor.vaultId ||
+    change.rootKeyId !== anchor.rootKeyId ||
+    change.archive.state !== "active" ||
+    change.issuedAt > now ||
+    previous.registryEpoch !== 1 ||
+    next.registryEpoch !== 2 ||
+    next.registrySequence !== previous.registrySequence + 1 ||
+    next.keyEpoch < previous.keyEpoch ||
+    change.nextVaultVersion !== change.previousVaultVersion + 1 ||
+    !same(next, start) ||
+    anchor.registrySequence < start.registrySequence
+  )
+    deny("registry_conflict");
+  return change;
+}
 // The private generic mode exercises the defensive byte bound independently of
 // the certificate schema. Production callers use the fixed-profile factory below.
 function certificateVerifier(root, expectedRootKeyId, staticCertificate = false) {
@@ -75,15 +101,20 @@ export class Registry {
     if (value.ownerSubject !== this.anchor.ownerSubject || value.vaultId !== this.anchor.vaultId)
       deny("recipient_binding_mismatch");
   }
-  async load(bundles, now) {
+  async load(bundles, now, transferProof) {
     // Keep the key and verification inputs on the same private snapshot across
     // awaits. Neither callers nor mutable Registry snapshots can seed the memo.
-    array(bundles, 32, 1);
+    if (transferProof !== undefined && this.sequence !== 0) deny("registry_conflict");
+    array(bundles, transferProof === undefined ? 32 : 129, 1);
     const providedBundles = [...bundles],
       rootJwk = structuredClone(this.anchor.rootJwk),
       rootKeyId = this.anchor.rootKeyId,
       verifyCertificate = createRegistryCertificateVerifier(rootJwk, rootKeyId);
     if ((await keyId(rootJwk)) !== rootKeyId) deny("root_pin_mismatch");
+    const transfer =
+      transferProof === undefined
+        ? null
+        : await verifiedTransfer(transferProof, this.anchor, rootJwk, now);
     for (const provided of providedBundles) {
       validate("RegistryBundle", provided);
       if (canonical(provided).length > 131072) deny("payload_too_large");
@@ -95,11 +126,12 @@ export class Registry {
       const cp = await verify(b.checkpoint, rootJwk, "fv-control+jws");
       validate("RegistryCheckpointPayload", cp);
       this.checkIdentity(cp);
+      const start = this.sequence === 0 ? transfer?.nextHead : undefined;
       if (
         cp.rootKeyId !== rootKeyId ||
         cp.rootEpoch !== this.anchor.rootEpoch ||
         cp.issuedAt > now ||
-        (this.sequence === 0 && (cp.rootEpoch !== 1 || cp.keyEpoch !== 1))
+        (this.sequence === 0 && (cp.rootEpoch !== 1 || (!start && cp.keyEpoch !== 1)))
       )
         deny("root_pin_mismatch");
       const d = await digest(cp);
@@ -108,11 +140,19 @@ export class Registry {
         continue;
       }
       if (
-        cp.registrySequence !== this.sequence + 1 ||
-        cp.registrySequence > 32 ||
-        cp.previousDigest !== (this.current?.digest ?? null)
+        cp.registrySequence !== (start?.registrySequence ?? this.sequence + 1) ||
+        (!transfer && cp.registrySequence > 32) ||
+        cp.previousDigest !==
+          (start ? transfer.previousHead.checkpointDigest : (this.current?.digest ?? null))
       )
         deny("registry_chain_mismatch");
+      if (
+        start &&
+        (d !== start.checkpointDigest ||
+          cp.keyEpoch !== start.keyEpoch ||
+          cp.issuedAt !== transfer.issuedAt)
+      )
+        deny("checkpoint_pin_mismatch");
       if (
         this.current &&
         (cp.keyEpoch < this.current.keyEpoch ||
@@ -176,6 +216,20 @@ export class Registry {
         d !== this.anchor.checkpointDigest
       )
         deny("checkpoint_pin_mismatch");
+      if (start) {
+        const owners = transfer.ownerKeyIds.map((id) => keys.get(id));
+        if (
+          owners.length !== keys.size ||
+          owners.some(
+            (key) =>
+              !key?.active ||
+              key.connectionId !== null ||
+              !(key.notBefore <= cp.issuedAt && cp.issuedAt < key.expiresAt),
+          ) ||
+          !REQUIRED_OWNER_ROLES.every((role) => owners.some((key) => key.role === role))
+        )
+          deny("key_authorization_required");
+      }
       for (const c of keys.values()) {
         const identity = [c.principalId, c.role, c.connectionId].join("/");
         this.localEpochs.set(identity, Math.max(c.keyEpoch, this.localEpochs.get(identity) ?? 0));

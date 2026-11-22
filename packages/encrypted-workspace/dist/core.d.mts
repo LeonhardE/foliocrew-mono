@@ -78,7 +78,11 @@ export class Registry {
   };
   snapshots: Map<number, PublicJson>;
   history: Map<number, string>;
-  load(bundles: PublicJson[], now: number): Promise<this>;
+  load(
+    bundles: PublicJson[],
+    now: number,
+    transferProof?: { start: PublicJson; signedTransition: PublicJson },
+  ): Promise<this>;
   cert(
     kid: string,
     role: string,

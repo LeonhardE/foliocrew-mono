@@ -8,6 +8,22 @@ import prettier from "prettier";
 const root = dirname(fileURLToPath(import.meta.url));
 const schema = JSON.parse(await readFile(resolve(root, "schemas.json"), "utf8"));
 const defs = schema.$defs;
+const runtimeSchema = { ...schema, $defs: { ...defs } };
+const privateSchemas = JSON.parse(
+  await readFile(
+    resolve(root, "../../services/common/folioview_shared/encrypted/private_resources.json"),
+    "utf8",
+  ),
+).$defs;
+for (const name of [
+  "PrivateRegistryHead",
+  "PrivateRegistryTransition",
+  "PrivateArchiveBoundary",
+  "PrivateResourceVersion",
+  "PrivateResourceTime",
+]) {
+  runtimeSchema.$defs[name] = privateSchemas[name];
+}
 const ajv = new Ajv({
   strict: false,
   messages: false,
@@ -18,7 +34,7 @@ const ajv = new Ajv({
 ajv.addFormat("date-time", /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/);
 ajv.addFormat("iana-timezone", /^[A-Za-z0-9_+./-]{1,80}$/);
 ajv.addFormat("uri", /^https:\/\/[^\s\\]+$/);
-ajv.addSchema(schema);
+ajv.addSchema(runtimeSchema);
 const mapping = {};
 for (const name of [
   "PublicJWK",
@@ -29,6 +45,8 @@ for (const name of [
   "OperationIdentifier",
   "RegistryBundle",
   "RegistryCheckpointPayload",
+  "PrivateRegistryHead",
+  "PrivateRegistryTransition",
   "KeyCertificatePayload",
   "AgentCredentialApproval",
   "AgentCredentialLease",

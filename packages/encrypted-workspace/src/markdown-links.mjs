@@ -10,7 +10,7 @@ export function markdownDestinations(text) {
   const angleStop = new Uint32Array(size + 1);
   const colonBefore = new Uint32Array(size + 1);
   for (const index of [whitespace, nonWhitespace, inlineStop, rightBracket, greaterThan, angleStop])
-    index[size] = size;
+    index.fill(size, -1);
   for (let i = size - 1; i >= 0; i--) {
     const char = text[i];
     // Use JavaScript's exact single-code-unit \s classification, including its
