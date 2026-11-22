@@ -273,7 +273,8 @@ export function useTaskResults(
       update({ revision: ++uiRevision.current }, start.scope);
       try {
         if (force) overview?.invalidate(false);
-        const snapshot = !force && overview ? await overview.acquire() : null;
+        const snapshot = !force && overview ? await overview.acquireWithFallback() : null;
+        if (!current() || !live.current.visible) return;
         const data =
           snapshot?.data.connections ??
           (await api("/api/v2/persistent-connections", {}, start.scope));
@@ -349,7 +350,7 @@ export function useTaskResults(
       }
       try {
         if (force || more) overview?.invalidate(false);
-        const snapshot = !force && !more && overview ? await overview.acquire() : null;
+        const snapshot = !force && !more && overview ? await overview.acquireWithFallback() : null;
         if (!feed.current.done) {
           if (
             live.current.scope !== start.scope ||

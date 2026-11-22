@@ -131,6 +131,9 @@ type Config = {
   known: () => KnownTaskPacket[];
   send: (path: string, options: any) => Promise<Response>;
 };
+
+class OverviewUnavailable extends Error {}
+
 /** One page-local shared read; no Worker, permission or cross-session cache. */
 export class TaskOverviewRead {
   private config: Config | null = null;
@@ -176,6 +179,14 @@ export class TaskOverviewRead {
     this.cached = null;
     if (abort) for (const row of this.running) row.controller.abort();
     this.pending = null;
+  }
+  async acquireWithFallback(signal?: AbortSignal): Promise<OverviewReceipt | null> {
+    try {
+      return await this.acquire(signal);
+    } catch (error) {
+      if (error instanceof OverviewUnavailable && !signal?.aborted) return null;
+      throw error;
+    }
   }
   async acquire(signal?: AbortSignal): Promise<OverviewReceipt> {
     const start = this.config;
@@ -233,6 +244,7 @@ export class TaskOverviewRead {
           check();
           if (!response.ok) {
             void response.body?.cancel().catch(() => {});
+            if (response.status === 503) throw new OverviewUnavailable("service_unavailable");
             throw Error(response.status >= 500 ? "service_unavailable" : "request_failed");
           }
           const raw = await boundedJson(response, 1048576, controller.signal, () =>

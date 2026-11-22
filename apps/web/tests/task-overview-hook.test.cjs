@@ -476,6 +476,58 @@ test("slow original Worker verification remains globally bounded to two and cann
   }
 });
 
+test("one overview 503 recovers task and report reads without a page refresh", async () => {
+  const h = harness({
+    respond: (path) =>
+      path.endsWith("/overview/query") ? Response.json({}, { status: 503 }) : undefined,
+  });
+  try {
+    const { m, c, r, tree } = await h.ready();
+    const paths = h.calls.map((call) => call.path);
+    assert.equal(paths.filter((path) => path.endsWith("/overview/query")).length, 1);
+    for (const path of [
+      "/api/v2/tasks?limit=32",
+      "/api/v3/task-center/capabilities",
+      "/api/v2/persistent-results/vault_A?limit=20",
+      "/api/v2/persistent-connections",
+    ])
+      assert.equal(paths.filter((called) => called === path).length, 1, path);
+    assert.equal(m.listReady, true);
+    assert.equal(c.capabilityState, "ready");
+    assert.equal(r.complete, true);
+    assert.equal(r.error, "");
+    assert.equal(r.unreadCounts.task_1, 1);
+    assert.equal(
+      r.providerFor({ kind: "persistent", metadata: fixtures.body().feeds.persistent.items[0] }),
+      "muse",
+    );
+    assert.equal(tree.props["data-load-state"], "ready");
+    assert.equal(m.overview.receipt, null);
+  } finally {
+    h.close();
+  }
+});
+
+test("opening tasks from another view can recover capabilities from a first overview 503", async () => {
+  const h = harness({
+    respond: (path) =>
+      path.endsWith("/overview/query") ? Response.json({}, { status: 503 }) : undefined,
+  });
+  try {
+    h.active(false);
+    await h.ready();
+    assert.equal(h.calls.length, 0);
+    h.active(true);
+    const { c, r, tree } = await h.ready();
+    assert.equal(c.capabilityState, "ready");
+    assert.equal(r.error, "");
+    assert.equal(tree.props["data-load-state"], "ready");
+    assert.equal(h.calls.filter((call) => call.path.endsWith("/capabilities")).length, 1);
+  } finally {
+    h.close();
+  }
+});
+
 test("explicit metadata refresh during an overview cannot replay old metadata or cancel independent report completion", async () => {
   let release;
   const gate = new Promise((r) => (release = r));
@@ -620,12 +672,12 @@ test("visible overview fallback reads only uncovered names through strictly shri
   }
 });
 
-test("failed metadata refresh retains the list without speculative name backfill and explicit list retry stays legacy", async () => {
+test("a non-503 metadata failure retains the list and waits for an explicit retry", async () => {
   let failed = false;
   const h = harness({
     count: 3,
     respond: (path) =>
-      failed && path.endsWith("/overview/query") ? Response.json({}, { status: 503 }) : undefined,
+      failed && path.endsWith("/overview/query") ? Response.json({}, { status: 500 }) : undefined,
   });
   try {
     await h.ready();
