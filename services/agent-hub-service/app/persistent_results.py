@@ -30,6 +30,7 @@ from .persistent_agents import PersistentAgentService, stored_identity
 from .persistent_execution import PersistentExecutionService, run_path, stored_run
 from .preparations import source_versions
 from .store import StoreUnavailable, document_path, private_resource_writer_fence_path
+from .user_vault_authority import scoped_user_vaults
 from .vaults import _current, _selection
 
 PAGE_SIZE = 64
@@ -496,11 +497,31 @@ class PersistentResultService(PersistentExecutionService):
         return self.store.transact(write)
 
 
+def _history_through(history, context):
+    """Select the exact issuance checkpoint from an already admitted history."""
+    try:
+        _, first = _signed_parts(history[0]["checkpoint"])
+        sequence = context["registrySequence"]
+        index = sequence - first["registrySequence"]
+        if not 0 <= index < len(history):
+            return None
+        _, checkpoint = _signed_parts(history[index]["checkpoint"])
+        if (
+            checkpoint["registrySequence"] == sequence
+            and digest(checkpoint) == context["checkpointDigest"]
+        ):
+            return history[: index + 1]
+    except (ContractError, IndexError, KeyError, TypeError):
+        raise StoreUnavailable from None
+    return None
+
+
 class PersistentOwnerResultService:
     """Owner history has no Agent authentication, submit method or OAuth config."""
 
-    def __init__(self, store, *, clock):
+    def __init__(self, store, *, clock, user_vaults=None):
         self.store, self.clock = store, clock
+        self.user_vaults = user_vaults if user_vaults is not None else scoped_user_vaults(store)
 
     now = PersistentAgentService.now
     _page = PersistentResultService._page
@@ -510,8 +531,8 @@ class PersistentOwnerResultService:
             validate_schema("Identifier", value)
         owner = owner_key(uid)
 
-        def read(unit):
-            v, _ = _current(unit, owner, self.now(), vault)
+        def read(unit, user_scope=None):
+            v, legacy = _current(unit, owner, self.now(), vault)
             row = stored_result(unit, owner, vault, result)
             from .task_lifecycle import require_visible
 
@@ -543,6 +564,23 @@ class PersistentOwnerResultService:
             )
             if identity is None:
                 raise StoreUnavailable
+            if (
+                legacy.checkpoint_history.get(context["registrySequence"])
+                == context["checkpointDigest"]
+            ):
+                history = v["registryHistory"]
+            else:
+                # A transferred Run carries the verified User history seen at
+                # creation. A report can also be issued after that history grows.
+                history = _history_through(run["registryHistory"], context)
+                if history is None and user_scope is not None:
+                    user_scope.require_current(unit, self.now())
+                    authority = user_scope.authority
+                    if authority["rootJwk"] != v["rootJwk"]:
+                        raise StoreUnavailable
+                    history = _history_through(authority["registryHistory"], context)
+                if history is None:
+                    return None
             response = {
                 "contractVersion": CONTRACT_VERSION,
                 "profile": CONTENT_PROFILE,
@@ -554,12 +592,21 @@ class PersistentOwnerResultService:
                 "identity": run["identity"],
                 "binding": identity["binding"],
                 "rootJwk": v["rootJwk"],
-                "registryHistory": v["registryHistory"],
+                "registryHistory": history,
             }
             check_read_response(response)
             return response
 
-        return self.store.transact(read)
+        response = self.store.transact(read)
+        if response is not None:
+            return response
+        user_scope = self.user_vaults.read(uid, vault)
+        if user_scope is None:
+            raise ContractError("source_unavailable")
+        response = self.store.transact(lambda unit: read(unit, user_scope))
+        if response is None:
+            raise ContractError("source_unavailable")
+        return response
 
     def owner_list(self, uid, vault, *, limit=20, cursor=None):
         validate_schema("Identifier", vault)
@@ -631,9 +678,19 @@ class PersistentOwnerResultService:
         owner = owner_key(uid)
         validate_schema("OperationIdentifier", operation)
         validate_schema("KeyId", author)
+        current = self.user_vaults.read(uid, vault)
 
         def write(unit):
-            _, registry = _current(unit, owner, self.now(), vault)
+            now = self.now()
+            _, registry = _current(unit, owner, now, vault)
+            if current is None:
+                if unit.get(private_resource_writer_fence_path(owner)) is not None:
+                    raise ContractError("source_unavailable")
+            else:
+                current.require_current(unit, now)
+                if current.cursor.registry.root_key_id != registry.root_key_id:
+                    raise ContractError("registry_conflict")
+                registry = current.cursor.registry
             row = stored_result(unit, owner, vault, result)
             from .task_lifecycle import require_visible
 
@@ -670,6 +727,8 @@ class PersistentOwnerResultService:
                 **command["parameters"],
                 "stateVersion": row["metadata"]["stateVersion"] + 1,
             }
+            if current is not None:
+                current.require_current(unit, self.now())
             unit.put(result_path(owner, vault, result), {**row, "metadata": meta})
             unit.put(path, {"fingerprint": fp, "metadata": meta})
             return meta

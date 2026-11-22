@@ -2,6 +2,7 @@
 
 import copy
 import unittest
+from dataclasses import replace
 from unittest.mock import Mock, patch
 
 import test_persistent_execution as executions
@@ -17,6 +18,7 @@ from app.persistent_results import (
 )
 from app.store import private_resource_writer_fence_path
 from folioview_shared.encrypted.crypto import _signed_parts, sign_jws, signing_input_fingerprint
+from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import canonical_json
 from folioview_shared.encrypted.persistent_content import (
     open_persistent_content,
@@ -24,6 +26,7 @@ from folioview_shared.encrypted.persistent_content import (
 )
 from folioview_shared.encrypted.private_resources import (
     REPORT_PERMIT_SECONDS,
+    PrivateRegistryCursor,
     decide_report_sources,
 )
 
@@ -89,7 +92,8 @@ class PersistentResultTests(unittest.TestCase):
     def rejects(self, code, action):
         self.fx.rejects(code, action)
 
-    def state_command(self, operation, expected, **parameters):
+    def state_command(self, operation, expected, *, registry=None, **parameters):
+        registry = self.f.registry if registry is None else registry
         return self.f.sign(
             {
                 **self.f.base("control_command"),
@@ -98,9 +102,9 @@ class PersistentResultTests(unittest.TestCase):
                 "targetId": self.context["objectId"],
                 "expectedVersion": expected,
                 "expectedSourceEpoch": None,
-                "registrySequence": self.f.registry.registry_sequence,
-                "checkpointDigest": self.f.registry.checkpoint_digest,
-                "keyEpoch": self.f.registry.key_epoch,
+                "registrySequence": registry.registry_sequence,
+                "checkpointDigest": registry.checkpoint_digest,
+                "keyEpoch": registry.key_epoch,
                 "parameters": parameters,
             }
         )
@@ -209,6 +213,89 @@ class PersistentResultTests(unittest.TestCase):
                 ),
                 receipt,
             )
+
+    def publish_after_transfer(self, *, advance_during_run):
+        scopes = self.x.transferred_scope()
+        self.x.service.user_vaults = self.service.user_vaults = scopes
+        self.service.selected_report_owner = self.f.owner
+
+        previous = self.f.registry
+        first = self.f.make_bundle(previous=previous, issued_at=self.fx.now)
+        start = self.f.verify(first, previous=previous, now=self.fx.now)
+        scope = scopes.client.read.return_value
+        scope.authority.update(
+            registryStart=PrivateRegistryCursor(start, 2).head(), registryHistory=[first]
+        )
+        scopes.client.read.return_value = replace(scope, cursor=PrivateRegistryCursor(start, 2))
+        self.run = self.x.begin(
+            triggerId="synthetic_transferred_trigger_01",
+            operationId="synthetic_transferred_begin_0001",
+        )
+        self.manifest = self.run["manifest"]
+        issuance = start
+        if advance_during_run:
+            next_bundle = self.f.make_bundle(previous=start, issued_at=self.fx.now)
+            issuance = self.f.verify(next_bundle, previous=start, now=self.fx.now)
+            scope.authority["registryHistory"] = [first, next_bundle]
+            scopes.client.read.return_value = replace(
+                scope, cursor=PrivateRegistryCursor(issuance, 2)
+            )
+        self.context = self.output_context(
+            registrySequence=issuance.registry_sequence,
+            checkpointDigest=issuance.checkpoint_digest,
+        )
+        self.carrier = self.seal(self.context)
+        self.use_report_authority()
+        receipt = self.submit()
+        scopes.client.read.reset_mock()
+        return scopes, receipt
+
+    def test_owner_read_uses_issuance_history_from_the_transferred_run(self):
+        scopes, receipt = self.publish_after_transfer(advance_during_run=False)
+        scopes.client.read.side_effect = ContractError("source_unavailable")
+        saved = self.history.owner_get(UID, self.f.vault, receipt["resultId"])
+        scopes.client.read.assert_not_called()
+        self.assertEqual(
+            saved["registryHistory"], scopes.client.read.return_value.authority["registryHistory"]
+        )
+        self.assertEqual(saved["receipt"], receipt)
+        self.assertEqual(saved["envelope"], self.carrier)
+
+    def test_owner_read_resolves_user_issuance_after_the_run_checkpoint(self):
+        scopes, receipt = self.publish_after_transfer(advance_during_run=True)
+        self.history = PersistentOwnerResultService(
+            self.fx.store, clock=lambda: self.fx.now, user_vaults=scopes
+        )
+        saved = self.history.owner_get(UID, self.f.vault, receipt["resultId"])
+        scope = scopes.client.read.return_value
+        scopes.client.read.assert_called_once_with(UID, self.f.vault, scope.writer_fence)
+        self.assertEqual(saved["registryHistory"], scope.authority["registryHistory"])
+        self.assertEqual(saved["receipt"], receipt)
+        self.assertEqual(saved["envelope"], self.carrier)
+
+        self.fx.now = scope.expires_at
+        self.rejects(
+            "source_unavailable",
+            lambda: self.history.owner_get(UID, self.f.vault, receipt["resultId"]),
+        )
+
+    def test_opening_a_transferred_report_can_mark_it_read(self):
+        scopes, receipt = self.publish_after_transfer(advance_during_run=False)
+        self.history = PersistentOwnerResultService(
+            self.fx.store, clock=lambda: self.fx.now, user_vaults=scopes
+        )
+        result = receipt["resultId"]
+        op = "synthetic_transferred_mark_read_01"
+        args = (UID, self.f.vault, result)
+        author = self.f.kid("device_sig")
+        old = self.state_command(op, 0, read=True)
+        self.rejects("rollback_detected", lambda: self.history.owner_state(*args, old, op, author))
+        registry = scopes.client.read.return_value.cursor.registry
+        current = self.state_command(op, 0, registry=registry, read=True)
+        marked = self.history.owner_state(*args, current, op, author)
+        self.assertTrue(marked["read"])
+        self.assertEqual(marked["stateVersion"], 1)
+        self.assertEqual(self.history.owner_state(*args, current, op, author), marked)
 
     def test_known_receipt_survives_legacy_freeze(self):
         receipt = self.submit()
