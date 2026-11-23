@@ -20,6 +20,10 @@ from .cost_controls import MarketLimited, get_cost_controls
 
 # One cold Market and holdings visit can require 31 weighted provider units.
 UPSTREAM_UNITS_PER_MINUTE = 32
+QUOTE_UPSTREAM_UNITS_PER_MINUTE = 64
+QUOTE_CACHE_PREFIX = "valuation:quote:v1:"
+DAILY_LIMIT_REACHED = "The shared daily market refresh limit has been reached."
+MINUTE_LIMIT_REACHED = "Market refreshes are temporarily limited. Please try again shortly."
 
 
 class CacheUnavailable(Exception):
@@ -126,7 +130,13 @@ def cooldown_key(provider: str) -> str:
 
 
 def reserve(
-    state: dict[str, Any], now: float, cost: int, limit: int, *, provider: str = "yahoo"
+    state: dict[str, Any],
+    now: float,
+    cost: int,
+    limit: int,
+    *,
+    provider: str = "yahoo",
+    minute_limit: int = UPSTREAM_UNITS_PER_MINUTE,
 ) -> str | None:
     """Called only inside a database transaction; limits apply across all instances."""
     day = int(now // 86400)
@@ -141,12 +151,21 @@ def reserve(
     if state.get("window", 0) <= now - 60:
         state.update(window=now, window_count=0)
     if state.get("count", 0) + cost > limit:
-        return "The shared daily market refresh limit has been reached."
-    if state.get("window_count", 0) + cost > UPSTREAM_UNITS_PER_MINUTE:
-        return "Market refreshes are temporarily limited. Please try again shortly."
+        return DAILY_LIMIT_REACHED
+    if state.get("window_count", 0) + cost > minute_limit:
+        return MINUTE_LIMIT_REACHED
     state["count"] = state.get("count", 0) + cost
     state["window_count"] = state.get("window_count", 0) + cost
     return None
+
+
+def upstream_minute_limit(key: str) -> int:
+    # A holdings click refreshes several small quote batches against the same counter.
+    return (
+        QUOTE_UPSTREAM_UNITS_PER_MINUTE
+        if key.startswith(QUOTE_CACHE_PREFIX)
+        else UPSTREAM_UNITS_PER_MINUTE
+    )
 
 
 class SQLiteMarketCache(MarketCache):
@@ -217,7 +236,14 @@ class SQLiteMarketCache(MarketCache):
             state = json.loads(
                 db.execute("SELECT value FROM market_state WHERE id=1").fetchone()[0]
             )
-            reason = reserve(state, now, cost, self.daily_limit, provider=provider)
+            reason = reserve(
+                state,
+                now,
+                cost,
+                self.daily_limit,
+                provider=provider,
+                minute_limit=upstream_minute_limit(key),
+            )
             if reason:
                 return reason
             db.execute("UPDATE market_state SET value=? WHERE id=1", (json.dumps(state),))
@@ -374,7 +400,14 @@ class FirestoreMarketCache(MarketCache):
                 return "A newer cached snapshot is available. Please try again shortly."
             if row.get("lease", 0) > now or row.get("retry", 0) > now:
                 return "A market refresh is already pending or cooling down."
-            reason = reserve(state, now, cost, self.daily_limit, provider=provider)
+            reason = reserve(
+                state,
+                now,
+                cost,
+                self.daily_limit,
+                provider=provider,
+                minute_limit=upstream_minute_limit(key),
+            )
             if reason:
                 return reason
             self.queue_writes(

@@ -16,7 +16,7 @@ from app.market_cache import CacheUnavailable, Entry, FirestoreMarketCache, SQLi
 from app.market_data import MarketService
 from app.valuation_quotes import TTL, QuoteService, cache_key, checked_quote
 
-NOW = datetime(2026, 11, 13, 23, tzinfo=UTC).timestamp()
+NOW = datetime(2026, 11, 13, 19, tzinfo=UTC).timestamp()
 US = {"symbol": "AAPL", "market": "XNAS", "currency": "USD"}
 OTHER = {**US, "symbol": "MSFT"}
 META = {
@@ -141,7 +141,7 @@ class QuoteCacheClockTests(unittest.TestCase):
                 self.assertEqual(entry.updated_at, NOW + 0.25)
                 self.assertEqual(entry.value["_refreshAfter"], NOW + 0.25 + TTL)
                 self.assertIsNone(entry.value["reason"])
-                self.assertEqual(entry.value["sourceAsOf"], "2026-11-13T23:00:00Z")
+                self.assertEqual(entry.value["sourceAsOf"], "2026-11-13T19:00:00Z")
                 for current in [cache, reopen()]:
                     view = QuoteService(
                         MarketService(current, clock=lambda: NOW + 0.5), provider=provider

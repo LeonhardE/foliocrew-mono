@@ -95,9 +95,12 @@ observation time remain unavailable. Adapter mappings and fixtures do not prove 
 Prices come from unadjusted regular-market metadata after an explicitly unadjusted five-day
 history request. They never reuse split/dividend-adjusted chart Close. Both observation and
 collection times are retained. Date is derived only when the returned timezone is usable; no
-market-close time is invented. Values more than seven days old are unusable; observations more
-than24 hours old or an expired900-second cache are marked stale. A later fetch cannot overwrite
-a known newer observation with an older one. Negative results can be cached for300 seconds.
+market-close time is invented. Values more than seven days old are unusable. The latest verified
+regular close is reused outside regular hours until the next weekday session begins at 09:30
+Eastern. A trade before the close or from an earlier weekday does not qualify. This weekday rule
+does not infer holiday or early-close observations. Otherwise observations more than 24 hours old
+or quotes past the 900-second cache lifetime are marked stale. A later fetch cannot overwrite a
+known newer observation with an older one. Negative results can be cached for300 seconds.
 These snapshots remain latest available provider data, without a real-time/executable-price claim.
 
 Cache validation binds the internal precise update time to the same second as the public
@@ -121,8 +124,12 @@ negative cache entries. SQLite uses one parameterized bounded `IN` read. Existin
 chart reads remain unchanged.
 
 One refresh request handles at most four misses, charges two logical upstream units for each
-admitted identity, and uses existing per-key distributed leases and the same daily/minute budget.
-It shares the existing metrics-provider process lock, starts at most two lookups in a child, and
+admitted identity, and uses per-key distributed leases and the shared daily budget. Quote
+batches may use up to 64 weighted units from the shared minute counter, enough for a 22-position
+refresh in six requests. Other market routes retain the 32-unit threshold against that same
+counter. The daily cap is still shared and resets at midnight UTC. A quota rejection exposes
+`X-Foliocrew-Quote-Limit: daily` or `minute` without changing the batch schema or discarding quoted
+prices. It shares the existing metrics-provider process lock, starts at most two lookups in a child, and
 kills/reaps the child after at most seven seconds, retaining only complete validated metadata lines.
 Other symbols remain explicitly missing/stale. A ten-second soft work budget prevents starting
 more work after it expires; existing bounded SDK calls/transactions already in flight can finish
