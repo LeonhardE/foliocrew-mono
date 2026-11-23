@@ -1,19 +1,23 @@
-"""Public market data API; no identity or user-configuration handlers."""
+"""Market snapshots and signed-in refreshes without user-configuration handlers."""
 
 import os
 from typing import Annotated, Literal
 
-from fastapi import Depends, Query, Response
+from fastapi import Depends, Query, Request, Response
+from starlette.concurrency import run_in_threadpool
 
 from folioview_shared.http import PrivateResponseHeaders, create_app
 
 from .cost_controls import MarketCostRoute
 from .instrument_search import router as instrument_search_router
+from .manual_quote_access import require_manual_quote_user
 from .market_data import MarketService, get_market_service
 from .search_access import install_search_access
 from .stock_metrics import router as stock_metrics_router
 from .valuation_fx import router as valuation_fx_router
+from .valuation_http import public_request
 from .valuation_quotes import router as valuation_quotes_router
+from .yahoo_provider import HISTORY_RANGES, SYMBOL_PATTERN, canonical_symbol
 
 app = create_app(
     "FolioView Market API",
@@ -21,7 +25,7 @@ app = create_app(
     methods=("GET", "POST"),
 )
 app.router.route_class = MarketCostRoute
-app.add_middleware(PrivateResponseHeaders, prefixes=("/api/valuation/",))
+app.add_middleware(PrivateResponseHeaders, prefixes=("/api/valuation/", "/api/stocks/refresh"))
 install_search_access(app)
 app.include_router(stock_metrics_router)
 app.include_router(valuation_fx_router)
@@ -78,3 +82,33 @@ def stock_candles(
         if result is not None
         else Response(status_code=204, headers={"Cache-Control": "no-store"})
     )
+
+
+def market_refresh_request(value):
+    if value == {"kind": "overview"}:
+        return value
+    if (
+        type(value) is dict
+        and set(value) == {"kind", "symbol", "range"}
+        and value["kind"] == "candles"
+        and type(value["symbol"]) is str
+        and SYMBOL_PATTERN.fullmatch(canonical_symbol(value["symbol"]))
+        and type(value["range"]) is str
+        and value["range"] in HISTORY_RANGES
+    ):
+        return value
+    raise ValueError("Invalid market refresh")
+
+
+async def read_market_refresh(request: Request):
+    return await public_request(request, market_refresh_request, 512, "market refresh")
+
+
+@app.post("/api/stocks/refresh", dependencies=[Depends(require_manual_quote_user)])
+async def refresh_stocks(
+    value: Annotated[dict, Depends(read_market_refresh)],
+    service: Annotated[MarketService, Depends(get_market_service)],
+) -> dict:
+    if value["kind"] == "overview":
+        return await run_in_threadpool(service.overview, manual=True)
+    return await run_in_threadpool(service.candles, value["symbol"], value["range"], manual=True)

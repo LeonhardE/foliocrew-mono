@@ -152,8 +152,9 @@ def cached_refresh_after(refresh_after, updated, manual):
     return updated + MANUAL_QUOTE_REUSE_SECONDS if manual and updated > 0 else refresh_after
 
 
-def require_quote_key_for_manual(key, provider, manual):
-    if manual and (provider != "yahoo" or not key.startswith(QUOTE_CACHE_PREFIX)):
+def require_market_key_for_manual(key, provider, manual):
+    supported = key == "overview:v1" or key.startswith((QUOTE_CACHE_PREFIX, "candles:"))
+    if manual and (provider != "yahoo" or not supported):
         raise CacheUnavailable
 
 
@@ -247,7 +248,7 @@ class SQLiteMarketCache(MarketCache):
     def claim(
         self, key: str, now: float, cost: int = 1, *, provider: str = "yahoo", manual: bool = False
     ) -> str | None:
-        require_quote_key_for_manual(key, provider, manual)
+        require_market_key_for_manual(key, provider, manual)
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
@@ -422,7 +423,7 @@ class FirestoreMarketCache(MarketCache):
     def claim(
         self, key: str, now: float, cost: int = 1, *, provider: str = "yahoo", manual: bool = False
     ) -> str | None:
-        require_quote_key_for_manual(key, provider, manual)
+        require_market_key_for_manual(key, provider, manual)
         entry_ref = self.document(key)
         state_ref = self.collection.document("shared_upstream_budget")
 

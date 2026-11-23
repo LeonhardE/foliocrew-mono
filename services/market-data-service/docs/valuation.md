@@ -146,6 +146,12 @@ The response exposes `provider` when Yahoo reports a rate limit, `busy` when wor
 in progress, and `unavailable` when a lookup fails. Existing observations keep their source
 time when no new price is available.
 
+The Market workspace uses the same signed-in policy for
+`POST /api/stocks/refresh`. The bounded command requests the default overview or the
+selected symbol and chart range. Refreshes update the existing public snapshots and share
+their leases and short reuse window. Default monthly charts reuse the overview's daily
+quote, and longer or intraday charts retain an independent price series.
+
 Consumers should reuse a loaded batch. After a cache-only read, visit each requested group once, with one quote refresh request in flight. Incomplete results remain partial; no continuous polling is required.
 Storage admission failures propagate as429 before more paid work. Provider failures retain prior
 usable data and only one provider cooldown is written; unavailable cleanup can leave leases to
