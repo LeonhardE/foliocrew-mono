@@ -39,6 +39,8 @@
     "major": "MAJOR INDICES",
     "seven": "MAGNIFICENT SEVEN",
     "updating": "Updating…",
+    "refreshComplete": "Market data updated.",
+    "refreshUnchanged": "Checked for updates. The source has no new prices or candles.",
     "refresh": "Refresh",
     "choose": "Choose an instrument",
     "chooseSymbol": "Choose a symbol",
@@ -128,6 +130,7 @@
     "dismissNotification": "Dismiss notification"
   },
   "errors": {
+    "marketRefreshSignIn": "Sign in to request a market data refresh.",
     "market": "Market data is unavailable. Please try again shortly.",
     "noMarket": "No market data is available for this symbol.",
     "rateLimit": "Too many requests. Please wait before retrying.",

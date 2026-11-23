@@ -95,9 +95,9 @@ function mount() {
   });
   return {
     requests,
-    render(resourcePath, reload = 0, ready = true, flush = true) {
+    render(resourcePath, reload = 0, ready = true, flush = true, manual) {
       index = 0;
-      const result = module.exports.useCachedMarketResource(resourcePath, reload, ready);
+      const result = module.exports.useCachedMarketResource(resourcePath, reload, ready, manual);
       if (flush) {
         for (const { slot, effect, dependencies } of pending.splice(0)) {
           cells[slot]?.cleanup?.();
@@ -127,6 +127,33 @@ test("fresh cached snapshot is the only request and carries no credentials", asy
   assert.equal(app.requests.length, 1);
   assert.equal(app.requests[0].options.credentials, "omit");
   assert.equal(app.requests[0].options.headers, undefined);
+});
+
+test("manual chart refresh uses its own request even with a fresh cache and reports no change", async () => {
+  const app = mount(),
+    path = candlePath("AAPL"),
+    known = { symbol: "AAPL", candles: [{ time: "2026-11-23", close: 102 }] };
+  app.render(path);
+  app.requests[0].result.resolve(response(known));
+  await settle();
+  const manual = deferred();
+  let attempts = 0;
+  const request = (signal) => {
+    assert.equal(signal.aborted, false);
+    attempts++;
+    return manual.promise;
+  };
+  app.render(path, 1, false, true, request);
+  assert.equal(attempts, 0);
+  app.render(path, 1, true, true, request);
+  assert.equal(attempts, 1);
+  assert.equal(app.requests.length, 1);
+  manual.resolve(response({ ...known, fetchedAt: "a more recent request" }));
+  await settle();
+  const state = app.render(path, 1, true, true, request);
+  assert.equal(state.manualOutcome, "unchanged");
+  assert.equal(state.hasSettled, true);
+  assert.equal(attempts, 1);
 });
 
 test("overview and selected chart probes can start together; chart paint does not wait", async () => {

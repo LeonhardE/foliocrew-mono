@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { workspaceHref, workspaceView } from "@/lib/workspace-routes";
 import { useLocale, useTranslations } from "next-intl";
 import { usePreferences } from "@/components/PreferencesProvider";
-import { useAuth, type OwnerConfigStatus } from "./AuthProvider";
+import { MANUAL_MARKET_PATH, useAuth, type OwnerConfigStatus } from "./AuthProvider";
 import {
   SettingsPanel,
   ResourcesPanel,
@@ -83,6 +83,8 @@ export default function WorkspaceShell() {
     ownerCapabilities,
     privateWorkspaceAvailable,
     status: authStatus,
+    requestPrivate,
+    sessionKey,
   } = useAuth();
   const requestedView = workspaceView(pathname) ?? "markets";
   const privateNavigationDisabled = privateWorkspaceAvailable === false;
@@ -194,9 +196,53 @@ export default function WorkspaceShell() {
   const pickerDialog = useRef<HTMLDialogElement>(null);
   const chartHeading = useRef<HTMLHeadingElement>(null);
   const watchlist = useWatchlist(activeView === "markets" || activeView === "resources");
+  const [manualSelection, setManualSelection] = useState<{
+    owner: string;
+    reload: number;
+    symbol: string;
+    range: ChartRange;
+    watchlist: boolean;
+  } | null>(null);
+  const signedInOwner = authStatus === "authenticated" ? sessionKey : null;
+  const manual =
+    signedInOwner &&
+    manualSelection?.owner === signedInOwner &&
+    manualSelection.reload === overviewReload
+      ? manualSelection
+      : null;
+  const manualMarket = useCallback(
+    (
+      json: { kind: "overview" } | { kind: "candles"; symbol: string; range: ChartRange },
+      signal: AbortSignal,
+    ) => {
+      if (!signedInOwner) return Promise.reject(new Error("Sign in to refresh market data."));
+      return requestPrivate("market", MANUAL_MARKET_PATH, signedInOwner, {
+        method: "POST",
+        json,
+        signal,
+      });
+    },
+    [requestPrivate, signedInOwner],
+  );
+  const manualOverview = useCallback(
+    (signal: AbortSignal) => manualMarket({ kind: "overview" }, signal),
+    [manualMarket],
+  );
+  const manualChart = useCallback(
+    (signal: AbortSignal) =>
+      manualMarket({ kind: "candles", symbol: selected.symbol, range }, signal),
+    [manualMarket, range, selected.symbol],
+  );
+  const manualWatchlist = useCallback(
+    (symbol: string, signal: AbortSignal) =>
+      manualMarket({ kind: "candles", symbol, range: "1m" }, signal),
+    [manualMarket],
+  );
   const overview = useCachedMarketResource<MarketOverview>(
     marketsVisited ? "/api/stocks" : null,
     overviewReload,
+    true,
+    manual ? manualOverview : undefined,
   );
   const sharesOverviewRefresh =
     range === "1m" &&
@@ -208,6 +254,7 @@ export default function WorkspaceShell() {
       : null,
     chartReload,
     !sharesOverviewRefresh || overview.hasSettled,
+    manual?.symbol === selected.symbol && manual.range === range ? manualChart : undefined,
   );
   const chartLoading = chart.loading;
   const searchQuery = query.trim();
@@ -231,6 +278,7 @@ export default function WorkspaceShell() {
       watchlist.authenticated,
     owner: watchlist.authenticated ? watchlist.sessionKey : null,
     refreshKey: overviewReload,
+    manualQuote: manual?.watchlist && pickerTab === "watchlist" ? manualWatchlist : undefined,
     selectedInstrument: selected,
     selectedRange: range,
     selectedActive: activeView === "markets",
@@ -271,7 +319,30 @@ export default function WorkspaceShell() {
   };
   const interval = marketData?.interval ?? (range === "1d" ? "5m" : range === "1w" ? "30m" : "1d");
 
+  const marketRefreshing =
+    overview.loading ||
+    overview.refreshing ||
+    chart.loading ||
+    chart.refreshing ||
+    (pickerTab === "watchlist" && watchlistQuotes.loading);
+  const marketRefreshOutcome =
+    manual && !marketRefreshing && overview.hasSettled && chart.hasSettled
+      ? overview.manualOutcome === "updated" || chart.manualOutcome === "updated"
+        ? "refreshComplete"
+        : overview.manualOutcome === "unchanged" && chart.manualOutcome === "unchanged"
+          ? "refreshUnchanged"
+          : null
+      : null;
+
   function refreshMarket() {
+    if (signedInOwner)
+      setManualSelection({
+        owner: signedInOwner,
+        reload: overviewReload + 1,
+        symbol: selected.symbol,
+        range,
+        watchlist: pickerTab === "watchlist",
+      });
     setOverviewReload((value) => value + 1);
     setChartReload((value) => value + 1);
   }
@@ -455,20 +526,17 @@ export default function WorkspaceShell() {
           <button
             className="text-button"
             type="button"
-            disabled={
-              overview.loading ||
-              overview.refreshing ||
-              (pickerTab === "watchlist" && watchlistQuotes.loading)
-            }
+            disabled={marketRefreshing}
             onClick={refreshMarket}
           >
-            {overview.loading ||
-            overview.refreshing ||
-            (pickerTab === "watchlist" && watchlistQuotes.loading)
-              ? t("market.updating")
-              : t("market.refresh")}
+            {t(marketRefreshing ? "market.updating" : "market.refresh")}
           </button>
         </div>
+        {marketRefreshOutcome && (
+          <p className="overview-notice" role="status">
+            {t(`market.${marketRefreshOutcome}`)}
+          </p>
+        )}
         {overview.error && (
           <p className="overview-notice error" role="status">
             {message(overview.error)}

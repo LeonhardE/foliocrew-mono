@@ -724,6 +724,39 @@ test("manual quote refresh sends the workspace token only to the admitted Market
   }
 });
 
+test("manual market requests use the signed-in transport only for bounded snapshot commands", async () => {
+  const market = "https://market-api-630815932903.northamerica-northeast2.run.app";
+  const harness = mountProvider({
+    env: {
+      NEXT_PUBLIC_API_BASE_URL: market,
+      NEXT_PUBLIC_USER_API_BASE_URL: "https://user.example.com",
+      NODE_ENV: "production",
+    },
+  });
+  harness.emitUser(user("a"));
+  await settle();
+  const path = "/api/stocks/refresh";
+  const load = (json, route = path) =>
+    harness.actions.requestPrivate("market", route, "a:1", { method: "POST", json });
+  await assert.rejects(load({ kind: "overview" }, "/api/stocks"), /Invalid private API path/);
+  await assert.rejects(
+    load({ kind: "overview", private: "canary" }),
+    /Invalid private API request/,
+  );
+  await assert.rejects(
+    load({ kind: "candles", symbol: "AAPL", range: "all" }),
+    /Invalid private API request/,
+  );
+  for (const command of [{ kind: "overview" }, { kind: "candles", symbol: "AAPL", range: "1d" }]) {
+    await load(command);
+    const [url, options] = harness.requests.at(-1);
+    assert.equal(url, market + path);
+    assert.deepEqual(JSON.parse(options.body), command);
+    assert.equal(options.headers.Authorization, "Bearer test-token-a");
+  }
+  assert.equal(harness.requests.length, 3);
+});
+
 test("private User recovery reads use only the same-origin POST proxy", async () => {
   const harness = mountProvider({
     env: { NEXT_PUBLIC_USER_API_BASE_URL: "https://user.example.test" },
