@@ -148,6 +148,19 @@
   border-radius: 8px;
   margin-top: 18px;
 }
+.connectMessage {
+  display: block;
+  width: 100%;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--raised);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.6;
+  resize: vertical;
+}
 .warning {
   background: var(--panel);
   border: 1px solid var(--negative);

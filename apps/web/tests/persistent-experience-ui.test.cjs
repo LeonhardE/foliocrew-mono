@@ -4,18 +4,22 @@ const assert = require("node:assert/strict"),
 const { renderToStaticMarkup } = require("react-dom/server"),
   { createTranslator } = require("next-intl");
 const { compile } = require("./resource-library-helpers.cjs");
+const { all, hooks, jsx: testJsx } = require("./resource-ui-harness.cjs");
 const jsx = require("react/jsx-runtime");
+const connectionContracts = compile("../lib/agent-connections.ts");
 function render(locale, unlocked, plan, credential = null, duration = null, state = {}) {
+  const ui = state.interact ? hooks() : null;
   const imports = {
-    react: React,
+    react: ui?.react ?? React,
     "@/lib/provider-groups": compile("../lib/provider-groups.ts"),
+    "@/lib/agent-connections": connectionContracts,
     "./ProviderMark": {
       ProviderMark: ({ provider }) =>
         React.createElement("span", { "data-provider": provider }, provider),
     },
     "./ReportDialog": { ReportDialog: () => null },
     "./WorkspaceFeedback": { LoadingIndicator: () => null, InlineError: () => null },
-    "react/jsx-runtime": jsx,
+    "react/jsx-runtime": ui ? { jsx: testJsx, jsxs: testJsx } : jsx,
     "next-intl": {
       useLocale: () => locale,
       useTranslations: (namespace) =>
@@ -42,6 +46,7 @@ function render(locale, unlocked, plan, credential = null, duration = null, stat
   };
   const components = compile("../components/PersistentAgentsPanel.tsx", imports, {
     Intl,
+    navigator: state.navigator,
     Date:
       state.now === undefined
         ? Date
@@ -63,10 +68,10 @@ function render(locale, unlocked, plan, credential = null, duration = null, stat
     phase: unlocked ? "unlocked" : "locked",
     canWriteState: unlocked,
     busy: false,
-    ...state.workspace,
     unlock() {
       throw Error("render cannot unlock");
     },
+    ...state.workspace,
   };
   const model = {
     owner: "owner_A",
@@ -119,15 +124,96 @@ function render(locale, unlocked, plan, credential = null, duration = null, stat
         }
       : {}),
   };
-  return renderToStaticMarkup(
-    React.createElement(Panel, {
-      workspace,
-      model,
-      origin: "https://agent-hub-api-123456789.northamerica-northeast2.run.app",
-      active: state.active ?? true,
-    }),
-  );
+  const props = {
+    workspace,
+    model,
+    origin: "https://agent-hub-api-123456789.northamerica-northeast2.run.app",
+    brandOrigin: state.brandOrigin,
+    active: !ui && (state.active ?? true),
+  };
+  return ui
+    ? state.interact(() => ui.render(() => Panel(props)))
+    : renderToStaticMarkup(React.createElement(Panel, props));
 }
+test("Agent management offers Passkey setup before unlock for a new account", () => {
+  let created = false;
+  render("en", false, null, null, null, {
+    workspace: {
+      phase: "needs-vault",
+      vaultConfigured: true,
+      create() {
+        created = true;
+      },
+    },
+    interact(view) {
+      const tree = view();
+      const button = all(
+        tree,
+        (node) => node.type === "button" && node.props.children === "Set up Passkey",
+      )[0];
+      assert.ok(button);
+      assert.equal(button.props.disabled, false);
+      assert.equal(
+        all(tree, (node) => node.type === "button" && node.props.children === "Unlock").length,
+        0,
+      );
+      button.props.onClick();
+    },
+  });
+  assert.equal(created, true);
+});
+
+test("Agent connection messages copy the exact localized text and the branded address", async () => {
+  const brand = connectionContracts.BRANDED_AGENT_ORIGIN;
+  const endpoint = brand + "/mcp/v3";
+  const writes = [];
+  const button = (tree, label) =>
+    all(tree, (node) => node.type === "button" && node.props.children === label)[0];
+  const message = (tree) => all(tree, (node) => node.type === "textarea")[0].props.value;
+  const addressFromMessage = (value) => value.match(/https:\/\/[^\s。，]+(?=[。，]|\.\s)/)?.[0];
+  await render("zh", true, null, null, null, {
+    brandOrigin: brand,
+    model: { views: [] },
+    navigator: {
+      clipboard: {
+        async writeText(value) {
+          writes.push(value);
+        },
+      },
+    },
+    async interact(view) {
+      button(view(), "连接 Muse").props.onClick();
+      const muse = message(view());
+      assert.match(muse, /^请帮我添加/);
+      assert.equal(addressFromMessage(muse), endpoint);
+      assert.match(muse, /foliocrew-muse-prod/);
+      await button(view(), "复制消息").props.onClick();
+      assert.deepEqual(writes, [muse]);
+      assert.ok(button(view(), "已复制"));
+
+      button(view(), "连接 ChatGPT").props.onClick();
+      const chatgpt = message(view());
+      assert.match(chatgpt, /^请帮我在 ChatGPT/);
+      assert.equal(addressFromMessage(chatgpt), endpoint);
+      assert.doesNotMatch(chatgpt, /foliocrew-muse-prod|val010/);
+      await button(view(), "复制消息").props.onClick();
+      assert.deepEqual(writes, [muse, chatgpt]);
+    },
+  });
+  render("en", true, null, null, null, {
+    model: { views: [] },
+    interact(view) {
+      button(view(), "Connect Muse").props.onClick();
+      const guide = message(view());
+      assert.match(guide, /^Help me add/);
+      assert.equal(
+        addressFromMessage(guide),
+        "https://agent-hub-api-123456789.northamerica-northeast2.run.app/mcp/v3",
+      );
+      assert.doesNotMatch(guide, /Client ID/);
+    },
+  });
+});
 test("connection management links private tasks back to the task center and conceals them while locked", () => {
   for (const locale of ["zh", "en"]) {
     const open = render(locale, true, { reported: null, observed: { receivedAt: 1001 } });

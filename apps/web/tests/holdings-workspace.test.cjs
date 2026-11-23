@@ -3989,6 +3989,7 @@ function agentUnlockView(h) {
       "react/jsx-runtime": { jsx, jsxs: jsx },
       "next-intl": { useTranslations: () => (key) => key, useLocale: () => "en" },
       "@/lib/provider-groups": component("../lib/provider-groups.ts"),
+      "@/lib/agent-connections": component("../lib/agent-connections.ts"),
       "./ProviderMark": { ProviderMark: () => null },
       "./ReportDialog": { ReportDialog: () => null },
       "./WorkspaceFeedback": { LoadingIndicator: () => null, InlineError: () => null },
