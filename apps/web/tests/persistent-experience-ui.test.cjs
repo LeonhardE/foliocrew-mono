@@ -30,14 +30,15 @@ function render(locale, unlocked, plan, credential = null, duration = null, stat
         }),
     },
     "./AuthProvider": {
-      useAuth: () => ({
-        requestNativeAccount: async () => {
-          throw Error("render cannot authorize");
+      useAuth: () =>
+        state.auth ?? {
+          requestNativeAccount: async () => {
+            throw Error("render cannot authorize");
+          },
         },
-      }),
     },
-    "@/lib/native-owner-bridge": {},
-    "@/lib/agent-authorization": {},
+    "@/lib/native-owner-bridge": state.native ?? {},
+    "@/lib/agent-authorization": { agentAuthorizationHandoff: () => state.pairing ?? null },
     "@/lib/persistent-experience-controller": {
       DEFAULT_CONNECTION_SECONDS: 7776000,
       TEMPORARY_CONNECTION_SECONDS: 900,
@@ -47,6 +48,9 @@ function render(locale, unlocked, plan, credential = null, duration = null, stat
   const components = compile("../components/PersistentAgentsPanel.tsx", imports, {
     Intl,
     navigator: state.navigator,
+    window: state.window,
+    setTimeout: () => 0,
+    clearTimeout: () => {},
     Date:
       state.now === undefined
         ? Date
@@ -129,7 +133,7 @@ function render(locale, unlocked, plan, credential = null, duration = null, stat
     model,
     origin: "https://agent-hub-api-123456789.northamerica-northeast2.run.app",
     brandOrigin: state.brandOrigin,
-    active: !ui && (state.active ?? true),
+    active: state.active ?? !ui,
   };
   return ui
     ? state.interact(() => ui.render(() => Panel(props)))
@@ -163,6 +167,136 @@ test("Agent management offers Passkey setup before unlock for a new account", ()
   assert.equal(created, true);
 });
 
+test("account-only confirmation returns to the original authorization with a locked vault", async () => {
+  const bridge = { close() {} };
+  const approvals = [];
+  let returned = false;
+  await render("en", false, null, null, null, {
+    active: true,
+    workspace: { vault: { vaultId: "vault_A" }, canWriteState: false },
+    window: {
+      location: { hash: "", search: "?native_request=synthetic" },
+      history: { replaceState() {} },
+      close() {
+        returned = true;
+      },
+    },
+    native: {
+      nativeHandoff: () => ({ requestId: "synthetic" }),
+      async connectNativeOwnerBridge() {
+        return bridge;
+      },
+    },
+    auth: {
+      async requestNativeAccount(peer, operation, input, owner) {
+        assert.equal(peer, bridge);
+        assert.equal(owner, "owner_A");
+        if (operation === "pending") return { provider: "muse" };
+        approvals.push(input.vaultId);
+        return { state: "connected", authority: "account_link_only" };
+      },
+    },
+    async interact(view) {
+      const button = (label) =>
+        all(view(), (node) => node.type === "button" && node.props.children === label)[0];
+      view();
+      await Promise.resolve();
+      view();
+      await Promise.resolve();
+      const confirm = button("Confirm account");
+      assert.equal(confirm.props.disabled, false);
+      assert.equal(button("Unlock"), undefined);
+      confirm.props.onClick();
+      await new Promise(setImmediate);
+      assert.deepEqual(approvals, ["vault_A"]);
+      button("Back to authorization window").props.onClick();
+      assert.equal(returned, true);
+    },
+  });
+});
+
+test("a newly linked account shows its next step on the current provider card without a history list", () => {
+  const now = 1_800_000_000;
+  const current = {
+    connection: {
+      provider: "muse",
+      connectionId: "current",
+      status: "active",
+      accountState: "connected",
+      linkedAt: now - 2000,
+    },
+    credential: { status: "expired", expiresAt: now - 600, reference: { connectionId: "current" } },
+    tasks: [],
+  };
+  for (const [accountState, secondsAgo, badge, action] of [
+    ["connecting", 1, "Waiting for account link", null],
+    ["connecting", 300, "Account link timed out", "Restart account link"],
+    ["connected", 1, "Waiting for final approval", "Continue connection"],
+  ]) {
+    const replacement = {
+      connection: {
+        provider: "muse",
+        connectionId: "newer",
+        status: "active",
+        accountState,
+        linkedAt: now - secondsAgo,
+      },
+      identity: null,
+      credential: null,
+      tasks: [],
+    };
+    const html = render("en", true, null, null, null, {
+      now,
+      model: {
+        views: [current, replacement],
+        providerStates: { muse: { slot: { currentCredential: current.credential.reference } } },
+      },
+    });
+    assert.ok(html.includes(badge));
+    if (action) assert.ok(html.includes(action));
+    else assert.doesNotMatch(html, /Restart account link|Authorize again/);
+    assert.doesNotMatch(html, /Connection history|Previous connection|Authorization needed/);
+    assert.equal(html.split("Unlink account").length - 1, 1);
+  }
+});
+
+test("an unlocked workspace opens the pairing review without approving it", async () => {
+  const pairing = { setupIntentId: "synthetic_intent" };
+  let inspected = 0;
+  await render("en", true, null, null, null, {
+    active: true,
+    pairing,
+    native: { nativeHandoff: () => null },
+    window: {
+      location: { hash: "#synthetic", search: "" },
+      history: { replaceState() {} },
+    },
+    model: {
+      async execute(request) {
+        return request({
+          inspectAuthorization(value) {
+            assert.equal(value, pairing);
+            inspected++;
+            return { connection: { provider: "muse" }, tasks: [] };
+          },
+          authorize() {
+            throw Error("the Owner has not approved");
+          },
+        });
+      },
+    },
+    async interact(view) {
+      view();
+      await new Promise(setImmediate);
+      const buttons = all(view(), (node) => node.type === "button").map(
+        (node) => node.props.children,
+      );
+      assert.ok(buttons.includes("Authorize and connect"));
+      assert.equal(inspected, 1);
+    },
+  });
+});
+
 test("Agent connection messages copy the exact localized text and the branded address", async () => {
   const brand = connectionContracts.BRANDED_AGENT_ORIGIN;
   const endpoint = brand + "/mcp/v3";
@@ -170,7 +304,8 @@ test("Agent connection messages copy the exact localized text and the branded ad
   const button = (tree, label) =>
     all(tree, (node) => node.type === "button" && node.props.children === label)[0];
   const message = (tree) => all(tree, (node) => node.type === "textarea")[0].props.value;
-  const addressFromMessage = (value) => value.match(/https:\/\/[^\s。，]+(?=[。，]|\.\s)/)?.[0];
+  const addressFromMessage = (value) =>
+    value.split("\n").find((line) => line.startsWith("https://"));
   await render("zh", true, null, null, null, {
     brandOrigin: brand,
     model: { views: [] },
@@ -425,11 +560,11 @@ test("expiry changes at the exact credential deadline and account unlinking foll
         render(locale, unlocked, null, null, null, { now: clock, model });
       const earlier = at(now - 1);
       assert.ok(earlier.includes(valid));
-      assert.equal(earlier.split(expired).length - 1, 1);
+      assert.equal(earlier.split(expired).length - 1, 0);
       for (const clock of [now, now + 1]) {
         const out = at(clock);
-        assert.equal(out.split(expired).length - 1, 2);
-        assert.equal(out.split(unlink).length - 1, 2);
+        assert.equal(out.split(expired).length - 1, 1);
+        assert.equal(out.split(unlink).length - 1, 1);
         assert.ok(!out.includes(valid));
       }
       const locked = at(now, false);
