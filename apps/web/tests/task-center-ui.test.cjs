@@ -316,7 +316,7 @@ test("legacy task settings wait for the selected assignment and retain it when d
   }
 });
 
-test("resource handoffs wait for the catalogue and let owners review task-specific resource rules", () => {
+test("resource handoffs wait for the catalogue and review resources without freshness controls", () => {
   const { hooks, jsx, all } = require("./resource-ui-harness.cjs"),
     h = hooks();
   let started = 0,
@@ -375,7 +375,10 @@ test("resource handoffs wait for the catalogue and let owners review task-specif
       "@/lib/task-types": { bindingKey: JSON.stringify },
       "./ReportDialog": { ReportDialog: () => null },
       "./WorkspaceFeedback": { LoadingIndicator, InlineError },
-      "./TaskCenterPanel.module.css": { __esModule: true, default: {} },
+      "./TaskCenterPanel.module.css": {
+        __esModule: true,
+        default: { advancedOptions: "advancedOptions" },
+      },
     },
     { Intl, Date },
   );
@@ -404,30 +407,22 @@ test("resource handoffs wait for the catalogue and let owners review task-specif
   assert.equal(consumed, 1);
   model.setForm({ ...model.form, name: "Synthetic task", goal: "Use only the test resource" });
   const next = (view) => all(view, (n) => n.type === "button" && n.props.children === "next")[0];
-  next(draw()).props.onClick();
-  const ruleInput = (label) => {
-    const row = all(draw(), (n) => n.type === "label" && n.props.children.includes?.(label))[0];
-    assert.ok(row, label);
-    return all(row, (n) => n.type === "input")[0];
-  };
-  assert.equal(ruleInput("unknownAsOf").props.checked, false);
-  assert.equal(ruleInput("partial").props.checked, false);
-  assert.equal(ruleInput("maxAge").props.value, 1440);
-  ruleInput("unknownAsOf").props.onChange({ target: { checked: true } });
-  ruleInput("partial").props.onChange({ target: { checked: true } });
-  ruleInput("maxAge").props.onChange({ target: { value: "4320" } });
-  assert.deepEqual(
-    { ...model.form.inputPolicy },
-    {
-      allowPartial: true,
-      allowUnknownAsOf: true,
-      maxFetchedAgeSeconds: 259200,
-    },
+  const details = all(
+    draw(),
+    (n) => n.type === "details" && n.props.className === "advancedOptions",
+  )[0];
+  assert.ok(
+    all(details, (n) => n.type === "label" && n.props.children.includes("reportLanguage")).length,
   );
+  const assertNoRules = (view) => {
+    for (const label of ["inputPolicy", "unknownAsOf", "partial", "maxAge"])
+      assert.equal(all(view, (n) => [n.props.children].flat().includes(label)).length, 0);
+    assert.ok(all(view, (n) => n.props.children === "resources").length);
+  };
   next(draw()).props.onClick();
-  const review = draw();
-  for (const label of ["unknownAsOf", "partial", "maxAge"])
-    assert.ok(all(review, (n) => n.type === "div" && n.props.children.includes?.(label)).length);
+  assertNoRules(draw());
+  next(draw()).props.onClick();
+  assertNoRules(draw());
   h.close();
 });
 

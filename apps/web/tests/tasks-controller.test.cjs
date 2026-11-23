@@ -532,19 +532,21 @@ function harness({
   };
 }
 
-test("task semantics: brief requires resources; custom supports zero; sections and policies are bounded", () => {
+test("task semantics: brief requires resources; custom supports zero; sections are bounded and legacy input rules are ignored", () => {
   assert.equal(forms.reviewTask(content(), []).valid, true);
   assert.equal(forms.reviewTask(content({ template: "brief" }), []).valid, false);
   assert.equal(forms.reviewTask(content({ template: "brief" }), [binding()]).valid, true);
-  assert.ok(
-    forms
-      .reviewTask(
-        content({
-          inputPolicy: { allowPartial: true, allowUnknownAsOf: false, maxFetchedAgeSeconds: -1 },
-        }),
-        [],
-      )
-      .errors.includes("inputPolicy"),
+  const old = content({
+    inputPolicy: { allowPartial: false, allowUnknownAsOf: false, maxFetchedAgeSeconds: 0 },
+  });
+  assert.equal(forms.reviewTask(old, []).valid, true);
+  assert.deepEqual(
+    { ...forms.defaultTask().inputPolicy },
+    {
+      allowPartial: true,
+      allowUnknownAsOf: true,
+      maxFetchedAgeSeconds: 604800,
+    },
   );
   const invalid = content();
   invalid.outputSpec.sections.push(clone(invalid.outputSpec.sections[0]));
@@ -670,6 +672,7 @@ test("explicit preview+review required; save transports only original ciphertext
   assert.equal(write.route, "/api/v2/tasks");
   assert.ok(!JSON.stringify(write).includes("PRIVATE_"));
   assert.equal(h.seals.length, 1);
+  assert.deepEqual(h.seals[0].content.inputPolicy, { ...forms.defaultTask().inputPolicy });
   h.unmount();
 });
 test("editing invalidates confirmed review; resource/epoch/recipient changes have distinct explicit reasons", async () => {

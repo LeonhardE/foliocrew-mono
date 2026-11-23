@@ -13,7 +13,7 @@ import type {
 import type { readTaskDetail, TaskDetailRead } from "@/lib/task-detail-read";
 import { TaskOverviewRead } from "@/lib/task-overview";
 import { DisplayLru, hasFreshWorkspaceDisplay, untilSignal } from "@/lib/workspace-cache";
-import { defaultTask, reviewTask, type TaskPreview } from "@/lib/task-forms";
+import { defaultTask, legacyTaskInputPolicy, reviewTask, type TaskPreview } from "@/lib/task-forms";
 import {
   bindingsKey,
   encryptedTask,
@@ -1362,7 +1362,7 @@ export function useTasks(
           const packet =
             action === "save"
               ? await live.current.workspace.sealTask({
-                  content: snapshot.form!,
+                  content: { ...snapshot.form!, inputPolicy: legacyTaskInputPolicy() },
                   resourceBindings: snapshot.bindings,
                   current: head,
                   taskId: current.taskId,

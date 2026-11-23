@@ -872,10 +872,6 @@
     "resourceUnavailable": "Unavailable — refresh resources before selecting",
     "notPrepared": "Encrypted agent copy is not prepared yet",
     "noResources": "No selectable resources. You can still create a custom task.",
-    "inputPolicy": "Resource rules",
-    "partial": "Allow partial resources",
-    "unknownAsOf": "Allow unknown data timestamps",
-    "maxAge": "Maximum fetch age (minutes)",
     "output": "Result format",
     "label": "Result label",
     "language": "Language",
@@ -994,7 +990,6 @@
       "goal": "Describe the task (up to 2,000 characters).",
       "template": "Choose a supported template.",
       "resources": "A brief needs at least one available resource; select up to 10 unique resources.",
-      "inputPolicy": "Fetch age must be between 1 minute and 7 days.",
       "output": "Check the result label, language and detail level.",
       "sections": "Use 1–8 uniquely identified sections with titles.",
       "expectation": "Check the delivery time, time zone and arrival window."
