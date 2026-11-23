@@ -21,11 +21,13 @@ import {
   type NativeOwnerBridge,
 } from "@/lib/native-owner-bridge";
 import { providerGroups } from "@/lib/provider-groups";
+import { BRANDED_AGENT_ORIGIN } from "@/lib/agent-connections";
 import { ProviderMark } from "./ProviderMark";
 import { ReportDialog } from "./ReportDialog";
 import { LoadingIndicator, InlineError } from "./WorkspaceFeedback";
 import styles from "./AgentsPanel.module.css";
 const CONTRACT = "folioview.agent-workspace.v2.0";
+const PUBLIC_MUSE_CLIENT_ID = "foliocrew-muse-prod";
 type Json = Record<string, any>;
 const providerName = (provider: string) => (provider === "chatgpt" ? "ChatGPT" : "Muse");
 export function AgentConnectionDuration({
@@ -263,6 +265,21 @@ export function PersistentAgentsPanel({
     canChangeConnection = ready && !readError && !model.busy;
   const groups = providerGroups(ready ? model.views : [], ready ? model.providerStates : {}, now);
   const helpHasConnection = Boolean(groups.find((group) => group.provider === help)?.current);
+  const connectorOrigin = brandOrigin ?? origin;
+  const connectorAddress = connectorOrigin && `${connectorOrigin}/mcp/v3`;
+  const connectionPrompt =
+    connectorAddress && help
+      ? help === "chatgpt"
+        ? t("chatgptConnectionPrompt", { address: connectorAddress })
+        : connectorOrigin === BRANDED_AGENT_ORIGIN
+          ? t("museConnectionPromptWithClient", {
+              address: connectorAddress,
+              clientId: PUBLIC_MUSE_CLIENT_ID,
+            })
+          : t("museConnectionPrompt", { address: connectorAddress })
+      : null;
+  const needsPasskey = workspace.phase === "needs-vault";
+  const checkingPasskey = workspace.phase === "checking";
   const taskLink = (event: MouseEvent<HTMLAnchorElement>, taskId: string) => {
     if (
       event.button === 0 &&
@@ -331,17 +348,26 @@ export function PersistentAgentsPanel({
         </div>
       ) : !model.unlocked ? (
         <div className={styles.unlock}>
-          <p>{t("unlockHelp")}</p>
-          {workspace.phase === "needs-device" ? (
+          <p role={checkingPasskey ? "status" : undefined}>
+            {t(checkingPasskey ? "loading" : needsPasskey ? "setUpPasskeyHelp" : "unlockHelp")}
+          </p>
+          {checkingPasskey ? null : workspace.phase === "needs-device" ? (
             <a href="/settings">{t("deviceNeeded")}</a>
           ) : (
             <button
               className={styles.primary}
-              disabled={!!workspace.busy}
-              onClick={() => void workspace.unlock({ forResults: true, enableState: true })}
+              disabled={Boolean(workspace.busy || (needsPasskey && !workspace.vaultConfigured))}
+              onClick={() =>
+                void (needsPasskey
+                  ? workspace.create()
+                  : workspace.unlock({ forResults: true, enableState: true }))
+              }
             >
-              {t("unlock")}
+              {t(needsPasskey ? "setUpPasskey" : "unlock")}
             </button>
+          )}
+          {needsPasskey && workspace.error && (
+            <a href="/settings#settings-security-title">{t("passkeySettings")}</a>
           )}
         </div>
       ) : null}
@@ -503,8 +529,11 @@ export function PersistentAgentsPanel({
                   <ProviderMark provider={group.provider} />
                   <h2>{providerName(group.provider)}</h2>
                 </div>
-                <span className={styles.stateBadge} data-checking={checking || refreshing}>
-                  {t(value)}
+                <span
+                  className={styles.stateBadge}
+                  data-checking={checkingPasskey || checking || refreshing}
+                >
+                  {t(checkingPasskey ? "loading" : needsPasskey ? "passkeyRequired" : value)}
                 </span>
               </div>
               {expiry && <p className={styles.note}>{expiry}</p>}
@@ -526,7 +555,7 @@ export function PersistentAgentsPanel({
               <div className={styles.actions}>
                 <button
                   className={styles.primary}
-                  disabled={!origin || !model.enabled || !canChangeConnection}
+                  disabled={!connectorAddress || !model.enabled || !canChangeConnection}
                   onClick={() => {
                     setHelp(group.provider);
                     setCopied(false);
@@ -605,25 +634,36 @@ export function PersistentAgentsPanel({
         closeLabel={t("close")}
         onClose={() => setHelp(null)}
       >
-        <p>
-          {t(helpHasConnection ? "reconnectHelp" : "connectHelp", {
-            provider: providerName(help ?? "muse"),
-          })}
-        </p>
-        <button
-          className={styles.secondary}
-          disabled={!origin}
-          onClick={async () => {
-            try {
-              await navigator.clipboard.writeText(origin + "/mcp/v3");
-              setCopied(true);
-            } catch {
-              setCopied(false);
-            }
-          }}
-        >
-          {t(copied ? "copied" : "copyAddress")}
-        </button>
+        {help && connectionPrompt && (
+          <>
+            <p id="connect-agent-instructions">
+              {t(helpHasConnection ? "reconnectHelp" : "connectHelp", {
+                provider: providerName(help),
+              })}
+            </p>
+            <textarea
+              aria-label={t("connectionMessage")}
+              aria-describedby="connect-agent-instructions"
+              className={styles.connectMessage}
+              rows={7}
+              value={connectionPrompt}
+              readOnly
+            />
+            <button
+              className={styles.secondary}
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(connectionPrompt);
+                  setCopied(true);
+                } catch {
+                  setCopied(false);
+                }
+              }}
+            >
+              {t(copied ? "copied" : "copyConnectionMessage")}
+            </button>
+          </>
+        )}
       </ReportDialog>
       {workspace.authenticated && model.loaded && !model.enabled && !model.busy && (
         <p className={styles.note}>{t("notReady")}</p>
