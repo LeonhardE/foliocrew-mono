@@ -1794,6 +1794,8 @@
     "retry": "Retry",
     "updating": "Updating prices",
     "refreshError": "Some prices could not be updated. Available values are retained.",
+    "quoteRefreshUnchanged": "Checked prices. No newer quotes were received.",
+    "quoteRefreshUpdated": "Updated quotes ({count}).",
     "quoteDailyLimit": "The shared daily quote limit has been reached. Earlier prices are shown where available.",
     "quoteMinuteLimit": "Quote requests are temporarily limited. Try refreshing shortly.",
     "stale": "Some values use earlier market observations or daily reference FX. See the timestamps below.",

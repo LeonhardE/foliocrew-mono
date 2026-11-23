@@ -80,7 +80,7 @@ export async function loadHoldingsPrices(args: {
   fetch: Fetch;
   publish: (prices: PriceSet, progress: PriceProgress) => void;
   now?: () => number;
-}): Promise<{ prices: PriceSet; error: boolean }> {
+}): Promise<{ prices: PriceSet; error: boolean; updatedQuotes: number | null }> {
   const request = args.fetch,
     now = args.now ?? Date.now,
     at = new Date(now()).toISOString(),
@@ -259,5 +259,23 @@ export async function loadHoldingsPrices(args: {
   }
   prices.error = error;
   prices.readAt = now();
-  return { prices, error: error || Boolean(prices.quoteLimit) };
+  const failed = error || Boolean(prices.quoteLimit);
+  let updatedQuotes: number | null = null;
+  if (args.refresh && !failed) {
+    const previousQuotes = new Map(
+      args.previous?.quotes.flatMap((batch) =>
+        batch.items.map((quote) => [instrumentKey(quote.instrument), quote] as const),
+      ),
+    );
+    updatedQuotes = prices.quotes
+      .flatMap((batch) => batch.items)
+      .filter((quote) => {
+        if (quote.price === null) return false;
+        const previous = previousQuotes.get(instrumentKey(quote.instrument));
+        return (
+          !previous || quote.price !== previous.price || quote.sourceAsOf !== previous.sourceAsOf
+        );
+      }).length;
+  }
+  return { prices, error: failed, updatedQuotes };
 }

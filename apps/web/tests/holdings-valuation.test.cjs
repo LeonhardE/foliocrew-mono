@@ -751,6 +751,24 @@ test("explicit refresh rereads available server caches; failed updates preserve 
   assert.equal(calls.length, 2);
   assert.ok(calls.every((u) => u.endsWith("cached=true")));
   assert.equal(fresh.error, false);
+  assert.equal(fresh.updatedQuotes, 0);
+  const updated = await loader.loadHoldingsPrices({
+    facts: f,
+    currency: "CNY",
+    previous: original,
+    refresh: true,
+    origin: "",
+    signal: new AbortController().signal,
+    now: () => Date.parse(at) + 1,
+    publish() {},
+    fetch: async (url) =>
+      reply(
+        url.includes("/fx")
+          ? original.fx
+          : batch(original.quotes[0].items.map((row, n) => (n ? row : { ...row, price: "125" }))),
+      ),
+  });
+  assert.equal(updated.updatedQuotes, 1);
   const failed = await loader.loadHoldingsPrices({
     facts: f,
     currency: "CNY",
@@ -765,6 +783,7 @@ test("explicit refresh rereads available server caches; failed updates preserve 
     },
   });
   assert.equal(failed.error, true);
+  assert.equal(failed.updatedQuotes, null);
   assert.equal(failed.prices.error, true);
   assert.equal(api.valuePortfolio(f, failed.prices, "CNY").subtotal, "100");
   assert.equal(api.valuePortfolio(f, failed.prices, "CNY").stale, true);
