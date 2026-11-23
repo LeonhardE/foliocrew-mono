@@ -10,7 +10,14 @@ from functools import lru_cache
 from fastapi import HTTPException
 
 from .cost_controls import MarketLimited
-from .market_cache import CacheUnavailable, MarketCache, bounded_int, create_cache
+from .market_cache import (
+    RECENT_CACHE,
+    YAHOO_COOLDOWN,
+    CacheUnavailable,
+    MarketCache,
+    bounded_int,
+    create_cache,
+)
 from .mock_data import mock_range_candles
 from .yahoo_provider import (
     ALIASES,
@@ -50,7 +57,9 @@ class MarketService:
             raise CacheUnavailable
         if refresh:
             self.cache.invalidate(key)
-        entry = self.cache.get(key)
+        return self.usable_entry(self.cache.get(key), now)
+
+    def usable_entry(self, entry, now):
         return entry if entry and now - entry.updated_at <= self.stale_seconds else None
 
     def fresh(self, entry, now):
@@ -130,7 +139,7 @@ class MarketService:
             "warning": warning,
         }
 
-    def overview(self, *, cached_only=False):
+    def overview(self, *, cached_only=False, manual=False):
         if self.source == "mock":
             return {
                 "stocks": [self.summary(self.mock_candles(item)) for item in DEFAULT_INSTRUMENTS],
@@ -163,21 +172,36 @@ class MarketService:
                         if item["latestClose"] is not None:
                             item["isStale"] = original["isStale"]
                 return {**result, "refreshRequired": needs_refresh}
-            if self.fresh(previous, now):
+            if not manual and self.fresh(previous, now):
                 return self.public_payload(previous.value)
-            existing = {
-                item.symbol: self.cached(f"candles:{item.symbol}", now)
-                for item in DEFAULT_INSTRUMENTS
-            }
+            if manual:
+                reason = self.cache.claim("overview:v1", now, manual=True)
+                if reason == RECENT_CACHE:
+                    latest = self.cached("overview:v1", now, refresh=True)
+                    if latest:
+                        return self.public_payload(latest.value)
+                if reason:
+                    return self.fallback_overview(now, previous, reason)
+            keys = {item.symbol: f"candles:{item.symbol}" for item in DEFAULT_INSTRUMENTS}
+            if manual:
+                entries = self.cache.get_many(list(keys.values()))
+                existing = {
+                    symbol: self.usable_entry(entries.get(key), now) for symbol, key in keys.items()
+                }
+            else:
+                existing = {symbol: self.cached(key, now) for symbol, key in keys.items()}
             due = [
-                item for item in DEFAULT_INSTRUMENTS if not self.fresh(existing[item.symbol], now)
+                item
+                for item in DEFAULT_INSTRUMENTS
+                if manual or not self.fresh(existing[item.symbol], now)
             ]
-            reason = self.cache.claim("overview:v1", now, cost=len(due))
-            if reason:
-                return self.fallback_overview(now, previous, reason)
+            if not manual:
+                reason = self.cache.claim("overview:v1", now, cost=len(due))
+                if reason:
+                    return self.fallback_overview(now, previous, reason)
             values = self.provider.history(due, now) if due else {}
             if due and not values:
-                self.cache.fail("overview:v1", now)
+                self.cache.fail("overview:v1", now, cool_provider=not manual)
                 return self.fallback_overview(now, previous)
             stocks = []
             missing = []
@@ -218,7 +242,7 @@ class MarketService:
             if missing:
                 result["_refreshAfter"] = min(result["_refreshAfter"], now + 300)
             self.cache.put("overview:v1", result, now)
-            if missing:
+            if missing and not manual:
                 # A partial/empty batch often represents upstream throttling. Do
                 # not immediately repeat the missing calls from the detail page.
                 self.cache.fail("partial_batch", now)
@@ -227,10 +251,16 @@ class MarketService:
             return self.public_payload(result)
         except UpstreamError as error:
             try:
-                self.cache.fail("overview:v1", now, rate_limited=error.rate_limited)
+                self.cache.fail(
+                    "overview:v1",
+                    now,
+                    rate_limited=error.rate_limited,
+                    cool_provider=not manual or error.rate_limited,
+                )
             except CacheUnavailable:
                 pass
-            return self.fallback_overview(now, previous)
+            warning = YAHOO_COOLDOWN if manual and error.rate_limited else UNAVAILABLE
+            return self.fallback_overview(now, previous, warning)
         except CacheUnavailable as error:
             if cached_only:
                 raise HTTPException(503, SHARED_CACHE_WARNING) from error
@@ -308,10 +338,11 @@ class MarketService:
             "warning": None,
         }
 
-    def resolve_instrument(self, symbol, now):
+    def resolve_instrument(self, symbol, now, *, manual=False):
         if symbol in DEFAULT_BY_SYMBOL:
             return DEFAULT_BY_SYMBOL[symbol]
-        cached = self.cached(f"instrument:{symbol}", now)
+        instrument_key = f"instrument:{symbol}"
+        cached = self.cache.get(instrument_key) if manual else self.cached(instrument_key, now)
         if cached:
             return Instrument(**cached.value)
         # Only validated US equities returned by search can be downloaded. An
@@ -323,8 +354,10 @@ class MarketService:
                 return Instrument(**cached.value)
         raise HTTPException(404, "US stock symbol not found")
 
-    def candles(self, raw_symbol, chart_range="1m", *, cached_only=False):
-        result = self._range_candles(raw_symbol, chart_range, cached_only=cached_only)
+    def candles(self, raw_symbol, chart_range="1m", *, cached_only=False, manual=False):
+        result = self._range_candles(
+            raw_symbol, chart_range, cached_only=cached_only, manual=manual
+        )
         if result is None:
             return None
         # Quote identity is independent of the viewed chart range. Decorate only
@@ -335,10 +368,17 @@ class MarketService:
         elif self.source == "mock":
             canonical = self.mock_candles(DEFAULT_BY_SYMBOL[result["symbol"]])
         else:
+            if manual and result["symbol"] not in DEFAULT_BY_SYMBOL:
+                try:
+                    canonical = self._range_candles(result["symbol"], manual=True)
+                    if canonical and canonical.get("warning") and not result.get("warning"):
+                        result = {**result, "warning": canonical["warning"]}
+                except HTTPException as error:
+                    result = {**result, "warning": result.get("warning") or error.detail}
             try:
                 now = self.clock()
-                entry = self.cached(f"candles:{result['symbol']}", now)
-                if entry:
+                entry = self.cached(f"candles:{result['symbol']}", now, refresh=manual)
+                if entry and canonical is None:
                     canonical = self.with_status(entry.value, entry.updated_at, now)
             except (CacheUnavailable, MarketLimited):
                 # Optional quote enrichment may be omitted after a denied read.
@@ -381,7 +421,7 @@ class MarketService:
             "previousClose": previous,
         }
 
-    def _range_candles(self, raw_symbol, chart_range="1m", *, cached_only=False):
+    def _range_candles(self, raw_symbol, chart_range="1m", *, cached_only=False, manual=False):
         if chart_range not in HISTORY_RANGES:
             raise HTTPException(400, "Choose one of these chart ranges: 1d, 1w, 1m, 3m, 1y")
         symbol = canonical_symbol(raw_symbol)
@@ -413,13 +453,13 @@ class MarketService:
                     ),
                     "refreshRequired": needs_refresh,
                 }
-            if self.fresh(previous, now):
+            if not manual and self.fresh(previous, now):
                 return self.with_status(previous.value, previous.updated_at, now)
             if symbol in DEFAULT_BY_SYMBOL and chart_range == "1m":
                 # Default charts and the overview share one refresh lease.
                 # This prevents separate page requests downloading AAPL twice
                 # and a slower older response replacing a newer batch result.
-                overview = self.overview()
+                overview = self.overview(manual=True) if manual else self.overview()
                 refreshed = self.cached(key, now, refresh=True)
                 if refreshed:
                     return self.with_status(
@@ -431,7 +471,13 @@ class MarketService:
                     headers={"Retry-After": "5"},
                 )
             item = self.resolve_instrument(symbol, now)
-            reason = self.cache.claim(key, now)
+            reason = (
+                self.cache.claim(key, now, manual=True) if manual else self.cache.claim(key, now)
+            )
+            if reason == RECENT_CACHE and manual:
+                latest = self.cached(key, now, refresh=True)
+                if latest:
+                    return self.with_status(latest.value, latest.updated_at, now)
             if reason:
                 if previous:
                     return self.with_status(previous.value, previous.updated_at, now, reason)
@@ -448,12 +494,20 @@ class MarketService:
             return self.public_payload(payload)
         except UpstreamError as error:
             try:
-                self.cache.fail(key, now, rate_limited=error.rate_limited)
+                self.cache.fail(
+                    key,
+                    now,
+                    rate_limited=error.rate_limited,
+                    cool_provider=not manual or error.rate_limited,
+                )
             except CacheUnavailable:
                 pass
+            warning = YAHOO_COOLDOWN if manual and error.rate_limited else STALE
             if previous:
-                return self.with_status(previous.value, previous.updated_at, now, STALE)
-            raise HTTPException(503, UNAVAILABLE) from error
+                return self.with_status(previous.value, previous.updated_at, now, warning)
+            raise HTTPException(
+                503, warning if manual and error.rate_limited else UNAVAILABLE
+            ) from error
         except CacheUnavailable as error:
             if previous:
                 return self.with_status(

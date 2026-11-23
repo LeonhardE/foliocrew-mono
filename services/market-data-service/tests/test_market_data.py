@@ -17,6 +17,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.manual_quote_access import require_manual_quote_user
 from app.market_cache import (
     UPSTREAM_UNITS_PER_MINUTE,
     BoundedTransaction,
@@ -298,6 +299,42 @@ class MarketServiceTests(unittest.TestCase):
         self.provider.history.assert_called_once()
         self.assertNotIn("_refreshAfter", first)
 
+    def test_manual_market_refresh_checks_overview_and_selected_range_with_full_budget(self):
+        self.cache.daily_limit = len(DEFAULT_INSTRUMENTS)
+        original = self.service.overview()
+        before = self.provider.history.call_count
+        self.now += 31
+
+        def fresh_history(instruments, now, chart_range="1m"):
+            return {
+                instrument.symbol: {
+                    **payload(instrument.symbol, now),
+                    "range": chart_range,
+                    "latestClose": 200,
+                }
+                for instrument in instruments
+            }
+
+        self.provider.history.side_effect = fresh_history
+        self.assertEqual(self.service.overview(), original)
+        with self.assertRaises(HTTPException) as automatic:
+            self.service.candles("AAPL", "1d")
+        self.assertEqual(automatic.exception.status_code, 429)
+        self.assertEqual(self.provider.history.call_count, before)
+        overview = self.service.overview(manual=True)
+        self.assertTrue(all(row["latestClose"] == 200 for row in overview["stocks"]))
+        self.assertEqual(self.service.candles("AAPL", manual=True)["quote"]["latestClose"], 200)
+        self.assertEqual(self.provider.history.call_count, before + 1)
+        selected = self.service.candles("AAPL", "1d", manual=True)
+        self.assertEqual(selected["range"], "1d")
+        self.assertEqual(selected["quote"]["latestClose"], 200)
+        self.assertEqual(self.provider.history.call_count, before + 2)
+        self.assertEqual(self.service.candles("AAPL", "1d", manual=True), selected)
+        self.assertEqual(self.provider.history.call_count, before + 2)
+        with self.cache.connection() as db:
+            counters = json.loads(db.execute("SELECT value FROM market_state").fetchone()[0])
+        self.assertEqual((counters["count"], counters["window_count"]), (10, 10))
+
     def test_failed_batch_keeps_actual_stale_values_and_never_uses_mock(self):
         original = self.service.overview()
         self.now += 4000
@@ -488,6 +525,21 @@ class MarketRouteTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertTrue(response.json()["isMock"])
         self.assertEqual(self.client.get("/api/v1/me").status_code, 404)
+
+    def test_manual_market_route_requires_sign_in_and_accepts_only_bounded_commands(self):
+        path = "/api/stocks/refresh"
+        overview = {"kind": "overview"}
+        selected = {"kind": "candles", "symbol": "aapl", "range": "1d"}
+        self.assertEqual(self.client.post(path, json=overview).status_code, 401)
+        app.dependency_overrides[require_manual_quote_user] = lambda: None
+        self.assertEqual(self.client.post(path, json=overview).status_code, 200)
+        self.assertEqual(self.client.post(path, json=selected).json()["symbol"], "AAPL")
+        for request in (
+            {"kind": "overview", "cacheKey": "private"},
+            {**selected, "symbol": "https://example.org"},
+            {**selected, "range": "all"},
+        ):
+            self.assertEqual(self.client.post(path, json=request).status_code, 400)
 
     def test_long_queries_rejected_and_symbols_case_normalized(self):
         self.assertEqual(
