@@ -68,14 +68,18 @@ const encoder = new TextEncoder();
 export function factsContent(value: SavedHoldings): value is HoldingsFacts {
   return "profile" in value.data && value.data.profile === "folioview.holdings-facts.v2";
 }
-export function inputDecimal(value: string, precision = 18) {
-  if (typeof value !== "string" || value.length > 40 || !/^\d+(?:\.\d+)?$/.test(value))
+export const BROKER_DECIMAL_MAX_LENGTH = 80;
+function boundedDecimal(value: string, precision: number, maxLength: number) {
+  if (typeof value !== "string" || value.length > maxLength || !/^\d+(?:\.\d+)?$/.test(value))
     fail("invalid_number");
   const [raw, fraction = ""] = value.split(".");
   const whole = raw.replace(/^0+(?=\d)/, ""),
     tail = fraction.replace(/0+$/, "");
   if (whole.length > 20 || tail.length > precision) fail("number_out_of_range");
   return whole + (tail ? "." + tail : "");
+}
+export function inputDecimal(value: string, precision = 18) {
+  return boundedDecimal(value, precision, 40);
 }
 function integer(value: string) {
   const [whole, fraction = ""] = value.split(".");
@@ -90,21 +94,24 @@ export function multiplyCost(cost: string, quantity: string) {
     b = integer(inputDecimal(quantity, 12));
   return decimal(a.n * b.n, a.scale + b.scale);
 }
-/** Derived import unit cost, half-even to the contract's 18 fractional places. */
+export function roundHalfEven(numerator: bigint, denominator: bigint) {
+  const negative = numerator < zero;
+  const magnitude = negative ? -numerator : numerator;
+  let rounded = magnitude / denominator;
+  const two = BigInt(2);
+  const twiceRemainder = (magnitude % denominator) * two;
+  if (twiceRemainder > denominator || (twiceRemainder === denominator && rounded % two !== zero))
+    rounded += BigInt(1);
+  return negative ? -rounded : rounded;
+}
+/** Round the original broker total per share once, at the unit-cost contract's 18 places. */
 export function divideCost(cost: string, quantity: string): string | null {
-  const a = integer(inputDecimal(cost)),
+  const a = integer(boundedDecimal(cost, BROKER_DECIMAL_MAX_LENGTH, BROKER_DECIMAL_MAX_LENGTH)),
     b = integer(inputDecimal(quantity, 12));
   if (b.n === zero) return null;
   const numerator = a.n * ten ** BigInt(b.scale + 18),
     denominator = b.n * ten ** BigInt(a.scale);
-  let n = numerator / denominator;
-  const remainder = numerator % denominator;
-  if (
-    remainder * BigInt(2) > denominator ||
-    (remainder * BigInt(2) === denominator && n % BigInt(2) !== zero)
-  )
-    n += BigInt(1);
-  return decimal(n, 18);
+  return decimal(roundHalfEven(numerator, denominator), 18);
 }
 export function provenance(
   origin: Provenance["origin"],

@@ -457,6 +457,7 @@
       "symbol_unknown": "A security symbol is missing.",
       "market_value_unknown": "A market value or its currency was not supplied; no zero was substituted.",
       "market_value_currency_differs": "A reported market value uses a different currency from its security; totals follow the value’s currency.",
+      "reported_amount_rounded": "Reported prices, costs, or unrealized returns with extra precision were rounded to 12 decimal places.",
       "book_cost_currency_mismatch": "A cost currency did not match and remains unknown."
     },
     "retrying": "Retrying the original encrypted upload…",

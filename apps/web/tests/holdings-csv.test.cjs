@@ -112,6 +112,62 @@ test("opt-in import retains native/CAD book costs, reported values, MIC and deri
   assert.equal(p.provenance.bookCost.sourceDate, "2026-10-22");
   assert.ok(!JSON.stringify(preview).includes("SYNTH_ACCOUNT_A_4821"));
 });
+test("the Wealthsimple import rounds broker costs, quotes, and signed returns to 12 places", async () => {
+  const preview = await parse(
+    csv([
+      row({
+        Quantity: "2",
+        "Market Price": "0.9999999999995",
+        "Book Value (CAD)": "40.123456789012500000000001",
+        "Book Value (Market)": "40.123456789012500000000000",
+        "Market Unrealized Returns": "-2.123456789013500000000000",
+      }),
+    ]),
+    { captureCosts: true },
+  );
+  const { holdingsFacts } = await import(
+    require("node:url").pathToFileURL(
+      path.resolve(__dirname, "../../../packages/encrypted-workspace/valuation/dist/holdings.mjs"),
+    ).href
+  );
+  holdingsFacts(clean(preview.facts), { snapshotId: "synthetic_snapshot_a", revision: 1 });
+  const position = preview.facts.data.accounts[0].positions[0];
+  assert.equal(position.quantity, "2");
+  assert.equal(position.bookCostCad.amount, "40.123456789013");
+  assert.equal(position.bookCost.amount, "40.123456789012");
+  assert.equal(position.unitCost.amount, "20.06172839450625");
+  assert.equal(position.reportedValues.unitPrice.amount, "1");
+  assert.equal(position.reportedValues.unrealizedReturn.amount, "-2.123456789014");
+  assert.deepEqual(
+    clean(preview.warnings.find((item) => item.code === "reported_amount_rounded")),
+    { code: "reported_amount_rounded", row: 2, count: 4 },
+  );
+  const cadOnly = await parse(
+    csv([
+      row({
+        Quantity: "3",
+        "Book Value (CAD)": "1.000000000000000003123456",
+        "Book Value (Market)": "",
+      }),
+      row({ Symbol: "EMPTY", Quantity: "0", "Book Value (Market)": "12.345" }),
+    ]),
+    { captureCosts: true },
+  );
+  const [cadFallback, empty] = cadOnly.facts.data.accounts[0].positions;
+  assert.equal(cadFallback.bookCost.amount, "1");
+  assert.equal(cadFallback.unitCost.amount, "0.333333333333333334");
+  assert.equal(cadFallback.provenance.bookCost.origin, "derived");
+  assert.equal(empty.unitCost, null);
+  await rejects("invalid_number", () =>
+    parse(csv([row({ "Book Value (Market)": "-0.0000000000001" })]), { captureCosts: true }),
+  );
+  await rejects("number_out_of_range", () =>
+    parse(csv([row({ "Book Value (Market)": "99999999999999999999.9999999999995" })]), {
+      captureCosts: true,
+    }),
+  );
+});
+
 test("new import never derives USD cost from CAD alone and rejects conflicting cost rows", async () => {
   const value = row({
     "Market Price Currency": "USD",
