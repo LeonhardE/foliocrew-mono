@@ -26,7 +26,7 @@ from app.valuation_quotes import (
 )
 from folioview_shared.valuation import ValuationError, validate_quote_batch
 
-NOW = datetime(2026, 11, 13, 23, 0, tzinfo=UTC).timestamp()
+NOW = datetime(2026, 11, 13, 19, 0, tzinfo=UTC).timestamp()
 US = {"symbol": "AAPL", "market": "XNAS", "currency": "USD"}
 CA = {"symbol": "SHOP", "market": "XTSE", "currency": "CAD"}
 META = {
@@ -236,6 +236,56 @@ class QuoteServiceTests(unittest.TestCase):
                 json.loads(db.execute("SELECT value FROM market_state").fetchone()[0])["count"], 4
             )
 
+    def test_verified_friday_close_is_reused_until_monday_open(self):
+        friday_close = datetime(2026, 11, 20, 21, tzinfo=UTC).timestamp()
+        monday_open = datetime(2026, 11, 23, 14, 30, tzinfo=UTC).timestamp()
+        self.now = friday_close + 60
+        self.provider.fetch.return_value = {
+            "AAPL": {**META, "regularMarketTime": int(friday_close)}
+        }
+        query = {"instruments": [US]}
+        original = self.service.quotes(query)["items"][0]
+        with patch.object(self.cache, "claim", side_effect=AssertionError):
+            for self.now in [friday_close + 1000, friday_close + 86400, monday_open - 1]:
+                for cache_only in [True, False]:
+                    self.assertEqual(
+                        self.service.quotes(query, cached_only=cache_only)["items"][0],
+                        original,
+                    )
+        self.assertEqual(self.provider.fetch.call_count, 1)
+        self.now = monday_open + 30
+        self.provider.fetch.return_value = {
+            "AAPL": {**META, "regularMarketTime": int(monday_open), "regularMarketPrice": 124}
+        }
+        self.assertEqual(self.service.quotes(query)["items"][0]["price"], "124")
+        self.assertEqual(self.provider.fetch.call_count, 2)
+
+    def test_an_intraday_observation_can_be_refreshed_after_market_close(self):
+        friday_close = datetime(2026, 11, 20, 21, tzinfo=UTC).timestamp()
+        self.now = friday_close - 1800
+        self.provider.fetch.return_value = {"AAPL": {**META, "regularMarketTime": int(self.now)}}
+        self.service.quotes({"instruments": [US]})
+        self.now = friday_close + 300
+        self.provider.fetch.return_value = {
+            "AAPL": {**META, "regularMarketTime": int(friday_close), "regularMarketPrice": 124}
+        }
+        self.assertEqual(self.service.quotes({"instruments": [US]})["items"][0]["price"], "124")
+
+    def test_six_batches_refresh_22_quotes_within_one_shared_minute(self):
+        positions = [{**US, "symbol": f"Q{i}"} for i in range(22)]
+        self.provider.fetch.side_effect = lambda symbols, timeout: {
+            symbol: {**META, "symbol": symbol} for symbol in symbols
+        }
+        for start in range(0, len(positions), 4):
+            result = self.service.quotes({"instruments": positions[start : start + 4]})
+            self.assertTrue(all(item["price"] == "123.45" for item in result["items"]))
+        self.assertIn("temporarily limited", self.cache.claim("overview:v1", self.now))
+        self.assertEqual(self.provider.fetch.call_count, 6)
+        with self.cache.connection() as db:
+            state = json.loads(db.execute("SELECT value FROM market_state").fetchone()[0])
+        self.assertEqual(state["count"], 44)
+        self.assertEqual(state["window_count"], 44)
+
     def test_cached_only_and_busy_worker_do_no_provider_claim_or_write_and_old_dates_survive(self):
         original = self.service.quotes(self.request)
         self.now += 901
@@ -327,6 +377,30 @@ class QuoteServiceTests(unittest.TestCase):
 class QuoteHttpTests(unittest.TestCase):
     def tearDown(self):
         app.dependency_overrides.clear()
+
+    def test_cached_price_is_kept_and_daily_limit_is_exposed_to_browser(self):
+        with tempfile.TemporaryDirectory() as folder:
+            cache = SQLiteMarketCache(str(Path(folder) / "cache.sqlite3"))
+            now = [NOW]
+            provider = MagicMock()
+            provider.fetch.return_value = {"AAPL": META}
+            service = QuoteService(MarketService(cache, clock=lambda: now[0]), provider)
+            request = {"instruments": [US]}
+            first = service.quotes(request)["items"][0]
+            now[0] += 901
+            cache.daily_limit = 2
+            app.dependency_overrides[get_quote_service] = lambda: service
+            with TestClient(app) as client:
+                result = client.post("/api/valuation/quotes", json=request)
+                self.assertEqual(result.status_code, 200)
+                self.assertEqual(result.headers["X-Foliocrew-Quote-Limit"], "daily")
+                self.assertEqual(
+                    result.headers["Access-Control-Expose-Headers"], "X-Foliocrew-Quote-Limit"
+                )
+                self.assertEqual(result.json()["items"], [{**first, "status": "stale"}])
+                cached = client.post("/api/valuation/quotes?cached=true", json=request)
+                self.assertNotIn("X-Foliocrew-Quote-Limit", cached.headers)
+                self.assertEqual(provider.fetch.call_count, 1)
 
     def test_actual_batch_route_and_validation_precede_storage_without_echoing_private_values(self):
         market = MagicMock()

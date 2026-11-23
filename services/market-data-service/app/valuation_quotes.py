@@ -7,7 +7,8 @@ import re
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
+from datetime import time as local_time
 from decimal import Decimal, InvalidOperation
 from typing import Annotated
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -23,17 +24,26 @@ from folioview_shared.valuation import (
 )
 
 from .cost_controls import MarketCostRoute
-from .market_cache import CacheUnavailable
+from .market_cache import (
+    DAILY_LIMIT_REACHED,
+    MINUTE_LIMIT_REACHED,
+    QUOTE_CACHE_PREFIX,
+    CacheUnavailable,
+)
 from .market_data import MarketService, get_market_service
 from .stock_metrics import METRICS_LOCK
 from .valuation_fx import stamp
 from .valuation_http import public_request, unique_object
+from .yahoo_provider import NEW_YORK
 
 router = APIRouter(route_class=MarketCostRoute)
 MAX_REFRESH = 4
 WORKER_SECONDS = 7
 WORK_SECONDS = 10
 TTL = 900
+OPEN = local_time(9, 30)
+CLOSE = local_time(16)
+QUOTE_LIMIT_HEADER = "X-Foliocrew-Quote-Limit"
 # Narrow mapping from the pinned provider's MIC/suffix and exchange-code tables.
 # A suffix is not identity evidence: returned symbol/exchange/currency must match.
 MARKETS = {
@@ -100,7 +110,7 @@ def identity(item):
 
 
 def cache_key(item):
-    return "valuation:quote:v1:" + hashlib.sha256(json.dumps(identity(item)).encode()).hexdigest()
+    return QUOTE_CACHE_PREFIX + hashlib.sha256(json.dumps(identity(item)).encode()).hexdigest()
 
 
 def provider_symbol(item):
@@ -207,11 +217,14 @@ def checked_quote(item, metadata, now):
             source_date = datetime.fromtimestamp(observed, zone).date().isoformat()
         except (ZoneInfoNotFoundError, ValueError, TypeError):
             pass
+        source_as_of = stamp(observed)
         result.update(
             price=text,
             source="yahoo_finance",
-            status="stale" if now - observed > 86400 else "available",
-            sourceAsOf=stamp(observed),
+            status="stale"
+            if now - observed > 86400 and not latest_regular_close(source_as_of, now)
+            else "available",
+            sourceAsOf=source_as_of,
             sourceDate=source_date,
             reason=None,
         )
@@ -230,6 +243,19 @@ def batch(items, now):
         "fetchedAt": stamp(now),
         "items": items,
     }
+
+
+def latest_regular_close(source_as_of: str, now: float) -> bool:
+    """Reuse a verified latest weekday close during nights and weekends."""
+    local_now = datetime.fromtimestamp(now, NEW_YORK)
+    clock = local_now.time()
+    if local_now.weekday() < 5 and OPEN <= clock < CLOSE:
+        return False
+    close_day = local_now.date() - timedelta(days=clock < CLOSE)
+    while close_day.weekday() >= 5:
+        close_day -= timedelta(days=1)
+    observed = datetime.fromisoformat(source_as_of).astimezone(NEW_YORK)
+    return observed.date() == close_day and observed.time() >= CLOSE
 
 
 class QuoteService:
@@ -260,15 +286,16 @@ class QuoteService:
             until = value["_refreshAfter"]
             if type(until) not in (int, float) or not updated <= until <= updated + TTL:
                 return None
-            if result["price"] is not None and (
-                now >= until or (at and now - datetime.fromisoformat(at).timestamp() > 86400)
-            ):
-                result["status"] = "stale"
+            if at:
+                if latest_regular_close(at, now):
+                    result["status"] = "available"
+                elif now >= until or now - datetime.fromisoformat(at).timestamp() > 86400:
+                    result["status"] = "stale"
             return result
         except (ValueError, TypeError, AttributeError, KeyError, ValuationError):
             return None
 
-    def quotes(self, request, *, cached_only=False):
+    def quotes(self, request, *, cached_only=False, refresh_limits: set[str] | None = None):
         instruments = quote_request(request)["instruments"]
         now, deadline = self.market.clock(), self.monotonic() + WORK_SECONDS
         results = {
@@ -293,7 +320,9 @@ class QuoteService:
             key = cache_key(item)
             previous = self.cached(entries.get(key), item, now)
             results[identity(item)] = previous or empty(item, now)
-            fresh = previous and now < entries[key].value.get("_refreshAfter", 0)
+            fresh = previous and (
+                previous["status"] == "available" or now < entries[key].value["_refreshAfter"]
+            )
             if not fresh:
                 pending.append(item)
         acquired = False
@@ -307,14 +336,16 @@ class QuoteService:
                         break
                     reason = cache.claim(cache_key(item), self.market.clock(), cost=2)
                     if reason:
+                        if reason == DAILY_LIMIT_REACHED:
+                            code, limit = "budget_exhausted", "daily"
+                        elif reason == MINUTE_LIMIT_REACHED:
+                            code, limit = "rate_limited", "minute"
+                        else:
+                            code, limit = "upstream_unavailable", None
                         if results[identity(item)]["price"] is None:
-                            results[identity(item)]["reason"] = (
-                                "budget_exhausted"
-                                if "daily market refresh limit" in reason
-                                else "rate_limited"
-                                if "temporarily limited" in reason
-                                else "upstream_unavailable"
-                            )
+                            results[identity(item)]["reason"] = code
+                        if limit and refresh_limits is not None:
+                            refresh_limits.add(limit)
                         continue
                     admitted.append(item)
                 remaining = min(WORKER_SECONDS, deadline - self.monotonic())
@@ -391,4 +422,11 @@ async def batch_quotes(
     cached: Annotated[bool, Query()] = False,
 ):
     response.headers["Cache-Control"] = "no-store"
-    return await run_in_threadpool(service.quotes, value, cached_only=cached)
+    limits: set[str] = set()
+    batch = await run_in_threadpool(
+        service.quotes, value, cached_only=cached, refresh_limits=limits
+    )
+    if limits:
+        response.headers[QUOTE_LIMIT_HEADER] = "daily" if "daily" in limits else "minute"
+        response.headers["Access-Control-Expose-Headers"] = QUOTE_LIMIT_HEADER
+    return batch
