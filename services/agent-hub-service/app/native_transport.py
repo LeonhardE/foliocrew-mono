@@ -5,11 +5,13 @@ namespaces and a sliding idle refresh deadline do not change legacy OAuth rules.
 """
 
 import hashlib
+import logging
 import os
 import re
 import secrets
 import time
 from dataclasses import dataclass
+from urllib.parse import parse_qs, urlsplit
 
 from authlib.oauth2.rfc6749 import AuthorizationServer
 from authlib.oauth2.rfc6749.errors import OAuth2Error
@@ -159,6 +161,10 @@ class NativeRefreshGrant(_RefreshGrant):
         return result
 
 
+class NativeCodeGrant(_CodeGrant):
+    log_rejections = True
+
+
 class NativeServer(_Server):
     def __init__(self, service, unit=None):
         AuthorizationServer.__init__(self, scopes_supported=[SCOPE])
@@ -171,9 +177,14 @@ class NativeServer(_Server):
                 expires_generator=lambda *args, **kwargs: 600,
             ),
         )
-        self.register_grant(_CodeGrant, [_S256(required=True)])
+        self.register_grant(NativeCodeGrant, [_S256(required=True)])
         self.register_grant(NativeRefreshGrant)
         self.register_endpoint(NativeRevoke)
+
+    def handle_error_response(self, request, error):
+        if error.error == "invalid_grant" and error.description == "Code challenge failed.":
+            logging.getLogger(__name__).warning("Native OAuth code rejected: pkce_mismatch")
+        return super().handle_error_response(request, error)
 
     def save_token(self, token, request):
         now = self.service.now()
@@ -404,7 +415,7 @@ class NativeTransportService(OwnerConnectionService):
             if pending["status"] == "approved":
                 saved = pending["callback"]
                 try:
-                    return (
+                    callback = (
                         AESGCM(self._callback_key(browser))
                         .decrypt(
                             b64url_decode(saved["iv"], exact_bytes=12),
@@ -415,6 +426,18 @@ class NativeTransportService(OwnerConnectionService):
                     )
                 except Exception:
                     raise StoreUnavailable from None
+                (code,) = parse_qs(urlsplit(callback).query).get("code", ())
+                saved_code = _row(unit, "hub_oauth_codes", digest(code))
+                conn = _row(unit, "hub_oauth_connections", owner, pending["connectionId"])
+                if (
+                    not saved_code
+                    or saved_code["used"]
+                    or saved_code["expiresAt"] <= self.now()
+                    or not conn
+                    or conn["authorizationId"] != pending["authorizationId"]
+                ):
+                    raise ContractError("not_found")
+                return callback
             fingerprint = None
             if user_scope is None:
                 require_legacy_private_writer(unit, owner)

@@ -123,6 +123,10 @@ class NativeMCPTests(unittest.IsolatedAsyncioTestCase):
         async with self.client("legacy") as client:
             result = await client.call_tool("agent_connection", {})
             self.assertFalse(result.is_error)
+            self.assertIn(
+                "continue onboarding after account linking",
+                result.structured_content["hostInstructions"],
+            )
             self.assertEqual(result.structured_content["provider"], "muse")
 
     async def test_wrong_host_origin_ambient_authority_and_unknown_paths_are_closed(self):

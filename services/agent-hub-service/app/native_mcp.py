@@ -44,7 +44,7 @@ def create_native_server(oauth):
     from mcp_types import CallToolResult, TextContent, Tool, ToolAnnotations
 
     from .helper_assets import _owner_origins
-    from .native_credentials import NativeCredentialService
+    from .native_credentials import CONNECTION_INSTRUCTIONS, NativeCredentialService
 
     if not enabled():
         raise ContractError("authorization_unavailable")
@@ -201,6 +201,7 @@ def create_native_server(oauth):
 
     server = NativeServer(
         "Foliocrew personal Agent connection",
+        instructions=CONNECTION_INSTRUCTIONS,
         token_verifier=Verifier(),
         auth=AuthSettings(
             issuer_url=oauth.config.issuer,

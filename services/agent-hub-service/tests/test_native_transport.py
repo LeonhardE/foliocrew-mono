@@ -457,6 +457,22 @@ class NativeTransportTests(unittest.TestCase):
             self.service.authenticate(repaired["access_token"]).connection_id, old.connection_id
         )
 
+    def test_reopening_approval_does_not_return_a_superseded_used_or_expired_code(self):
+        superseded, _, _ = self.authorize()
+        current, _, code = self.authorize()
+        with self.assertRaisesRegex(ContractError, "not_found"):
+            self.service.approve(UID, superseded, BROWSER, self.f.vault)
+        status, tokens, _ = self.exchange(code)
+        self.assertEqual(status, 200)
+        with self.assertRaisesRegex(ContractError, "not_found"):
+            self.service.approve(UID, current, BROWSER, self.f.vault)
+        self.service.authenticate(tokens["access_token"])
+
+        expired, _, _ = self.authorize()
+        self.now += 300
+        with self.assertRaisesRegex(ContractError, "not_found"):
+            self.service.approve(UID, expired, BROWSER, self.f.vault)
+
     def test_explicit_native_disconnect_terminally_stops_current_parent(self):
         tokens = self.connect()
         p = self.service.authenticate(tokens["access_token"])
