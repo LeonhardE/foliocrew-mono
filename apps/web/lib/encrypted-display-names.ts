@@ -15,7 +15,13 @@ import {
   verify,
   validate,
 } from "../../../packages/encrypted-workspace/dist/core.mjs";
-import { CONTRACT, VaultError, type Json, type Vault } from "./encrypted-types";
+import {
+  CONTRACT,
+  VaultError,
+  type Json,
+  type RegistryBundle,
+  type Vault,
+} from "./encrypted-types";
 export const DISPLAY_PROFILE = "folioview.private-display-name.v1";
 const HEADER = {
   alg: "ECDH-ES+A256KW",
@@ -115,13 +121,17 @@ type Context = {
   recoveryPublic?: Json;
   now: () => number;
   reader: (ids: string[]) => Promise<CryptoKey>;
+  userRegistry?: (successors: RegistryBundle[], at: number) => Promise<Registry>;
 };
 export class DisplayNameOwner {
   constructor(private readonly ctx: Context) {}
   private async registry() {
     const v = this.ctx.vault,
       bundles = v.registryHistory;
-    if (!bundles.length || bundles.length > 32) fail();
+    if (!bundles.length) fail();
+    const now = this.ctx.now();
+    if (this.ctx.userRegistry) return this.ctx.userRegistry(bundles.slice(1), now);
+    if (bundles.length > 32) fail();
     const last = parsed(bytes(bundles.at(-1)!.checkpoint.payload), true);
     return new Registry({
       rootJwk: v.rootJwk,
@@ -131,7 +141,7 @@ export class DisplayNameOwner {
       rootEpoch: 1,
       registrySequence: bundles.length,
       checkpointDigest: await digest(last),
-    }).load(bundles, this.ctx.now());
+    }).load(bundles, now);
   }
   private scope(p: Json, ref: Json) {
     reference(ref);

@@ -1792,7 +1792,7 @@
     "coverage": "{known} / {total} positions priced",
     "displayCurrency": "Display currency",
     "reset": "Use default",
-    "visualize": "Visualize",
+    "visualize": "View allocation",
     "refresh": "Refresh prices",
     "loadingCurrency": "Loading display currency",
     "currencyError": "Your default currency could not be loaded.",

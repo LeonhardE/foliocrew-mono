@@ -541,6 +541,41 @@ test("a cold 22-position import fills every quote and stops early if the service
     assert.equal(api.valuePortfolio(f, result.prices, "USD").valuedCount, expectedValued);
   }
 });
+test("recent cache entries for an earlier session skip quote round trips while expired and missing quotes refresh", async () => {
+  const f = facts();
+  const recent = Date.parse(at);
+  const market = prices(f);
+  const [first, second] = market.quotes[0].items;
+  const staleQuotes = batch(
+    [first, second].map((row) => ({
+      ...row,
+      sourceAsOf: "2026-11-12T21:00:00Z",
+      status: "stale",
+    })),
+  );
+  for (const [elapsed, expected] of [
+    [1000, 0],
+    [15 * 60 * 1000, 1],
+  ]) {
+    const refreshed = [];
+    await loader.loadHoldingsPrices({
+      facts: f,
+      currency: "CAD",
+      refresh: true,
+      origin: "",
+      signal: new AbortController().signal,
+      now: () => recent + elapsed,
+      publish() {},
+      fetch: async (url, { body }) => {
+        if (url.includes("/fx")) return reply(batch([rate("USD", "2")], "folioview.fx-batch.v1"));
+        if (url.endsWith("?cached=true")) return reply(staleQuotes);
+        refreshed.push(...JSON.parse(body).instruments);
+        return reply(staleQuotes);
+      },
+    });
+    assert.equal(refreshed.length, expected * 2);
+  }
+});
 test("abort prevents any late publication even if an obsolete transport resolves; fresh default changes only request missing FX", async () => {
   const f = facts(),
     controller = new AbortController(),
@@ -1032,12 +1067,16 @@ test("resetting a restored source currency schedules the actual component and hi
   assert.equal(all(tree, (n) => n.type === "button" && n.props.children === "reset").length, 0);
   await tick();
   assert.equal(calls, before);
-  all(tree, (n) => n.type === "button" && n.props.children === "profitAmount")[0].props.onClick();
+  all(tree, (n) => n.type === "select" && n.props["aria-label"] === "profitMode")[0].props.onChange(
+    { target: { value: "amount" } },
+  );
   tree = restored.flush();
   assert.ok(JSON.stringify(tree).includes("+CAD 17.00"));
   await tick();
   assert.equal(calls, before, "the real price hook does not refetch for amount mode");
-  all(tree, (n) => n.type === "button" && n.props.children === "profitPercent")[0].props.onClick();
+  all(tree, (n) => n.type === "select" && n.props["aria-label"] === "profitMode")[0].props.onChange(
+    { target: { value: "percent" } },
+  );
   tree = restored.flush();
   assert.ok(JSON.stringify(tree).includes("+51.52%"));
   await tick();
@@ -1251,13 +1290,13 @@ test("one default-percentage control switches every position and the overall ret
     text = JSON.stringify(tree);
   assert.equal(all(tree, (n) => n.props?.["aria-label"] === "profitMode").length, 1);
   assert.equal(
-    all(tree, (n) => n.type === "button" && n.props.children === "profitPercent")[0].props[
-      "aria-pressed"
-    ],
-    true,
+    all(tree, (n) => n.type === "select" && n.props["aria-label"] === "profitMode")[0].props.value,
+    "percent",
   );
   for (const result of ["+51.52%", "+42.86%", "+100.00%"]) assert.ok(text.includes(result), result);
-  all(tree, (n) => n.type === "button" && n.props.children === "profitAmount")[0].props.onClick();
+  all(tree, (n) => n.type === "select" && n.props["aria-label"] === "profitMode")[0].props.onChange(
+    { target: { value: "amount" } },
+  );
   tree = render();
   text = JSON.stringify(tree);
   for (const result of ["+CAD 17.00", "+CAD 12.00", "+CAD 5.00"])
@@ -1269,8 +1308,8 @@ test("one default-percentage control switches every position and the overall ret
     assert.ok(text.includes(result), result);
   all(
     render(),
-    (n) => n.type === "button" && n.props.children === "profitPercent",
-  )[0].props.onClick();
+    (n) => n.type === "select" && n.props["aria-label"] === "profitMode",
+  )[0].props.onChange({ target: { value: "percent" } });
   assert.ok(JSON.stringify(render()).includes("+51.52%"));
   h.close();
 });

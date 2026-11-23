@@ -398,16 +398,52 @@ test("the original Passkey opens a transferred vault and upgrades the stored reg
     const source = await verified.prepareSourceCreation(sourceId);
     assert.equal(decoded(source.command).registrySequence, nextHead.registrySequence);
     assert.deepEqual(await verified.loadSourceCreation(), source);
-    await verified.finishSourceCreation(source, {
-      sourceEpoch: 1,
-      resourceRef: {
-        kind: "holdings",
-        sourceService: "portfolio",
-        resourceId: sourceId,
-        incarnation: "inc_" + (await h.core.signingFingerprint(source.command)).slice(0, 32),
-      },
-    });
+    const ref = {
+      kind: "holdings",
+      sourceService: "portfolio",
+      resourceId: sourceId,
+      incarnation: "inc_" + (await h.core.signingFingerprint(source.command)).slice(0, 32),
+    };
+    await verified.finishSourceCreation(source, { sourceEpoch: 1, resourceRef: ref });
     assert.equal(await verified.loadSourceCreation(), null);
+
+    const name = "Synthetic migrated source";
+    const namePacket = await verified.prepareDisplayName({ ref, item: null, name });
+    const signed = namePacket.body.command;
+    const namePayload = decoded(signed);
+    assert.equal(namePayload.registrySequence, nextHead.registrySequence);
+    assert.equal(namePayload.checkpointDigest, nextHead.checkpointDigest);
+    const {
+      contractVersion,
+      profile,
+      ownerSubject,
+      vaultId,
+      rootKeyId,
+      revision,
+      stableOperationId,
+      recipientKeyId,
+    } = namePayload;
+    const item = {
+      state: {
+        contractVersion,
+        profile,
+        ownerSubject,
+        vaultId,
+        rootKeyId,
+        ref,
+        revision,
+        stableOperationId,
+        recipientKeyId,
+        acceptedAt: namePayload.issuedAt,
+        operationFingerprint: await h.core.signingFingerprint(signed),
+      },
+      command: signed,
+    };
+    assert.deepEqual(await verified.loadDisplayNamePending(ref), namePacket);
+    await verified.finishDisplayNamePending(ref, { contractVersion, profile, item });
+    assert.equal(await verified.loadDisplayNamePending(ref), null);
+    assert.equal((await verified.openDisplayName(ref, item)).name, name);
+    assert.equal((await verified.openDisplayNames([ref], [item]))[0].name, name);
   });
 });
 

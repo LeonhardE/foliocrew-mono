@@ -314,68 +314,69 @@ export default function HoldingsValuation({
           )}
         </div>
         <div className={styles.actions}>
-          {imported && (
-            <label className={styles.sourceChoice}>
-              <span className={styles.caption}>{t("valuationSource")}</span>
-              <select
-                value={showBroker ? "broker" : "market"}
-                onChange={(event) =>
-                  setValuationSource({
-                    identity,
-                    source: event.target.value === "broker" ? "broker" : "market",
-                  })
-                }
-              >
-                <option value="market">{t("marketValuation")}</option>
-                <option value="broker">{t("brokerValuation")}</option>
-              </select>
-            </label>
-          )}
-          <label>
-            <span className="sr-only">{t("displayCurrency")}</span>
-            <select
-              aria-label={t("displayCurrency")}
-              value={view.currency ?? ""}
-              disabled={!view.currency}
-              onChange={(e) => view.select(e.target.value as Currency)}
-            >
-              {!view.currency && <option value="">—</option>}
-              {view.options.map((c) => (
-                <option key={c}>{c}</option>
-              ))}
-            </select>
-          </label>
-          {!view.isDefault && (
-            <button type="button" onClick={view.reset}>
-              {t("reset")}
-            </button>
-          )}
-          <div className={styles.segmented} role="group" aria-label={t("profitMode")}>
-            <span className={styles.caption} aria-hidden="true">
-              {t("profitMode")}
-            </span>
-            <button
-              type="button"
-              aria-pressed={profitMode === "percent"}
-              onClick={() => setProfitMode("percent")}
-            >
-              {t("profitPercent")}
-            </button>
-            <button
-              type="button"
-              aria-pressed={profitMode === "amount"}
-              onClick={() => setProfitMode("amount")}
-            >
-              {t("profitAmount")}
-            </button>
-          </div>
           <button type="button" onClick={() => setChart(identity)} disabled={!valuation}>
             {t("visualize")}
           </button>
-          <button type="button" onClick={view.refresh} disabled={view.busy || !view.currency}>
+          <button
+            className={styles.refreshButton}
+            type="button"
+            onClick={view.refresh}
+            disabled={view.busy || !view.currency}
+          >
             {t("refresh")}
           </button>
         </div>
+      </div>
+      <div className={styles.displayOptions}>
+        {imported && (
+          <label className={styles.displayOption}>
+            <span className={styles.caption}>{t("valuationSource")}</span>
+            <select
+              value={showBroker ? "broker" : "market"}
+              onChange={(event) =>
+                setValuationSource({
+                  identity,
+                  source: event.target.value === "broker" ? "broker" : "market",
+                })
+              }
+            >
+              <option value="market">{t("marketValuation")}</option>
+              <option value="broker">{t("brokerValuation")}</option>
+            </select>
+          </label>
+        )}
+        <label className={styles.displayOption}>
+          <span className={styles.caption}>{t("displayCurrency")}</span>
+          <select
+            aria-label={t("displayCurrency")}
+            value={view.currency ?? ""}
+            disabled={!view.currency}
+            onChange={(e) => view.select(e.target.value as Currency)}
+          >
+            {!view.currency && <option value="">—</option>}
+            {view.options.map((c) => (
+              <option key={c}>{c}</option>
+            ))}
+          </select>
+        </label>
+        <label className={styles.displayOption}>
+          <span className={styles.caption}>{t("profitMode")}</span>
+          <select
+            aria-label={t("profitMode")}
+            value={profitMode}
+            onChange={(event) =>
+              setProfitMode(event.target.value === "amount" ? "amount" : "percent")
+            }
+          >
+            <option value="percent">{t("profitPercent")}</option>
+            <option value="amount">{t("profitAmount")}</option>
+          </select>
+        </label>
+        {!view.isDefault && (
+          <button className={styles.resetCurrency} type="button" onClick={view.reset}>
+            {t("reset")}
+          </button>
+        )}
       </div>
       {!preferences.loaded && <LoadingIndicator busy label={t("loadingCurrency")} />}
       {preferences.error && (

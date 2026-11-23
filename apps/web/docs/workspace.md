@@ -325,7 +325,8 @@ quantities, account/source identifiers, unit costs or credentials. Quote cache r
 50 and at most two concurrent transports. One refresh pass requests every missing or expired
 instrument once in groups of four. Quote refresh groups run sequentially because the producer
 admits one refresh at a time. The pass stops on a producer quota response. The button checks
-the server cache again before another pass.
+the server cache again before another pass. A quote from the prior market session is still usable
+and does not start a second request when the provider fetched it within the last 15 minutes.
 The loader invokes its supplied fetch function without an options-object receiver, so native
 browser fetch can start both quote and FX requests. Returning a restored source to its default
 display currency updates the visible selection immediately without another price request.
@@ -349,7 +350,8 @@ with an error rather than replacing them with zero. Source dates and attribution
 details section. Daily reference FX is not advertised as real-time or as an execution rate.
 
 Cumulative unrealized gain/loss is shown for each position and the whole selected holdings source.
-One local percentage/amount control changes all displays together and defaults to percentage. It
+The gain/loss dropdown changes all displays together and defaults to percentage. The dropdowns for
+valuation source, display currency, and gain/loss share a separate row below the summary. It
 uses current market value minus recorded cost, not daily change or realized returns. Aggregate
 percentage divides the sum of gains/losses by the sum of costs, rather than averaging percentages.
 Recorded native book cost takes priority over quantity times average unit cost; recorded CAD book

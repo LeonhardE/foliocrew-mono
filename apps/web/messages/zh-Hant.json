@@ -1792,7 +1792,7 @@
     "coverage": "已計價 {known} / {total} 項",
     "displayCurrency": "顯示幣種",
     "reset": "使用預設幣種",
-    "visualize": "視覺化",
+    "visualize": "查看持倉佔比",
     "refresh": "更新報價",
     "loadingCurrency": "正在讀取顯示幣種",
     "currencyError": "暫時無法讀取預設幣種。",

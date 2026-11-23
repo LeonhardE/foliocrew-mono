@@ -1205,6 +1205,7 @@ export function useHoldingsWorkspace() {
       reuseDisplay = false,
       freshVault?: Vault,
       skipView = false,
+      reloadAuthority?: () => Promise<SavedHoldings | null>,
     ): Promise<SavedHoldings | null> => {
       const instance = liveSession();
       const vault = freshVault ?? stateRef.current.vault;
@@ -1254,6 +1255,7 @@ export function useHoldingsWorkspace() {
           if (view.mode === "complete") prepared = view;
         }
       }
+      if (!prepared && reloadAuthority) return reloadAuthority();
       // Portfolio advances its epoch before Hub receives the fence. Read that
       // state first; authority-sync of Hub's old epoch would prevent recovery.
       let metadata = sourceMetadata(
@@ -1305,7 +1307,9 @@ export function useHoldingsWorkspace() {
         const packet = await instance.loadSourceMutation(source.resourceRef.resourceId);
         assertActive();
         if (prepared && packet)
-          return readSaved(source, signal, assertActive, reuseDisplay, freshVault, true);
+          return reloadAuthority
+            ? reloadAuthority()
+            : readSaved(source, signal, assertActive, reuseDisplay, freshVault, true);
         if (packet) {
           const existing = await api(
             "portfolio",
@@ -1344,7 +1348,9 @@ export function useHoldingsWorkspace() {
       const recovered = await instance.loadOutbox(source.resourceRef.resourceId);
       assertActive();
       if (prepared && recovered)
-        return readSaved(source, signal, assertActive, reuseDisplay, freshVault, true);
+        return reloadAuthority
+          ? reloadAuthority()
+          : readSaved(source, signal, assertActive, reuseDisplay, freshVault, true);
       pending.current = recovered;
       if (!prepared)
         setState((previous) => ({
@@ -5703,28 +5709,60 @@ export function useHoldingsWorkspace() {
       if (!current.current && ownerRef.current === owner)
         setState((previous) => ({ ...previous, preview: null, importPreview: null, error: "" }));
     },
-    readStored: () =>
+    readStored: (reuseStartup = false) =>
       perform("reading", async ({ assertActive, signal }) => {
         const instance = liveSession();
         if (stateRef.current.newSource) return;
-        const fresh = await readCurrent(signal);
-        assertActive();
-        const source = selectedSource(fresh.sources, stateRef.current.selectedSourceId);
-        if (!fresh.vault || !source) return;
-        const privateDisplayVault = resourceDisplaySnapshot(fresh.vault);
-        const displayVault = privateDisplayVault?.vault ?? fresh.vault;
-        await instance.acceptVault(displayVault);
-        assertActive();
-        const verifiedDisplay = privateDisplayVault
-          ? await proveResourceDisplay(privateDisplayVault, fresh.sources, instance, assertActive)
-          : null;
-        setState((previous) => ({
-          ...previous,
-          vault: displayVault,
-          verifiedDisplay,
-          sources: fresh.sources,
-        }));
-        await readSaved(source, signal, assertActive, false, displayVault);
+        const refreshAuthority = async () => {
+          const fresh = await readCurrent(signal);
+          assertActive();
+          const source = selectedSource(fresh.sources, stateRef.current.selectedSourceId);
+          if (!fresh.vault || !source) return null;
+          const privateDisplayVault = resourceDisplaySnapshot(fresh.vault);
+          const displayVault = privateDisplayVault?.vault ?? fresh.vault;
+          await instance.acceptVault(displayVault);
+          assertActive();
+          const verifiedDisplay = privateDisplayVault
+            ? await proveResourceDisplay(privateDisplayVault, fresh.sources, instance, assertActive)
+            : null;
+          setState((previous) => ({
+            ...previous,
+            vault: displayVault,
+            verifiedDisplay,
+            sources: fresh.sources,
+          }));
+          return readSaved(source, signal, assertActive, false, displayVault);
+        };
+        const resumed = resumedDisplayVault.current;
+        if (reuseStartup && resumed) {
+          resumedDisplayVault.current = null;
+          const age = Date.now() - resumed.checkedAt;
+          const source = selectedSource(
+            stateRef.current.sources,
+            stateRef.current.selectedSourceId,
+          );
+          // The view endpoint independently checks this authority against the current Portfolio head.
+          // If it requires synchronization, start again with a fresh vault read.
+          if (
+            source &&
+            resumed.vault === stateRef.current.vault &&
+            resumed.serial + 1 === serial.current &&
+            age >= 0 &&
+            age < 5000
+          ) {
+            await readSaved(
+              source,
+              signal,
+              assertActive,
+              false,
+              resumed.vault,
+              false,
+              refreshAuthority,
+            );
+            return;
+          }
+        }
+        await refreshAuthority();
       }),
   };
 }

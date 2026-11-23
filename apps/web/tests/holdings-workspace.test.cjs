@@ -162,6 +162,7 @@ function harness({
   sharedUnlock = false,
   sharedResume = false,
   userVault = false,
+  userVaultSources = false,
   now = Date.now,
   viewMode = "sync_required",
   sessionOverrides,
@@ -801,7 +802,14 @@ function harness({
       return Response.json({
         ...options.json,
         vault: remoteVault,
-        proof: { sources: [] },
+        proof: {
+          sources: userVaultSources
+            ? sources.map(({ resourceRef: ref, sourceEpoch }) => ({
+                state: "active",
+                binding: { ref, sourceEpoch },
+              }))
+            : [],
+        },
       });
     if (route.startsWith("/api/v3/holdings/sources/") && route.endsWith("/view/query")) {
       if (viewReply) return typeof viewReply === "function" ? viewReply(route, options) : viewReply;
@@ -3234,6 +3242,41 @@ test("only the first automatic display can use a recent verified User shared res
       await h.render().refreshVault(signal, false, undefined, true);
       assert.equal(reads().length, attempt === "automatic" ? 2 : 3);
       assert.equal(new Set(reads().map((r) => r.options.json.nonce)).size, reads().length);
+    } finally {
+      h.unmount();
+    }
+  }
+});
+
+test("the first automatic holdings read reuses startup authority only for a compatible Portfolio view", async () => {
+  const route = "/api/v3/private-resources/vaults/current/read";
+  for (const mode of ["complete", "sync_required", "expired"]) {
+    let clock = 100000;
+    const h = harness({
+      sharedUnlock: true,
+      sharedResume: true,
+      userVault: true,
+      userVaultSources: true,
+      viewMode: mode === "sync_required" ? mode : "complete",
+      now: () => clock,
+      sessionOverrides: () => ({ hasPendingArchiveWork: async () => false }),
+    });
+    try {
+      let model = await ready(h);
+      for (let i = 0; model.phase === "checking" && i < 50; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        model = h.render();
+      }
+      assert.equal(model.phase, "unlocked");
+      if (mode === "expired") clock += 5000;
+      const start = h.requests.length;
+      await model.readStored(true);
+      const reads = h.requests.slice(start).map((r) => r.route);
+      const view = "/api/v3/holdings/sources/holdings_a/view/query";
+      if (mode === "complete") assert.deepEqual(reads, [view]);
+      else if (mode === "expired") assert.deepEqual(reads, [route, view]);
+      else assert.deepEqual(reads.slice(0, 3), [view, route, view]);
+      assert.equal(h.counts().passkeyCalls, 0);
     } finally {
       h.unmount();
     }
