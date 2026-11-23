@@ -100,6 +100,7 @@ export async function loadHoldingsPrices(args: {
     path: string,
     json: unknown,
     validator: (value: unknown) => T,
+    onHeaders?: (headers: Headers) => void,
   ): Promise<T> => {
     const controller = new AbortController(),
       abort = () => controller.abort();
@@ -128,7 +129,9 @@ export async function loadHoldingsPrices(args: {
             void response.body?.cancel().catch(() => {});
             throw Error("refresh_limited");
           }
-          return readPublicValuation(response, validator, controller.signal);
+          const value = await readPublicValuation(response, validator, controller.signal);
+          onHeaders?.(response.headers);
+          return value;
         })(),
       ]);
     } finally {
@@ -163,7 +166,10 @@ export async function loadHoldingsPrices(args: {
       );
     });
   let done = 0;
-  if (cachedJobs.length || args.refresh) error = false;
+  if (cachedJobs.length || args.refresh) {
+    error = false;
+    delete prices.quoteLimit;
+  }
   emit({ phase: "cache", done, total: cachedJobs.length });
   await pool(
     cachedJobs,
@@ -203,14 +209,18 @@ export async function loadHoldingsPrices(args: {
       for (const group of quoteGroups) {
         if (args.signal.aborted) break;
         try {
-          const batch = await call("/api/valuation/quotes", { instruments: group }, (v) =>
-            quoteBatch(v, group),
+          const batch = await call(
+            "/api/valuation/quotes",
+            { instruments: group },
+            (v) => quoteBatch(v, group),
+            (headers) => {
+              const limit = headers.get("X-Foliocrew-Quote-Limit");
+              if (limit === "daily" || limit === "minute") prices.quoteLimit = limit;
+            },
           );
           replaceQuotes(prices, batch);
-          if (batch.items.some((i) => i.reason === "budget_exhausted")) {
-            error = true;
-            break;
-          }
+          if (batch.items.some((i) => i.reason === "budget_exhausted")) prices.quoteLimit = "daily";
+          if (prices.quoteLimit) break;
         } catch (failure) {
           if (args.signal.aborted) break;
           error = true;
@@ -249,5 +259,5 @@ export async function loadHoldingsPrices(args: {
   }
   prices.error = error;
   prices.readAt = now();
-  return { prices, error };
+  return { prices, error: error || Boolean(prices.quoteLimit) };
 }

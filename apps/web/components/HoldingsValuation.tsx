@@ -400,7 +400,17 @@ export default function HoldingsValuation({
         />
       )}
       {view.error && (
-        <InlineError message={t("refreshError")} onRetry={view.refresh} retryLabel={t("retry")} />
+        <InlineError
+          message={t(
+            view.prices?.quoteLimit === "daily"
+              ? "quoteDailyLimit"
+              : view.prices?.quoteLimit === "minute"
+                ? "quoteMinuteLimit"
+                : "refreshError",
+          )}
+          onRetry={view.prices?.quoteLimit === "daily" ? undefined : view.refresh}
+          retryLabel={t("retry")}
+        />
       )}
       {showBroker && (
         <p className={styles.note} role="status">
