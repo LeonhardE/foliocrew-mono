@@ -23,6 +23,7 @@ type Options = {
   active: boolean;
   owner: string | null;
   refreshKey: number;
+  manualQuote?: (symbol: string, signal: AbortSignal) => Promise<Response>;
   selectedInstrument?: Instrument | null;
   selectedRange?: ChartRange;
   selectedActive?: boolean;
@@ -225,6 +226,12 @@ class QuoteQueue {
   }
 
   async load(symbol: string) {
+    const { selectedInstrument, manualQuote } = this.options();
+    const manual =
+      selectedInstrument?.symbol !== symbol &&
+      !DEFAULT_INSTRUMENTS.some((item) => item.symbol === symbol)
+        ? manualQuote
+        : undefined;
     const generation = this.generation;
     const owner = this.owner;
     const refreshKey = this.refreshKey;
@@ -255,11 +262,13 @@ class QuoteQueue {
 
     const request = async (cached: boolean) => {
       const path = `/api/stocks/${encodeURIComponent(symbol)}/candles?range=1m${cached ? "&cached=true" : ""}`;
-      const response = await fetch(`${API_BASE_URL}${path}`, {
-        signal: controller.signal,
-        credentials: "omit",
-        cache: "no-store",
-      });
+      const response = await (manual && !cached
+        ? manual(symbol, controller.signal)
+        : fetch(`${API_BASE_URL}${path}`, {
+            signal: controller.signal,
+            credentials: "omit",
+            cache: "no-store",
+          }));
       if (!owns()) return null;
       if (response.status === 204) return null;
       if (!response.ok) {
@@ -296,6 +305,10 @@ class QuoteQueue {
     try {
       await Promise.race([
         (async () => {
+          if (manual) {
+            await request(false);
+            return;
+          }
           const cached = await request(true);
           if (owns() && !this.paused && (!cached || cached.needsRefresh)) await request(false);
         })(),

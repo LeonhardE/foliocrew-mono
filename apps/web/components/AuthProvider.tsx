@@ -52,6 +52,7 @@ const INVITATION_MESSAGE = "Your Google account needs an invitation to access th
 
 export type PrivateService = "user" | "config" | "portfolio" | "agent-hub" | "market";
 export const MANUAL_QUOTES_PATH = "/api/valuation/quotes/manual";
+export const MANUAL_MARKET_PATH = "/api/stocks/refresh";
 const MARKET_TOKEN_ORIGINS = [
   "https://market-api-630815932903.northamerica-northeast2.run.app",
   "https://market-api-cvvovj6jja-pd.a.run.app",
@@ -942,10 +943,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let validatedJson = options.json;
     const recoveryRead = service === "user" ? userRecoveryRoute(path) : null;
     if (service === "market") {
-      if (path !== MANUAL_QUOTES_PATH) throw new Error("Invalid private API path");
-      if (
-        method !== "POST" ||
-        Object.keys(options.headers ?? {}).length ||
+      if (path !== MANUAL_QUOTES_PATH && path !== MANUAL_MARKET_PATH)
+        throw new Error("Invalid private API path");
+      if (method !== "POST" || Object.keys(options.headers ?? {}).length)
+        throw new Error("Invalid private API request");
+      if (path === MANUAL_MARKET_PATH) {
+        const value = options.json;
+        if (
+          !(exact(value, ["kind"]) && value.kind === "overview") &&
+          !(
+            exact(value, ["kind", "symbol", "range"]) &&
+            value.kind === "candles" &&
+            typeof value.symbol === "string" &&
+            /^[A-Z][A-Z0-9]{0,9}(?:[.-][A-Z0-9]{1,3})?$/.test(value.symbol) &&
+            ["1d", "1w", "1m", "3m", "1y"].includes(value.range)
+          )
+        )
+          throw new Error("Invalid private API request");
+      } else if (
         !exact(options.json, ["instruments"]) ||
         !Array.isArray(options.json.instruments) ||
         options.json.instruments.length < 1 ||

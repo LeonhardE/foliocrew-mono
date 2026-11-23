@@ -39,6 +39,8 @@
     "major": "美國三大股指",
     "seven": "美股七姐妹",
     "updating": "更新中…",
+    "refreshComplete": "行情已更新。",
+    "refreshUnchanged": "已檢查行情，資料來源暫無新報價或 K 線。",
     "refresh": "重新整理",
     "choose": "選擇標的",
     "chooseSymbol": "選擇股票或指數",
@@ -128,6 +130,7 @@
     "dismissNotification": "關閉通知"
   },
   "errors": {
+    "marketRefreshSignIn": "登入後可手動更新行情。",
     "market": "行情暫不可用，請稍後重試。",
     "noMarket": "該標的暫無可用行情。",
     "rateLimit": "請求過於頻繁，請稍後重試。",

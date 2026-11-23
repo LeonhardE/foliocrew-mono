@@ -7,7 +7,8 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8
 const UNAVAILABLE = "Market data is unavailable. Please try again shortly.";
 const TIMED_OUT = "The market data request timed out. Please try again shortly.";
 
-type Snapshot = { refreshRequired?: boolean };
+type Snapshot = { refreshRequired?: boolean; warning?: unknown };
+type ManualSnapshot = (signal: AbortSignal) => Promise<Response>;
 type ResourceState<T> = {
   path: string | null;
   reload: number;
@@ -17,14 +18,34 @@ type ResourceState<T> = {
   loading: boolean;
   refreshing: boolean;
   hasSettled: boolean;
+  manualOutcome: "updated" | "unchanged" | null;
 };
 
 function errorMessage(error: unknown) {
   return error instanceof Error && error.name !== "TypeError" ? error.message : UNAVAILABLE;
 }
 
-/** Public snapshots only. Search and all authenticated resources use separate hooks. */
-export function useCachedMarketResource<T>(path: string | null, reload = 0, refreshReady = true) {
+function snapshotValues(value: unknown) {
+  const { stocks, candles, quote } = value as {
+    stocks?: Record<string, unknown>[];
+    candles?: unknown[];
+    quote?: Record<string, unknown>;
+  };
+  const prices = (row: Record<string, unknown>) => [
+    row.symbol,
+    row.latestClose,
+    row.changePercent,
+    row.dataDate,
+  ];
+  return JSON.stringify(stocks?.map(prices) ?? [candles, quote && prices(quote)]);
+}
+
+export function useCachedMarketResource<T>(
+  path: string | null,
+  reload = 0,
+  refreshReady = true,
+  manualRequest?: ManualSnapshot,
+) {
   const initial: ResourceState<T> = {
     path: null,
     reload: 0,
@@ -34,6 +55,7 @@ export function useCachedMarketResource<T>(path: string | null, reload = 0, refr
     loading: false,
     refreshing: false,
     hasSettled: false,
+    manualOutcome: null,
   };
   const [state, setState] = useState(initial);
   const stateRef = useRef(state);
@@ -66,7 +88,10 @@ export function useCachedMarketResource<T>(path: string | null, reload = 0, refr
       setState(next);
     }
 
-    async function request(requestPath: string): Promise<(T & Snapshot) | null> {
+    async function request(
+      requestPath: string,
+      send?: ManualSnapshot,
+    ): Promise<(T & Snapshot) | null> {
       const controller = new AbortController();
       let timer: number | undefined;
       let cancel = () => {};
@@ -82,16 +107,21 @@ export function useCachedMarketResource<T>(path: string | null, reload = 0, refr
       try {
         return await Promise.race([
           (async () => {
-            const response = await fetch(`${API_BASE_URL}${requestPath}`, {
-              signal: controller.signal,
-              credentials: "omit",
-              cache: "no-store",
-            });
+            const response = await (send
+              ? send(controller.signal)
+              : fetch(`${API_BASE_URL}${requestPath}`, {
+                  signal: controller.signal,
+                  credentials: "omit",
+                  cache: "no-store",
+                }));
             // A cache miss has no body. Do not parse it or render fictional data.
             if (response.status === 204) return null;
             if (!response.ok) {
               let message = UNAVAILABLE;
-              if (response.status === 404) message = "No market data is available for this symbol.";
+              if (response.status === 404 && !send)
+                message = "No market data is available for this symbol.";
+              if (send && (response.status === 401 || response.status === 403))
+                message = "Sign in to refresh market data.";
               if (response.status === 429) {
                 const body: { detail?: unknown } | null = await boundedJson(
                   response,
@@ -168,7 +198,7 @@ export function useCachedMarketResource<T>(path: string | null, reload = 0, refr
       try {
         // The overview refresh may have populated the default 1M chart while
         // this request waited. Re-read once before reserving an upstream call.
-        if (waitedForOverview) {
+        if (waitedForOverview && !manualRequest) {
           try {
             const snapshot = await request(cachedPath);
             if (!owns()) return;
@@ -180,18 +210,28 @@ export function useCachedMarketResource<T>(path: string | null, reload = 0, refr
             if (!owns()) return;
           }
         }
-        const snapshot = await request(path!);
+        const snapshot = await request(path!, manualRequest);
         if (!owns()) return;
         if (!snapshot) throw new Error(UNAVAILABLE);
+        const warning =
+          manualRequest && typeof snapshot.warning === "string" ? snapshot.warning : "";
+        const manualOutcome = manualRequest
+          ? data === null || snapshotValues(data) !== snapshotValues(snapshot)
+            ? "updated"
+            : warning
+              ? null
+              : "unchanged"
+          : null;
         data = snapshot;
         needsRefresh = false;
         publish({
           data,
           error: "",
-          refreshError: "",
+          refreshError: warning,
           loading: false,
           refreshing: false,
           hasSettled: true,
+          manualOutcome,
         });
       } catch (error) {
         if (!owns()) return;
@@ -214,8 +254,14 @@ export function useCachedMarketResource<T>(path: string | null, reload = 0, refr
       loading: data === null,
       refreshing: false,
       hasSettled: false,
+      manualOutcome: null,
     });
     void (async () => {
+      if (manualRequest) {
+        needsRefresh = true;
+        await refresh();
+        return;
+      }
       try {
         const snapshot = await request(cachedPath);
         if (!owns()) return;
@@ -236,7 +282,7 @@ export function useCachedMarketResource<T>(path: string | null, reload = 0, refr
       if (resumeRef.current === resume) resumeRef.current = null;
     };
     // Refresh readiness releases the current cycle; it must not restart probes.
-  }, [path, reload, identity]);
+  }, [path, reload, identity, manualRequest]);
 
   useEffect(() => {
     if (refreshReady) resumeRef.current?.();
@@ -250,6 +296,7 @@ export function useCachedMarketResource<T>(path: string | null, reload = 0, refr
       loading: Boolean(path) && !(state.path === path && state.data),
       refreshing: Boolean(path && state.path === path && state.data),
       hasSettled: false,
+      manualOutcome: null,
     };
   }
   return {
@@ -259,5 +306,6 @@ export function useCachedMarketResource<T>(path: string | null, reload = 0, refr
     loading: state.loading,
     refreshing: state.refreshing,
     hasSettled: state.hasSettled,
+    manualOutcome: state.manualOutcome,
   };
 }
