@@ -45,7 +45,7 @@ function on(t, i, o) {
   if (i < 0 || i >= pi) throw new RangeError(`value must be >= 0 and <= ${pi - 1}. Received ${i}`);
   t.set([i >>> 24, i >>> 16, i >>> 8, i & 255], o);
 }
-function gs(t) {
+function vs(t) {
   let i = Math.floor(t / pi),
     o = t % pi,
     p = new Uint8Array(8);
@@ -68,7 +68,7 @@ function Ot(t) {
   }
   return i;
 }
-function Ps(t, i = !1) {
+function gs(t, i = !1) {
   if (Uint8Array.prototype.toBase64)
     return t.toBase64({ alphabet: i ? "base64url" : "base64", omitPadding: i });
   let o = 32768,
@@ -78,7 +78,7 @@ function Ps(t, i = !1) {
   let l = btoa(p.join(""));
   return i ? l.replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_") : l;
 }
-function ws(t, i = !1) {
+function Ps(t, i = !1) {
   if (Uint8Array.fromBase64)
     return Uint8Array.fromBase64(t, { alphabet: i ? "base64url" : "base64" });
   if (i) {
@@ -90,19 +90,19 @@ function ws(t, i = !1) {
   for (let l = 0; l < o.length; l++) p[l] = o.charCodeAt(l);
   return p;
 }
-async function ks(t, i) {
+async function ws(t, i) {
   let o = `SHA-${t.slice(-3)}`;
   return new Uint8Array(await crypto.subtle.digest(o, i));
 }
 function wa(t) {
   try {
-    return ws(typeof t == "string" ? t : gn.decode(t), !0);
+    return Ps(typeof t == "string" ? t : gn.decode(t), !0);
   } catch (i) {
     throw new TypeError($p, { cause: i });
   }
 }
 function Gr(t) {
-  return Ps(typeof t == "string" ? qa.encode(t) : t, !0);
+  return gs(typeof t == "string" ? qa.encode(t) : t, !0);
 }
 function Lt(t, i) {
   if (!(t instanceof Uint8Array)) throw new TypeError(`${i} must be an instance of Uint8Array`);
@@ -113,7 +113,7 @@ function Cr(t) {
   let i = Object.getPrototypeOf(t);
   return i === null || Object.getPrototypeOf(i) === null;
 }
-function Ds(t) {
+function As(t) {
   return Cr(t) && Array.isArray(t.keys) && Array.from(t.keys).every(Cr);
 }
 function Pi(...t) {
@@ -136,7 +136,7 @@ function jt(t, i, o) {
     throw new o(`Failed to base64url decode the ${i}`, { cause: p });
   }
 }
-function xs(t, i, o) {
+function Ds(t, i, o) {
   try {
     return Ot(t);
   } catch (p) {
@@ -158,7 +158,7 @@ function cn(t, i) {
     throw new TypeError(`"${t}" option must be an array of strings`);
   return i === void 0 ? void 0 : new Set(i);
 }
-function _s(t, i) {
+function Es(t, i) {
   let { crit: o } = i ?? {};
   if (Array.isArray(o) && new Set(o).size !== o.length)
     throw new t('"crit" (Critical) Header Parameter MUST NOT contain duplicate values');
@@ -210,7 +210,7 @@ async function ga(t, i, o) {
   if (l && i instanceof Uint8Array) return i;
   let c, d;
   if (Cr(i)) {
-    if (((c = _n(i)), typeof c.kty != "string")) throw cs(p, i, l);
+    if (((c = _n(i)), typeof c.kty != "string")) throw ps(p, i, l);
     if (
       !(l
         ? c.kty === "oct" && typeof c.k == "string"
@@ -226,14 +226,14 @@ async function ga(t, i, o) {
       );
     if ((Lp(t, c, o), c.kty === "oct")) return wa(c.k);
     if (!Object.isFrozen(i)) {
-      let { key_ops: x } = i;
-      (Array.isArray(x) && Object.freeze(x), Object.freeze(i));
+      let { key_ops: D } = i;
+      (Array.isArray(D) && Object.freeze(D), Object.freeze(i));
     }
   } else {
-    if (!Ss(i)) throw cs(p, i, l);
-    let x = l ? "secret" : m ? "private" : "public";
-    if (i.type !== x && (l || ["secret", "public", "private"].includes(i.type)))
-      throw new TypeError(`${Op(i)} instances must be of type "${x}" for the ${p} algorithm`);
+    if (!_s(i)) throw ps(p, i, l);
+    let D = l ? "secret" : m ? "private" : "public";
+    if (i.type !== D && (l || ["secret", "public", "private"].includes(i.type)))
+      throw new TypeError(`${Op(i)} instances must be of type "${D}" for the ${p} algorithm`);
     if (ia(i)) return i;
     if (((d = i), d.type === "secret")) return d.export();
   }
@@ -242,17 +242,17 @@ async function ga(t, i, o) {
     u = Ui.get(b);
   if (u?.[p]) return u[p];
   if ((u || Ui.set(b, (u = {})), d && typeof d.toCryptoKey == "function")) {
-    let x = d.type === "public",
+    let D = d.type === "public",
       V = qp[d.asymmetricKeyDetails?.namedCurve],
-      v = t.resolve?.({ crv: V, asymmetricKeyType: d.asymmetricKeyType }) ?? t.subtle;
-    return (u[p] = d.toCryptoKey(v, x, t.usages[x ? 0 : 1]));
+      f = t.resolve?.({ crv: V, asymmetricKeyType: d.asymmetricKeyType }) ?? t.subtle;
+    return (u[p] = d.toCryptoKey(f, D, t.usages[D ? 0 : 1]));
   }
   return ((c ??= d.export({ format: "jwk" })), (c.alg = p), (u[p] = await Pa(t, c)));
 }
 function Dn(t) {
   if (!ia(t)) throw new Error("CryptoKey instance expected");
 }
-function Ns(t, i, ...o) {
+function Ss(t, i, ...o) {
   if (o.length > 2) {
     let p = o.pop();
     t += `one of type ${o.join(", ")}, or ${p}.`;
@@ -269,14 +269,14 @@ function Ns(t, i, ...o) {
     t
   );
 }
-function cs(t, i, o) {
+function ps(t, i, o) {
   let p = ["CryptoKey", "KeyObject", "JSON Web Key"];
   return (
     o && p.push("Uint8Array"),
-    new TypeError(Ns(`Key for the ${t} algorithm must be `, i, ...p))
+    new TypeError(Ss(`Key for the ${t} algorithm must be `, i, ...p))
   );
 }
-function js(t, i) {
+function Ns(t, i) {
   if (i && !t.usages.includes(i))
     throw new TypeError(`CryptoKey does not support this operation, its usages must include ${i}.`);
 }
@@ -285,13 +285,13 @@ function En(t, i) {
   if (typeof o != "number" || o < 2048)
     throw new TypeError(`${t} requires key modulusLength to be 2048 bits or larger`);
 }
-function Ks(t, i, o) {
+function js(t, i, o) {
   let p = t.algorithm;
   if (p.name !== i.name) throw ii(i.name);
   if (i.hash && p.hash?.name !== i.hash) throw ii(i.hash, "algorithm.hash");
   if (i.namedCurve && p.namedCurve !== i.namedCurve) throw ii(i.namedCurve, "algorithm.namedCurve");
   if (i.length !== void 0 && p.length !== i.length) throw ii(i.length, "algorithm.length");
-  js(t, o);
+  Ns(t, o);
 }
 function mi(t) {
   return { __proto__: null, ...t };
@@ -331,7 +331,7 @@ async function Pa(t, i, o) {
 async function na(t, i, o, p = !1) {
   return (
     t instanceof Uint8Array && (t = await crypto.subtle.importKey("raw", t, i, p, [o])),
-    Ks(t, i, o),
+    js(t, i, o),
     t
   );
 }
@@ -340,10 +340,10 @@ function Sn(t, i) {
   if (o !== i)
     throw new be(`Invalid Content Encryption Key length. Expected ${i} bits, got ${o} bits`);
 }
-function Vs(t, i) {
+function Ks(t, i) {
   if (i.length << 3 !== t.ivBits) throw new be("Invalid Initialization Vector length");
 }
-async function $s(t, i, o) {
+async function Vs(t, i, o) {
   if (!(i instanceof Uint8Array)) throw new TypeError(ta(i, "Uint8Array"));
   let p = t.cekBits >> 1,
     l = await crypto.subtle.importKey("raw", i.subarray(p >> 3), "AES-CBC", !1, [o]),
@@ -356,15 +356,15 @@ async function $s(t, i, o) {
     );
   return [l, m, p];
 }
-async function Os(t, i, o) {
+async function $s(t, i, o) {
   return new Uint8Array((await crypto.subtle.sign("HMAC", t, i)).slice(0, o >> 3));
 }
 async function Tp(t, i, o, p, l) {
-  let [m, c, d] = await $s(t, o, "encrypt"),
+  let [m, c, d] = await Vs(t, o, "encrypt"),
     b = new Uint8Array(await crypto.subtle.encrypt({ iv: p, name: "AES-CBC" }, m, i)),
-    u = gs(l.length * 8),
-    x = Ft(l, p, b, u),
-    V = await Os(c, x, d);
+    u = vs(l.length * 8),
+    D = Ft(l, p, b, u),
+    V = await $s(c, D, d);
   return { ciphertext: b, tag: V, iv: p };
 }
 async function Rp(t, i) {
@@ -374,20 +374,20 @@ async function Rp(t, i) {
   return crypto.subtle.verify(o, p, l, i);
 }
 async function Fp(t, i, o, p, l, m) {
-  let [c, d, b] = await $s(t, i, "decrypt"),
-    u = gs(m.length * 8),
-    x = Ft(m, p, o, u),
-    V = await Os(d, x, b);
+  let [c, d, b] = await Vs(t, i, "decrypt"),
+    u = vs(m.length * 8),
+    D = Ft(m, p, o, u),
+    V = await $s(d, D, b);
   try {
     if (await Rp(l, V))
       return new Uint8Array(await crypto.subtle.decrypt({ iv: p, name: "AES-CBC" }, c, o));
   } catch {}
   throw new ja();
 }
-async function Ls(t, i, o, p, l) {
+async function Os(t, i, o, p, l) {
   if (!ia(o) && !(o instanceof Uint8Array))
     throw new TypeError(ta(o, "CryptoKey", "KeyObject", "Uint8Array", "JSON Web Key"));
-  if ((p ? Vs(t, p) : (p = Cp(t)), o instanceof Uint8Array && Sn(o, t.cekBits), t.cbc))
+  if ((p ? Ks(t, p) : (p = Cp(t)), o instanceof Uint8Array && Sn(o, t.cekBits), t.cbc))
     return Tp(t, i, o, p, l);
   let m = await na(o, t.subtle, "encrypt"),
     c = new Uint8Array(
@@ -399,13 +399,13 @@ async function Ls(t, i, o, p, l) {
     );
   return { ciphertext: c.subarray(0, -16), tag: c.subarray(-16), iv: p };
 }
-async function qs(t, i, o, p, l, m) {
+async function Ls(t, i, o, p, l, m) {
   if (!ia(i) && !(i instanceof Uint8Array))
     throw new TypeError(ta(i, "CryptoKey", "KeyObject", "Uint8Array", "JSON Web Key"));
   if (!p) throw new be("JWE Initialization Vector missing");
   if (!l) throw new be("JWE Authentication Tag missing");
   if (!t.cbc && l.length !== 16) throw new be("Invalid Authentication Tag length");
-  if ((Vs(t, p), i instanceof Uint8Array && Sn(i, t.cekBits), t.cbc)) return Fp(t, i, o, p, l, m);
+  if ((Ks(t, p), i instanceof Uint8Array && Sn(i, t.cekBits), t.cbc)) return Fp(t, i, o, p, l, m);
   let c = await na(i, t.subtle, "decrypt");
   try {
     return new Uint8Array(
@@ -479,11 +479,11 @@ function ya(t, i = !1) {
     cbc: i,
   };
 }
-function Cs(t, i) {
+function qs(t, i) {
   throw new tt(`Invalid or unsupported "${t}" (JWE ${i}) header value`);
 }
 function sa(t) {
-  return (typeof t == "string" ? Ta[t] : void 0) ?? Cs("alg", "Algorithm");
+  return (typeof t == "string" ? Ta[t] : void 0) ?? qs("alg", "Algorithm");
 }
 function ra(t) {
   return (
@@ -493,14 +493,14 @@ function ra(t) {
   );
 }
 function bi(t) {
-  return (typeof t == "string" ? Wp[t] : void 0) ?? Cs("enc", "Encryption Algorithm");
+  return (typeof t == "string" ? Wp[t] : void 0) ?? qs("enc", "Encryption Algorithm");
 }
-function ds(t, i) {
+function cs(t, i) {
   if (t.algorithm.name !== "ECDH" && t.algorithm.name !== "X25519")
     throw new TypeError(
       "CryptoKey does not support this operation, its algorithm.name must be ECDH or X25519",
     );
-  js(t, i);
+  Ns(t, i);
 }
 async function Zp(t, i, o) {
   let p = await na(i, sa(t).subtle, "wrapKey", !0),
@@ -520,10 +520,10 @@ async function Up(t, i, o) {
     );
   return new Uint8Array(await crypto.subtle.exportKey("raw", l));
 }
-function Ts(t, i, o) {
-  (Ks(i, sa(t).subtle, o), En(t, i));
+function Cs(t, i, o) {
+  (js(i, sa(t).subtle, o), En(t, i));
 }
-async function Rs(t, i, o, p) {
+async function Ts(t, i, o, p) {
   if (!(t instanceof Uint8Array) || t.length < 8)
     throw new be("PBES2 Salt Input must be 8 or more octets");
   if (!Number.isSafeInteger(o) || Math.sign(o) !== 1)
@@ -543,13 +543,13 @@ async function Mp(t, i, o) {
     m = Math.ceil(p / l),
     c = new Uint8Array(m * l);
   for (let d = 1; d <= m; d++) {
-    let b = await ks("sha256", Ft(wn(d), t, o));
+    let b = await ws("sha256", Ft(wn(d), t, o));
     c.set(b, (d - 1) * l);
   }
   return c.slice(0, p);
 }
-async function Fs(t, i, o, p, l = new Uint8Array(), m = new Uint8Array()) {
-  (ds(t), ds(i, "deriveBits"));
+async function Rs(t, i, o, p, l = new Uint8Array(), m = new Uint8Array()) {
+  (cs(t), cs(i, "deriveBits"));
   let c = Ft(Bi(Ot(o)), Bi(l), Bi(m), wn(p)),
     d = new Uint8Array(
       await crypto.subtle.deriveBits(
@@ -562,7 +562,7 @@ async function Fs(t, i, o, p, l = new Uint8Array(), m = new Uint8Array()) {
     );
   return Mp(d, p, c);
 }
-function Hs(t) {
+function Fs(t) {
   Dn(t);
   let i = t.algorithm.namedCurve;
   if (i !== "P-256" && i !== "P-384" && i !== "P-521" && t.algorithm.name !== "X25519")
@@ -578,7 +578,7 @@ function yi(t, i) {
     return jt(o, i, be);
   }
 }
-function Js(t, i) {
+function Hs(t, i) {
   if (!(t === void 0 || i === void 0 || t.byteLength !== i.byteLength)) {
     for (let o = 0; o < t.byteLength; o++) if (t[o] !== i[o]) return;
     throw new be('JOSE Header "apu" and "apv" values must be distinct');
@@ -587,7 +587,7 @@ function Js(t, i) {
 function Bp(t) {
   if (t === void 0) throw new be("JWE Encrypted Key missing");
 }
-function ls(t) {
+function ds(t) {
   if (t !== void 0) throw new be("Encountered unexpected JWE Encrypted Key");
 }
 function Gp(t) {
@@ -597,9 +597,9 @@ function Gp(t) {
 async function Yp(t, i, o, p, l, m) {
   let { alg: c } = t,
     d = t.mode;
-  if (d === "direct-encryption") return (ls(p), o);
+  if (d === "direct-encryption") return (ds(p), o);
   let b = d === "direct-key-agreement";
-  switch ((b ? ls(p) : Bp(p), t.subtle.name)) {
+  switch ((b ? ds(p) : Bp(p), t.subtle.name)) {
     case "ECDH": {
       let { epk: u } = l;
       if (
@@ -607,20 +607,20 @@ async function Yp(t, i, o, p, l, m) {
         ["d", "k", "p", "q", "dp", "dq", "qi", "oth", "priv"].some((F) => Object.hasOwn(u, F))
       )
         throw new be('JOSE Header "epk" (Ephemeral Public Key) missing or invalid');
-      Hs(o);
-      let x = await Pa(t, u),
+      Fs(o);
+      let D = await Pa(t, u),
         V = yi(l, "apu"),
-        v = yi(l, "apv");
-      Js(V, v);
-      let D = await Fs(x, o, b ? i.alg : c, b ? i.cekBits : parseInt(c.slice(-5, -2), 10), V, v);
-      if (b) return D;
-      o = D;
+        f = yi(l, "apv");
+      Hs(V, f);
+      let E = await Rs(D, o, b ? i.alg : c, b ? i.cekBits : parseInt(c.slice(-5, -2), 10), V, f);
+      if (b) return E;
+      o = E;
       break;
     }
     case "RSA-OAEP":
       return (
         Dn(o),
-        Ts(c, o, "decrypt"),
+        Cs(c, o, "decrypt"),
         new Uint8Array(await crypto.subtle.decrypt("RSA-OAEP", o, p))
       );
     case "PBKDF2": {
@@ -631,8 +631,8 @@ async function Yp(t, i, o, p, l, m) {
       if (l.p2c > u) throw new be('JOSE Header "p2c" (PBES2 Count) out is of acceptable bounds');
       if (typeof l.p2s != "string")
         throw new be('JOSE Header "p2s" (PBES2 Salt) missing or invalid');
-      let x = jt(l.p2s, "p2s", be);
-      o = await Rs(x, c, l.p2c, o);
+      let D = jt(l.p2s, "p2s", be);
+      o = await Ts(D, c, l.p2c, o);
       break;
     }
     case "AES-GCM": {
@@ -641,15 +641,15 @@ async function Yp(t, i, o, p, l, m) {
       if (typeof l.tag != "string")
         throw new be('JOSE Header "tag" (Authentication Tag) missing or invalid');
       let u = jt(l.iv, "iv", be),
-        x = jt(l.tag, "tag", be);
+        D = jt(l.tag, "tag", be);
       if (u.byteLength !== 12) throw new be("Invalid Initialization Vector length");
-      if (x.byteLength !== 16) throw new be("Invalid Authentication Tag length");
-      return qs(bi(c.slice(0, -2)), o, p, u, x, new Uint8Array());
+      if (D.byteLength !== 16) throw new be("Invalid Authentication Tag length");
+      return Ls(bi(c.slice(0, -2)), o, p, u, D, new Uint8Array());
     }
   }
   return Up(c.slice(-6), o, p);
 }
-async function zs(t, i, o, p, l, m = {}) {
+async function Js(t, i, o, p, l, m = {}) {
   let { alg: c, mode: d } = t,
     b = ra(t);
   if (l !== void 0 && !b)
@@ -658,17 +658,17 @@ async function zs(t, i, o, p, l, m = {}) {
     );
   let u = await ga(d === "direct-encryption" ? i : t, o, "encrypt");
   if (d === "direct-encryption") return [u, void 0, void 0];
-  let x = b ? (l ?? ui(i)) : void 0;
-  x && Sn(x, i.cekBits);
-  let V, v;
+  let D = b ? (l ?? ui(i)) : void 0;
+  D && Sn(D, i.cekBits);
+  let V, f;
   switch (t.subtle.name) {
     case "ECDH": {
-      Hs(u);
-      let { apu: D, apv: F } = m;
-      (D !== void 0 && Lt(D, '"apu"'), F !== void 0 && Lt(F, '"apv"'));
-      let H = D ?? yi(p, "apu"),
+      Fs(u);
+      let { apu: E, apv: F } = m;
+      (E !== void 0 && Lt(E, '"apu"'), F !== void 0 && Lt(F, '"apv"'));
+      let H = E ?? yi(p, "apu"),
         oe = F ?? yi(p, "apv");
-      Js(H, oe);
+      Hs(H, oe);
       let C;
       m.epk !== void 0
         ? (C = await ga(t, m.epk, "decrypt"))
@@ -682,42 +682,42 @@ async function zs(t, i, o, p, l, m = {}) {
       }
       let { x: de, y: ce, crv: Pe, kty: or } = await O.exportKey("jwk", B),
         fe = d === "direct-key-agreement",
-        sr = await Fs(u, C, fe ? i.alg : c, fe ? i.cekBits : parseInt(c.slice(-5, -2), 10), H, oe),
+        sr = await Rs(u, C, fe ? i.alg : c, fe ? i.cekBits : parseInt(c.slice(-5, -2), 10), H, oe),
         Ze = { x: de, crv: Pe, kty: or };
       if (
         (or === "EC" && (Ze.y = ce),
-        (v = { epk: Ze }),
-        D !== void 0 && (v.apu = Gr(D)),
-        F !== void 0 && (v.apv = Gr(F)),
+        (f = { epk: Ze }),
+        E !== void 0 && (f.apu = Gr(E)),
+        F !== void 0 && (f.apv = Gr(F)),
         fe)
       )
-        return [sr, void 0, v];
+        return [sr, void 0, f];
       u = sr;
       break;
     }
     case "RSA-OAEP": {
       (Dn(u),
-        Ts(c, u, "encrypt"),
-        (V = new Uint8Array(await crypto.subtle.encrypt("RSA-OAEP", u, x))));
+        Cs(c, u, "encrypt"),
+        (V = new Uint8Array(await crypto.subtle.encrypt("RSA-OAEP", u, D))));
       break;
     }
     case "PBKDF2": {
-      let { p2c: D = 2048, p2s: F = crypto.getRandomValues(new Uint8Array(16)) } = m;
-      ((u = await Rs(F, c, D, u)), (v = { p2c: D, p2s: Gr(F) }));
+      let { p2c: E = 2048, p2s: F = crypto.getRandomValues(new Uint8Array(16)) } = m;
+      ((u = await Ts(F, c, E, u)), (f = { p2c: E, p2s: Gr(F) }));
       break;
     }
     case "AES-GCM": {
-      let D = m.iv === void 0 ? crypto.getRandomValues(new Uint8Array(12)) : m.iv;
-      if (!(D instanceof Uint8Array)) throw new TypeError('"iv" must be an instance of Uint8Array');
-      let F = await Ls(bi(c.slice(0, -2)), x, u, D, new Uint8Array());
-      ((V = F.ciphertext), (v = { iv: Gr(F.iv), tag: Gr(F.tag) }));
+      let E = m.iv === void 0 ? crypto.getRandomValues(new Uint8Array(12)) : m.iv;
+      if (!(E instanceof Uint8Array)) throw new TypeError('"iv" must be an instance of Uint8Array');
+      let F = await Os(bi(c.slice(0, -2)), D, u, E, new Uint8Array());
+      ((V = F.ciphertext), (f = { iv: Gr(F.iv), tag: Gr(F.tag) }));
     }
   }
-  if (((V ??= await Zp(c.slice(-6), u, x)), !(V instanceof Uint8Array) || !V.byteLength))
+  if (((V ??= await Zp(c.slice(-6), u, D)), !(V instanceof Uint8Array) || !V.byteLength))
     throw new TypeError("JWE key management algorithm did not produce an Encrypted Key");
-  return [x, V, v];
+  return [D, V, f];
 }
-function Ws(t, i) {
+function zs(t, i) {
   if (t.zip !== void 0 && t.zip !== "DEF")
     throw new tt('Unsupported JWE "zip" (Compression Algorithm) Header Parameter value.');
   if (t.zip !== void 0 && !i?.zip)
@@ -725,11 +725,11 @@ function Ws(t, i) {
       'JWE "zip" (Compression Algorithm) Header Parameter MUST be in a protected header.',
     );
 }
-function Zs(t) {
+function Ws(t) {
   if (typeof globalThis[t] > "u")
     throw new tt(`JWE "zip" (Compression Algorithm) Header Parameter requires the ${t} API.`);
 }
-async function Us(t, i, o = 1 / 0) {
+async function Zs(t, i, o = 1 / 0) {
   let p = t.writable.getWriter();
   (p.write(i).catch(() => {}), p.close().catch(() => {}));
   let l = [],
@@ -744,12 +744,12 @@ async function Us(t, i, o = 1 / 0) {
   return Ft(...l);
 }
 async function Xp(t) {
-  return (Zs("CompressionStream"), Us(new CompressionStream("deflate-raw"), t));
+  return (Ws("CompressionStream"), Zs(new CompressionStream("deflate-raw"), t));
 }
 async function Qp(t, i) {
-  return (Zs("DecompressionStream"), Us(new DecompressionStream("deflate-raw"), t, i));
+  return (Ws("DecompressionStream"), Zs(new DecompressionStream("deflate-raw"), t, i));
 }
-function Ms(t) {
+function Us(t) {
   let { aad: i, ciphertext: o, iv: p, protected: l, tag: m, unprotected: c } = t;
   if (p !== void 0 && (typeof p != "string" || !p))
     throw new be("JWE Initialization Vector incorrect type");
@@ -768,7 +768,7 @@ function Ms(t) {
     unprotected: c === void 0 ? void 0 : { ...c },
   };
 }
-function Bs(t) {
+function Ms(t) {
   let i, o;
   try {
     let { header: p } = t;
@@ -784,14 +784,14 @@ function Bs(t) {
     return [void 0, o, p];
   }
 }
-function Gs(t) {
+function Bs(t) {
   let { encrypted_key: i, header: o } = t;
   if (i !== void 0 && typeof i != "string") throw new be("JWE Encrypted Key incorrect type");
   if (o !== void 0 && !Cr(o)) throw new be("JWE Per-Recipient Unprotected Header incorrect type");
   if (t.protected === void 0 && o === void 0 && t.unprotected === void 0)
     throw new be("JOSE Header missing");
 }
-function Ys(t) {
+function Gs(t) {
   let { protected: i, ciphertext: o, iv: p, tag: l, aad: m } = t,
     c;
   return (
@@ -801,7 +801,7 @@ function Ys(t) {
       jt(o, "ciphertext", be),
       p !== void 0 ? jt(p, "iv", be) : void 0,
       l !== void 0 ? jt(l, "tag", be) : void 0,
-      xs((i ?? "") + (m !== void 0 ? `.${m}` : ""), "aad", be),
+      Ds((i ?? "") + (m !== void 0 ? `.${m}` : ""), "aad", be),
     ]
   );
 }
@@ -814,28 +814,28 @@ function Ai(t) {
     t?.maxDecompressedLength,
   ];
 }
-async function jn(t, i, o, p = Ys(t)) {
+async function jn(t, i, o, p = Gs(t)) {
   let [l, m, c, d, b] = p,
-    { header: u, unprotected: x, aad: V } = t,
-    v;
-  if (u !== void 0 || x !== void 0) {
-    if (!Pi(l, u, x))
+    { header: u, unprotected: D, aad: V } = t,
+    f;
+  if (u !== void 0 || D !== void 0) {
+    if (!Pi(l, u, D))
       throw new be(
         "JWE Protected, JWE Unprotected Header, and JWE Per-Recipient Unprotected Header Parameter names must be disjoint",
       );
-    v = { ...l, ...u, ...x };
-  } else v = l ?? {};
-  let [D, F, H, oe, C] = i,
+    f = { ...l, ...u, ...D };
+  } else f = l ?? {};
+  let [E, F, H, oe, C] = i,
     { encrypted_key: O } = t;
-  (Ca(be, Es, H, l, v), Ws(v, l));
-  let { alg: B, enc: de } = v;
+  (Ca(be, xs, H, l, f), zs(f, l));
+  let { alg: B, enc: de } = f;
   if (typeof B != "string" || !B) throw new be("missing JWE Algorithm (alg) in JWE Header");
   let ce = Ta[B];
   if (O === "" && (!ce || !ra(ce))) throw new be("JWE Encrypted Key incorrect type");
   let Pe = ce?.mode === "integrated-encryption";
   if (!Pe && (typeof de != "string" || !de))
     throw new be("missing JWE Encryption Algorithm (enc) in JWE Header");
-  if ((D && !D.has(B)) || (!D && B.startsWith("PBES2")))
+  if ((E && !E.has(B)) || (!E && B.startsWith("PBES2")))
     throw new ci('"alg" (Algorithm) Header Parameter value not allowed');
   let or;
   if (Pe) {
@@ -866,20 +866,20 @@ async function jn(t, i, o, p = Ys(t)) {
   ra(Ze) && fe === void 0 && (fe = new Uint8Array());
   let br = await ga(Ze.mode === "direct-encryption" ? or : Ze, o, "decrypt"),
     Ge;
-  if (Ze.mode === "integrated-encryption") Ge = await Ze.decrypt(br, fe, m, b, l, v);
+  if (Ze.mode === "integrated-encryption") Ge = await Ze.decrypt(br, fe, m, b, l, f);
   else {
     let Hr = or,
       Rr;
     try {
-      ((Rr = await Yp(Ze, Hr, br, fe, v, oe)),
+      ((Rr = await Yp(Ze, Hr, br, fe, f, oe)),
         ra(Ze) && Rr instanceof Uint8Array && Rr.byteLength << 3 !== Hr.cekBits && (Rr = ui(Hr)));
     } catch (Ve) {
       if (Ve instanceof TypeError || Ve instanceof be || Ve instanceof tt) throw Ve;
       Rr = ui(Hr);
     }
-    Ge = await qs(Hr, Rr, m, c, d, b);
+    Ge = await Ls(Hr, Rr, m, c, d, b);
   }
-  if (v.zip === "DEF") {
+  if (f.zip === "DEF") {
     let Hr = C ?? 25e4;
     if (Hr === 0)
       throw new tt('JWE "zip" (Compression Algorithm) Header Parameter is not supported.');
@@ -893,12 +893,12 @@ async function jn(t, i, o, p = Ys(t)) {
     plaintext: Ge,
     ...(l && { protectedHeader: l }),
     ...(V !== void 0 && { additionalAuthenticatedData: jt(V, "aad", be) }),
-    ...(x && { sharedUnprotectedHeader: x }),
+    ...(D && { sharedUnprotectedHeader: D }),
     ...(u && { unprotectedHeader: u }),
     ...(sr && { key: br }),
   };
 }
-async function Xs(t, i, o) {
+async function Ys(t, i, o) {
   if ((t instanceof Uint8Array && (t = gn.decode(t)), typeof t != "string"))
     throw new be("Compact JWE must be a string or Uint8Array");
   let { 0: p, 1: l, 2: m, 3: c, 4: d, length: b } = t.split(".");
@@ -910,17 +910,17 @@ async function Xs(t, i, o) {
   );
 }
 async function ec(t, i, o) {
-  return Xs(t, Ai(o), i);
+  return Ys(t, Ai(o), i);
 }
 async function rc(t, i, o) {
   if (!Cr(t)) throw new be("Flattened JWE must be an object");
-  let p = Ms(t),
-    [l, , m] = Bs(t);
+  let p = Us(t),
+    [l, , m] = Ms(t);
   if (!l) throw m;
   let c = { ...p, ...l };
-  return (Gs(c), jn(c, Ai(o), i));
+  return (Bs(c), jn(c, Ai(o), i));
 }
-async function Qs(t, i, o) {
+async function Xs(t, i, o) {
   if (!Cr(t)) throw new be("General JWE must be an object");
   let p = t.recipients;
   if (!Array.isArray(p)) throw new be("JWE Recipients missing or incorrect type");
@@ -929,22 +929,22 @@ async function Qs(t, i, o) {
   if (!l.length) throw new be("JWE Recipients has no members");
   let m, c, d;
   try {
-    ((m = Ai(o)), (c = Ms(t)), (d = Ys(c)));
+    ((m = Ai(o)), (c = Us(t)), (d = Gs(c)));
   } catch {
     throw new ja();
   }
-  let b = l.map((u) => Bs(u));
+  let b = l.map((u) => Ms(u));
   if (l.length > 1)
     for (let [, u] of b) {
-      let x = d[0]?.alg ?? u ?? c.unprotected?.alg,
-        V = typeof x == "string" ? Ta[x] : void 0;
-      if (V && !ra(V)) throw new be(`"${x}" alg may only have a single recipient`);
+      let D = d[0]?.alg ?? u ?? c.unprotected?.alg,
+        V = typeof D == "string" ? Ta[D] : void 0;
+      if (V && !ra(V)) throw new be(`"${D}" alg may only have a single recipient`);
     }
   for (let [u] of b)
     if (u)
       try {
-        let x = { ...c, ...u };
-        return (Gs(x), await jn(x, m, i, d));
+        let D = { ...c, ...u };
+        return (Bs(D), await jn(D, m, i, d));
       } catch {}
   throw new ja();
 }
@@ -954,13 +954,13 @@ function Kn(t, i, o) {
       "JWE Protected, JWE Shared Unprotected and JWE Per-Recipient Header Parameter names must be disjoint",
     );
 }
-function eo(t, i, o = !1) {
+function Qs(t, i, o = !1) {
   if (!t[1] && !t[2] && !t[3])
     throw new be(
       "either setProtectedHeader, setUnprotectedHeader, or sharedUnprotectedHeader must be called before #encrypt()",
     );
   i !== void 0 && (t[8] = i?.crit);
-  let [, p, l, m, c, d, b, u, x] = t;
+  let [, p, l, m, c, d, b, u, D] = t;
   if (
     (c !== void 0 && Lt(c, "JWE Additional Authenticated Data"),
     d !== void 0 && Lt(d, "JWE Content Encryption Key"),
@@ -973,33 +973,33 @@ function eo(t, i, o = !1) {
     throw new TypeError("JWE Key Management Parameters must be an object");
   Kn(p, l, m);
   let V = { ...p, ...l, ...m };
-  (_s(be, p), Ca(be, Es, x, p, V), Ws(V, p));
-  let { alg: v, enc: D } = V;
-  if (typeof v != "string" || !v)
+  (Es(be, p), Ca(be, xs, D, p, V), zs(V, p));
+  let { alg: f, enc: E } = V;
+  if (typeof f != "string" || !f)
     throw new be('JWE "alg" (Algorithm) Header Parameter missing or invalid');
-  let F = Ta[v];
+  let F = Ta[f];
   if (F?.mode === "integrated-encryption") {
-    if (D !== void 0)
+    if (E !== void 0)
       throw new be(
         'JWE "enc" (Encryption Algorithm) Header Parameter must not be present for integrated encryption',
       );
     if (d !== void 0)
       throw new TypeError(
-        `setContentEncryptionKey cannot be called with JWE "alg" (Algorithm) Header ${v}`,
+        `setContentEncryptionKey cannot be called with JWE "alg" (Algorithm) Header ${f}`,
       );
     if (b !== void 0)
       throw new TypeError(
-        `setInitializationVector cannot be called with JWE "alg" (Algorithm) Header ${v}`,
+        `setInitializationVector cannot be called with JWE "alg" (Algorithm) Header ${f}`,
       );
     return [V, void 0, F];
   }
-  if (typeof D != "string" || !D)
+  if (typeof E != "string" || !E)
     throw new be('JWE "enc" (Encryption Algorithm) Header Parameter missing or invalid');
-  return [V, bi(D), F];
+  return [V, bi(E), F];
 }
-async function ro(t, i, o) {
+async function eo(t, i, o) {
   let [p, l, m] = i,
-    [c, d, b, u, x, V, v, D, , F] = t,
+    [c, d, b, u, D, V, f, E, , F] = t,
     H = d,
     oe = b,
     C = m ?? sa(p.alg),
@@ -1008,10 +1008,10 @@ async function ro(t, i, o) {
     de;
   (C.mode === "integrated-encryption"
     ? (de = await ga(C, o, "encrypt"))
-    : ([de, O, B] = await zs(C, l, o, p, V, D)),
+    : ([de, O, B] = await Js(C, l, o, p, V, E)),
     B && (F ? (oe = oe ? { ...oe, ...B } : B) : (H = H ? { ...H, ...B } : B), Kn(H, oe, u)));
   let ce = H ? Gr(JSON.stringify(H)) : "",
-    Pe = x?.byteLength ? Gr(x) : void 0,
+    Pe = D?.byteLength ? Gr(D) : void 0,
     or = Ot(Pe ? `${ce}.${Pe}` : ce),
     fe = c;
   p.zip === "DEF" &&
@@ -1020,8 +1020,8 @@ async function ro(t, i, o) {
     }));
   let sr, Ze, br;
   C.mode === "integrated-encryption"
-    ? ([O, sr] = await C.encrypt(de, fe, or, H, p, D))
-    : ({ ciphertext: sr, tag: Ze, iv: br } = await Ls(l, fe, de, v, or));
+    ? ([O, sr] = await C.encrypt(de, fe, or, H, p, E))
+    : ({ ciphertext: sr, tag: Ze, iv: br } = await Os(l, fe, de, f, or));
   let Ge = { ciphertext: Gr(sr) };
   return (
     br && (Ge.iv = Gr(br)),
@@ -1035,9 +1035,9 @@ async function ro(t, i, o) {
   );
 }
 async function Vn(t, i, o) {
-  return ro(t, eo(t, o), i);
+  return eo(t, Qs(t, o), i);
 }
-function to(t) {
+function ro(t) {
   return [t.protected, t.encrypted_key, t.iv, t.ciphertext, t.tag].join(".");
 }
 function Gi(t) {
@@ -1063,7 +1063,7 @@ function Yi(t, i) {
     usages: Ra,
   };
 }
-function ms() {
+function ls() {
   let t = { name: "Ed25519" };
   return { kty: ["OKP"], crv: "Ed25519", subtle: t, signing: t, usages: Ra };
 }
@@ -1076,7 +1076,7 @@ function On(t) {
   if (!i) throw new tt(`alg ${t} is not supported either by JOSE or your javascript runtime`);
   return i;
 }
-function io(t, i) {
+function ao(t, i) {
   let o = t.protected,
     p = t.header,
     l = Cr(p) ? { ...p } : p,
@@ -1099,10 +1099,10 @@ function io(t, i) {
 function Di(t) {
   return [t && cn("algorithms", t.algorithms), t?.crit];
 }
-function no(t) {
+function io(t) {
   return t === void 0 ? {} : wi(t, Me, "JWS Protected Header is invalid");
 }
-function so(t) {
+function no(t) {
   let i = /[\p{Cs}\p{Cn}]/u.exec(t)?.[0];
   if (i !== void 0)
     throw new Me(
@@ -1121,27 +1121,27 @@ function ac(t) {
 }
 async function Ln(t, i, o, p, l) {
   let { protected: m, header: c, payload: d } = t,
-    b = l ?? no(m);
+    b = l ?? io(m);
   if (!Pi(b, c))
     throw new Me("JWS Protected and JWS Unprotected Header Parameter names must be disjoint");
   let u = { ...b, ...c },
-    x = An(b, Ca(Me, bn, i[1], b, u)),
+    D = An(b, Ca(Me, bn, i[1], b, u)),
     { alg: V } = u;
   if (typeof V != "string" || !V)
     throw new Me('JWS "alg" (Algorithm) Header Parameter missing or invalid');
   if (i[0] && !i[0].has(V)) throw new ci('"alg" (Algorithm) Header Parameter value not allowed');
-  if (x) {
+  if (D) {
     if (typeof d != "string") throw new Me("JWS Payload must be a string");
   } else if (typeof d != "string" && !(d instanceof Uint8Array))
     throw new Me("JWS Payload must be a string or an Uint8Array instance");
-  let v = x || typeof d != "string" ? d : p(d),
-    D = !1;
-  typeof o == "function" && ((o = await o(b, t)), (D = !0));
+  let f = D || typeof d != "string" ? d : p(d),
+    E = !1;
+  typeof o == "function" && ((o = await o(b, t)), (E = !0));
   let F = On(V),
     H = Ft(
       m !== void 0 ? Ot(m) : new Uint8Array(),
       Ot("."),
-      typeof v == "string" ? (i[2] ??= xs(v, "payload", Me)) : v,
+      typeof f == "string" ? (i[2] ??= Ds(f, "payload", Me)) : f,
     ),
     oe = jt(t.signature, "signature", Me),
     C = await ga(F, o, "verify"),
@@ -1154,14 +1154,14 @@ async function Ln(t, i, o, p, l) {
     throw new Ka(void 0, { cause: ce });
   }
   if (!B) throw new Ka();
-  let de = { payload: typeof v == "string" ? jt(v, "payload", Me) : v };
+  let de = { payload: typeof f == "string" ? jt(f, "payload", Me) : f };
   return (
     m !== void 0 && (de.protectedHeader = b),
     c !== void 0 && (de.unprotectedHeader = c),
-    D ? [{ ...de, key: C }, x] : [de, x]
+    E ? [{ ...de, key: C }, D] : [de, D]
   );
 }
-async function oo(t, i, o) {
+async function so(t, i, o) {
   if ((t instanceof Uint8Array && (t = gn.decode(t)), typeof t != "string"))
     throw new Me("Compact JWS must be a string or Uint8Array");
   let { 0: p, 1: l, 2: m, length: c } = t.split(".");
@@ -1169,19 +1169,19 @@ async function oo(t, i, o) {
   return Ln({ payload: l, protected: p, signature: m }, i, o, ac);
 }
 async function ic(t, i, o) {
-  let [p] = await oo(t, Di(o), i);
+  let [p] = await so(t, Di(o), i);
   return p;
 }
-async function po(t, i, o) {
+async function oo(t, i, o) {
   if (!Cr(t)) throw new Me("Flattened JWS must be an object");
-  let p = io(t),
-    [l] = await Ln(p, Di(o), i, so);
+  let p = ao(t),
+    [l] = await Ln(p, Di(o), i, no);
   return l;
 }
 function nc(t, i) {
   try {
-    let o = io(t, [i]),
-      p = no(o.protected),
+    let o = ao(t, [i]),
+      p = io(o.protected),
       { b64: l, crit: m } = p;
     return [
       o,
@@ -1206,13 +1206,13 @@ async function sc(t, i, o) {
     throw new Ka();
   }
   let d = l instanceof Uint8Array ? new Uint8Array(l) : l,
-    b = m.map((x) => nc(x, d)).filter((x) => x !== void 0),
+    b = m.map((D) => nc(D, d)).filter((D) => D !== void 0),
     u = 0;
-  for (let [, , x] of b)
-    if (((u |= x), u === 3)) throw new Me("inconsistent use of JWS Unencoded Payload (RFC7797)");
-  for (let x of b)
+  for (let [, , D] of b)
+    if (((u |= D), u === 3)) throw new Me("inconsistent use of JWS Unencoded Payload (RFC7797)");
+  for (let D of b)
     try {
-      let [V] = await Ln(x[0], c, i, so, x[1]);
+      let [V] = await Ln(D[0], c, i, no, D[1]);
       return V;
     } catch {}
   throw new Ka();
@@ -1268,46 +1268,46 @@ function qn(t, i, o = {}) {
   }
   if (!Cr(p)) throw new ot("JWT Claims Set must be a top-level JSON object");
   let { typ: l } = o;
-  if (l !== void 0 && (typeof t.typ != "string" || us(t.typ) !== us(l)))
+  if (l !== void 0 && (typeof t.typ != "string" || ms(t.typ) !== ms(l)))
     throw new Mt('unexpected "typ" JWT header value', p, "typ", fa);
   let { requiredClaims: m = [], issuer: c, subject: d, audience: b, maxTokenAge: u } = o,
-    x = [...m];
-  (u !== void 0 && x.push("iat"),
-    b !== void 0 && x.push("aud"),
-    d !== void 0 && x.push("sub"),
-    c !== void 0 && x.push("iss"));
-  for (let O of new Set(x.reverse()))
+    D = [...m];
+  (u !== void 0 && D.push("iat"),
+    b !== void 0 && D.push("aud"),
+    d !== void 0 && D.push("sub"),
+    c !== void 0 && D.push("iss"));
+  for (let O of new Set(D.reverse()))
     if (!Object.hasOwn(p, O)) throw new Mt(`missing required "${O}" claim`, p, O, "missing");
   (c !== void 0 && !(Array.isArray(c) ? c : [c]).includes(p.iss) && an(p, "iss"),
     d !== void 0 && p.sub !== d && an(p, "sub"),
     b !== void 0 && !dc(p.aud, typeof b == "string" ? [b] : b) && an(p, "aud"));
   let { clockTolerance: V } = o,
-    v = 0;
-  if (typeof V == "string") v = hi(V);
+    f = 0;
+  if (typeof V == "string") f = hi(V);
   else if (V !== void 0) {
     if (typeof V != "number") throw new TypeError("Invalid clockTolerance option type");
-    v = V;
+    f = V;
   }
-  va("clockTolerance option", v);
-  let { currentDate: D } = o,
-    F = va("currentDate option", Va(D === void 0 ? new Date() : D)),
+  va("clockTolerance option", f);
+  let { currentDate: E } = o,
+    F = va("currentDate option", Va(E === void 0 ? new Date() : E)),
     H = tn(p, "iat", u !== void 0),
     oe = tn(p, "nbf");
-  if (oe !== void 0 && oe > F + v) throw new Mt('"nbf" claim timestamp check failed', p, "nbf", fa);
+  if (oe !== void 0 && oe > F + f) throw new Mt('"nbf" claim timestamp check failed', p, "nbf", fa);
   let C = tn(p, "exp");
-  if (C !== void 0 && C <= F - v) throw new pn('"exp" claim timestamp check failed', p, "exp", fa);
+  if (C !== void 0 && C <= F - f) throw new pn('"exp" claim timestamp check failed', p, "exp", fa);
   if (u !== void 0) {
     let O = F - H,
       B = va("maxTokenAge option", typeof u == "number" ? u : hi(u));
-    if (O - v > B)
+    if (O - f > B)
       throw new pn('"iat" claim timestamp check failed (too far in the past)', p, "iat", fa);
-    if (O < -v)
+    if (O < -f)
       throw new Mt('"iat" claim timestamp check failed (it should be in the past)', p, "iat", fa);
   }
   return p;
 }
 function Wt(t) {
-  return co.get(t);
+  return po.get(t);
 }
 function Cn(t) {
   let i = Wt(t);
@@ -1322,13 +1322,13 @@ function nn(t, i) {
   return Wt(t)[i];
 }
 async function lc(t, i, o) {
-  let [p, l] = await oo(t, Di(o), i);
+  let [p, l] = await so(t, Di(o), i);
   if (!l) throw new ot("JWTs MUST NOT use unencoded payload");
   let m = qn(p.protectedHeader, p.payload, o);
   return { ...p, payload: m };
 }
 async function mc(t, i, o) {
-  let { plaintext: p, ...l } = await Xs(t, Ai(o), i),
+  let { plaintext: p, ...l } = await Ys(t, Ai(o), i),
     { protectedHeader: m } = l,
     c = qn(m, p, o);
   for (let d of ["iss", "sub", "aud"])
@@ -1351,27 +1351,27 @@ async function Rn(t, i, o) {
   if (!Pi(l, m))
     throw new Me("JWS Protected and JWS Unprotected Header Parameter names must be disjoint");
   let b = { ...l, ...m };
-  _s(Me, l);
+  Es(Me, l);
   let u = An(l, Ca(Me, bn, c, l, b));
   u || o?.();
-  let { alg: x } = b;
-  if (typeof x != "string" || !x)
+  let { alg: D } = b;
+  if (typeof D != "string" || !D)
     throw new Me('JWS "alg" (Algorithm) Header Parameter missing or invalid');
-  let V = On(x),
-    v = "",
-    D = p,
+  let V = On(D),
+    f = "",
+    E = p,
     F;
   if (u) {
     let C = t[4];
-    C ? ((v = C[0] ??= Gr(p)), (D = C[1] ??= Ot(v))) : ((v = Gr(p)), (F = qa.encode(`${d}.${v}`)));
+    C ? ((f = C[0] ??= Gr(p)), (E = C[1] ??= Ot(f))) : ((f = Gr(p)), (F = qa.encode(`${d}.${f}`)));
   }
-  F ??= Ft(Ot(d), Ot("."), D);
+  F ??= Ft(Ot(d), Ot("."), E);
   let H = await na(await ga(V, i, "sign"), V.subtle, "sign");
   V.minRsaBits && En(V.alg, H);
-  let oe = { signature: Gr(new Uint8Array(await crypto.subtle.sign(V.signing, H, F))), payload: v };
+  let oe = { signature: Gr(new Uint8Array(await crypto.subtle.sign(V.signing, H, F))), payload: f };
   return (l && (oe.protected = d), m && (oe.header = m), [oe, u]);
 }
-async function lo(t, i, o, p, l) {
+async function co(t, i, o, p, l) {
   let [m] = await Rn([t, i, void 0, o], p, l);
   return `${m.protected}.${m.payload}.${m.signature}`;
 }
@@ -1390,11 +1390,11 @@ function xc(t, i) {
   (Bt(t, 48, "Expected algorithm identifier"), Zt(t));
 }
 function Nc(t) {
-  let i = yo(t);
+  let i = uo(t);
   Bt(i, 48, "Invalid certificate structure");
   let o = Zt(i);
   if (o < 0 || i.pos + o > i.data.length) throw new Error("Unexpected end of ASN.1 input");
-  (Bt(i, 48, "Invalid tbsCertificate structure"), Zt(i), t[i.pos] === 160 ? ys(i, 6) : ys(i, 5));
+  (Bt(i, 48, "Invalid tbsCertificate structure"), Zt(i), t[i.pos] === 160 ? us(i, 6) : us(i, 5));
   let p = i.pos;
   Bt(i, 48, "Invalid SPKI structure");
   let l = Zt(i);
@@ -1406,7 +1406,7 @@ function Kc(t) {
 function Vc(t) {
   return Ac(t);
 }
-async function fo(t) {
+async function ho(t) {
   if (xn(t))
     if (t.type === "secret") t = t.export();
     else return t.export({ format: "jwk" });
@@ -1423,7 +1423,7 @@ async function Jn(t, i) {
   if (Cr(t)) {
     if (((o = mi(t)), typeof o.kty != "string"))
       throw new TypeError(ta(t, "CryptoKey", "KeyObject", "JSON Web Key"));
-  } else if (Ss(t)) o = mi(await fo(t));
+  } else if (_s(t)) o = mi(await ho(t));
   else throw new TypeError(ta(t, "CryptoKey", "KeyObject", "JSON Web Key"));
   if (((i ??= "sha256"), i !== "sha256" && i !== "sha384" && i !== "sha512"))
     throw new TypeError('digestAlgorithm must one of "sha256", "sha384", or "sha512"');
@@ -1458,7 +1458,7 @@ async function Jn(t, i) {
       throw new tt('"kty" (Key Type) Parameter missing or unsupported');
   }
   let l = Ot(JSON.stringify(p));
-  return Gr(await ks(i, l));
+  return Gr(await ws(i, l));
 }
 async function $c(t, i) {
   i ??= "sha256";
@@ -1485,21 +1485,21 @@ async function Oc(t, i) {
   return m;
 }
 function Lc(t, i, o, p) {
-  let { kty: l, key_ops: m, ext: c, kid: d, alg: b, use: u, crv: x } = t;
+  let { kty: l, key_ops: m, ext: c, kid: d, alg: b, use: u, crv: D } = t;
   return (
     (c === void 0 || typeof c == "boolean") &&
     (m === void 0 ||
       (Array.isArray(m) &&
-        m.every((V, v) => typeof V == "string" && m.indexOf(V) === v) &&
+        m.every((V, f) => typeof V == "string" && m.indexOf(V) === f) &&
         m.includes("verify"))) &&
     i.kty.includes(l) &&
     (p === void 0 || (typeof p == "string" && p === d)) &&
     (b === void 0 ? l !== "AKP" : o === b) &&
     (u === void 0 || u === "sig") &&
-    (!i.crv || x === i.crv)
+    (!i.crv || D === i.crv)
   );
 }
-async function hs(t, i, o) {
+async function ys(t, i, o) {
   let p = t.get(i) || t.set(i, {}).get(i),
     { alg: l } = o;
   if (p[l] === void 0) {
@@ -1522,7 +1522,7 @@ function ln(t) {
   } catch (l) {
     throw new di("JSON Web Key Set malformed", { cause: l });
   }
-  if (!Ds(i)) throw new di("JSON Web Key Set malformed");
+  if (!As(i)) throw new di("JSON Web Key Set malformed");
   let o = i.keys.map((l) => {
       let m = mi(l);
       return (Array.isArray(m.key_ops) && (m.key_ops = [...m.key_ops]), m);
@@ -1533,22 +1533,22 @@ function ln(t) {
       let { alg: c, kid: d } = { ...l, ...m?.header },
         b = typeof c == "string" ? $n[c] : void 0;
       if (!b || b.secret) throw new tt('Unsupported "alg" value for a JSON Web Key Set');
-      let u = i.keys.filter((v, D) => Lc(o[D], b, c, d)),
-        { 0: x, length: V } = u;
+      let u = i.keys.filter((f, E) => Lc(o[E], b, c, d)),
+        { 0: D, length: V } = u;
       if (!V) throw new In();
       if (V !== 1) {
-        let v = new bs();
+        let f = new Is();
         throw (
-          (v[Symbol.asyncIterator] = async function* () {
-            for (let D of u)
+          (f[Symbol.asyncIterator] = async function* () {
+            for (let E of u)
               try {
-                yield await hs(p, D, b);
+                yield await ys(p, E, b);
               } catch {}
           }),
-          v
+          f
         );
       }
-      return hs(p, x, b);
+      return ys(p, D, b);
     },
     "jwks",
     { value: () => structuredClone(i) },
@@ -1563,7 +1563,7 @@ function qc() {
 }
 async function Cc(t, i, o, p = fetch) {
   let l = await p(t, { method: "GET", signal: o, redirect: "manual", headers: i }).catch((m) => {
-    throw m.name === "TimeoutError" ? new As(void 0, { cause: m }) : m;
+    throw m.name === "TimeoutError" ? new bs(void 0, { cause: m }) : m;
   });
   if (l.status !== 200) throw new ct("Expected 200 OK from the JSON Web Key Set HTTP response");
   try {
@@ -1575,7 +1575,7 @@ async function Cc(t, i, o, p = fetch) {
 function _a(t, i) {
   return Number.isFinite(t) && Date.now() < t + i;
 }
-function fs(t, i, o) {
+function hs(t, i, o) {
   if (Number.isNaN(t)) throw new TypeError(`"${o}" option must not be NaN`);
   return typeof t == "number" ? t : i;
 }
@@ -1587,38 +1587,38 @@ function Tc(t, i) {
   if (typeof l == "number" && (!Number.isInteger(l) || l < 0))
     throw new TypeError('"timeoutDuration" option must be a non-negative integer');
   let m = typeof l == "number" ? l : 5e3,
-    c = fs(p.cooldownDuration, 3e4, "cooldownDuration"),
-    d = fs(p.cacheMaxAge, 6e5, "cacheMaxAge"),
+    c = hs(p.cooldownDuration, 3e4, "cooldownDuration"),
+    d = hs(p.cacheMaxAge, 6e5, "cacheMaxAge"),
     b = new Headers(p.headers);
   (mn && !b.has("User-Agent") && b.set("User-Agent", mn),
     b.has("accept") || b.set("accept", "application/json, application/jwk-set+json"));
-  let u = p[vo],
-    x = p[go],
+  let u = p[fo],
+    D = p[vo],
     V,
-    v,
-    D = 0,
+    f,
+    E = 0,
     F = 0,
     H;
-  if (x && typeof x == "object") {
-    let { uat: C, jwks: O } = x;
-    _a(C, d) && Ds(O) && ((V = C), (H = ln(O)));
+  if (D && typeof D == "object") {
+    let { uat: C, jwks: O } = D;
+    _a(C, d) && As(O) && ((V = C), (H = ln(O)));
   }
   let oe = async () => {
-    if ((v && qc() && (v = void 0), !v)) {
-      let C = ++D,
-        O = (v = Cc(o, b, AbortSignal.timeout(m), u)
+    if ((f && qc() && (f = void 0), !f)) {
+      let C = ++E,
+        O = (f = Cc(o, b, AbortSignal.timeout(m), u)
           .then((B) => {
             let de = ln(B);
             if (C <= F) return;
             H = de;
             let ce = Date.now();
-            (x && ((x.uat = ce), (x.jwks = B)), (V = ce), (F = C));
+            (D && ((D.uat = ce), (D.jwks = B)), (V = ce), (F = C));
           })
           .finally(() => {
-            v === O && (v = void 0);
+            f === O && (f = void 0);
           }));
     }
-    await v;
+    await f;
   };
   return Object.defineProperties(
     async (C, O) => {
@@ -1634,7 +1634,7 @@ function Tc(t, i) {
       coolingDown: { get: () => _a(V, c), enumerable: !0 },
       fresh: { get: () => _a(V, d), enumerable: !0 },
       reload: { value: oe, enumerable: !0 },
-      reloading: { get: () => !!v, enumerable: !0 },
+      reloading: { get: () => !!f, enumerable: !0 },
       jwks: { value: () => H?.jwks(), enumerable: !0 },
     },
   );
@@ -1843,12 +1843,12 @@ function vi(t) {
           p += oi(u);
           continue;
         }
-        let x = sn(u, i);
-        if (typeof x != "object") {
-          p += x === void 0 ? "null" : x;
+        let D = sn(u, i);
+        if (typeof D != "object") {
+          p += D === void 0 ? "null" : D;
           continue;
         }
-        ((p += x.keys === null ? "[" : "{"), l.push(x));
+        ((p += D.keys === null ? "[" : "{"), l.push(D));
         continue e;
       }
       p += "]";
@@ -1862,13 +1862,13 @@ function vi(t) {
           (m.first ? (m.first = !1) : (p += ","), (p += un(b) + ":" + oi(u)));
           continue;
         }
-        let x = sn(u, i);
-        if (x !== void 0) {
-          if ((m.first ? (m.first = !1) : (p += ","), (p += un(b) + ":"), typeof x != "object")) {
-            p += x;
+        let D = sn(u, i);
+        if (D !== void 0) {
+          if ((m.first ? (m.first = !1) : (p += ","), (p += un(b) + ":"), typeof D != "object")) {
+            p += D;
             continue;
           }
-          ((p += x.keys === null ? "[" : "{"), l.push(x));
+          ((p += D.keys === null ? "[" : "{"), l.push(D));
           continue e;
         }
       }
@@ -1891,46 +1891,46 @@ function Xc(t) {
     b = new Uint32Array(i + 1);
   for (let V of [o, p, l, m, c, d]) V.fill(i, -1);
   for (let V = i - 1; V >= 0; V--) {
-    let v = t[V],
-      D = /\s/.test(v);
-    ((o[V] = D ? V : o[V + 1]),
-      (p[V] = D ? p[V + 1] : V),
-      (l[V] = D || v === ")" ? V : l[V + 1]),
-      (m[V] = v === "]" ? V : m[V + 1]),
-      (c[V] = v === ">" ? V : c[V + 1]),
-      (d[V] = D || v === "<" || v === ">" ? V : d[V + 1]));
+    let f = t[V],
+      E = /\s/.test(f);
+    ((o[V] = E ? V : o[V + 1]),
+      (p[V] = E ? p[V + 1] : V),
+      (l[V] = E || f === ")" ? V : l[V + 1]),
+      (m[V] = f === "]" ? V : m[V + 1]),
+      (c[V] = f === ">" ? V : c[V + 1]),
+      (d[V] = E || f === "<" || f === ">" ? V : d[V + 1]));
   }
   for (let V = 0; V < i; V++) b[V + 1] = t[V] === ":" ? V + 1 : b[V];
   let u = [],
-    x = 0;
-  for (; x < i;) {
-    let V = t.indexOf("](", x);
+    D = 0;
+  for (; D < i;) {
+    let V = t.indexOf("](", D);
     if (V === -1) break;
-    x = V + 2;
-    let v = p[x];
-    if (v === i) continue;
-    let D = c[v + 1],
-      F = t[v] === "<" && D < i && D > v + 1 ? D + 1 : l[v];
-    F > v && (u.push(t.slice(v, F)), (x = F));
+    D = V + 2;
+    let f = p[D];
+    if (f === i) continue;
+    let E = c[f + 1],
+      F = t[f] === "<" && E < i && E > f + 1 ? E + 1 : l[f];
+    F > f && (u.push(t.slice(f, F)), (D = F));
   }
-  x = 0;
+  D = 0;
   for (let V = 0; V < i; V++) {
-    if (V < x) continue;
-    let v = t.charCodeAt(V - 1);
-    if (V !== 0 && ![10, 13, 8232, 8233].includes(v)) continue;
-    let D = p[V];
-    if (t[D] !== "[") continue;
-    let F = m[D + 1];
-    if (F === i || F === D + 1 || t[F + 1] !== ":") continue;
+    if (V < D) continue;
+    let f = t.charCodeAt(V - 1);
+    if (V !== 0 && ![10, 13, 8232, 8233].includes(f)) continue;
+    let E = p[V];
+    if (t[E] !== "[") continue;
+    let F = m[E + 1];
+    if (F === i || F === E + 1 || t[F + 1] !== ":") continue;
     let H = p[F + 2];
-    H !== i && ((x = o[H]), u.push(t.slice(H, x)));
+    H !== i && ((D = o[H]), u.push(t.slice(H, D)));
   }
-  for (x = 0; x < i;) {
-    let V = t.indexOf("<", x);
+  for (D = 0; D < i;) {
+    let V = t.indexOf("<", D);
     if (V === -1) break;
-    x = V + 1;
-    let v = d[x];
-    t[v] === ">" && b[v] > x + 1 && (u.push(t.slice(x, v)), (x = v + 1));
+    D = V + 1;
+    let f = d[D];
+    t[f] === ">" && b[f] > D + 1 && (u.push(t.slice(D, f)), (D = f + 1));
   }
   return u;
 }
@@ -1951,7 +1951,7 @@ function vr(t, i) {
 function Be(t) {
   Na(t);
   let i = vi(t);
-  return (typeof i != "string" && _("invalid_json"), Po.encode(i));
+  return (typeof i != "string" && _("invalid_json"), go.encode(i));
 }
 function Na(t, i = 0) {
   if ((i > 20 && _("json_too_deep"), !(t === null || typeof t == "boolean"))) {
@@ -2008,7 +2008,7 @@ function Tr(t, i = !1) {
       if (u || o[p] === "[") {
         let V = u ? "}" : "]";
         ((p += 1), l());
-        let v = new Set();
+        let f = new Set();
         if (o[p] === V) {
           p += 1;
           return;
@@ -2016,9 +2016,9 @@ function Tr(t, i = !1) {
         for (;;) {
           if (u) {
             l();
-            let D = m();
-            (v.has(D) && _("duplicate_member"),
-              v.add(D),
+            let E = m();
+            (f.has(E) && _("duplicate_member"),
+              f.add(E),
               l(),
               o[p++] !== ":" && _("malformed_json"));
           }
@@ -2029,8 +2029,8 @@ function Tr(t, i = !1) {
           o[p++] !== "," && _("malformed_json");
         }
       }
-      let x = /^(?:true|false|null|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)/.exec(o.slice(p));
-      (x || _("malformed_json"), (p += x[0].length));
+      let D = /^(?:true|false|null|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)/.exec(o.slice(p));
+      (D || _("malformed_json"), (p += D[0].length));
     };
   (c(0), l(), p !== o.length && _("malformed_json"));
   let d = JSON.parse(o);
@@ -2049,7 +2049,7 @@ function Wr(t) {
     t
   );
 }
-function ko(t) {
+function wo(t) {
   return ((typeof t != "string" || !/^[a-f0-9]{64}$/.test(t)) && _("invalid_digest"), t);
 }
 async function We(t) {
@@ -2058,7 +2058,7 @@ async function We(t) {
     .join("");
 }
 async function Ht(t) {
-  let i = Po.encode(t.protected + "." + t.payload);
+  let i = go.encode(t.protected + "." + t.payload);
   return [...new Uint8Array(await crypto.subtle.digest("SHA-256", i))]
     .map((o) => o.toString(16).padStart(2, "0"))
     .join("");
@@ -2093,12 +2093,12 @@ function ed(t, i, o) {
 }
 async function yt(t, i, o) {
   let p = await at(i);
-  (ed(t, o, p), Be(t).length > (o === "fv-control+jws" ? 65536 : wo) && _("payload_too_large"));
-  let l = await po(t, await Ei(i, "ES256"), { algorithms: ["ES256"] });
+  (ed(t, o, p), Be(t).length > (o === "fv-control+jws" ? 65536 : Po) && _("payload_too_large"));
+  let l = await oo(t, await Ei(i, "ES256"), { algorithms: ["ES256"] });
   return Tr(l.payload, !0);
 }
 async function Tt(t, i, o, p) {
-  return new mo(Be(t))
+  return new lo(Be(t))
     .setProtectedHeader({ alg: "ES256", kid: o, typ: p, cty: "application/json" })
     .sign(i);
 }
@@ -2269,7 +2269,7 @@ function Jt(t) {
   Je("PersistentContentProofPayload", i);
   let o = pa(i.context),
     p = t.jwe;
-  ((Be(t).length > wo ||
+  ((Be(t).length > Po ||
     Be(o).length > 16384 ||
     ur(p.ciphertext).length >
       (o.objectType === "task" ? 65536 : o.objectType === "result_revision" ? 98304 : 196608)) &&
@@ -2294,7 +2294,7 @@ function Jt(t) {
 async function Wa(t, i, o) {
   let p = Jt(t);
   ke(p.context, o) || _("recipient_binding_mismatch");
-  let l = await Qs(t.jwe, i, {
+  let l = await Xs(t.jwe, i, {
     keyManagementAlgorithms: ["ECDH-ES+A256KW"],
     contentEncryptionAlgorithms: ["A256GCM"],
   });
@@ -2315,7 +2315,7 @@ async function Si(t, i, o, p) {
     payload: t,
   };
   ka(l, i);
-  let m = new ao(Be(l)).setProtectedHeader(oa).setAdditionalAuthenticatedData(Be(i));
+  let m = new to(Be(l)).setProtectedHeader(oa).setAdditionalAuthenticatedData(Be(i));
   for (let u of i.recipients)
     m.addRecipient(await Ei(o[u.keyId], "ECDH-ES+A256KW")).setUnprotectedHeader({ kid: u.keyId });
   let c = await m.encrypt(),
@@ -2366,11 +2366,11 @@ function nd(t, i, o = !1) {
     d = new TextDecoder(),
     b = 0,
     u = !1;
-  return async (x) => {
-    let V = structuredClone(x),
-      v = Be([p, l, m, V]),
-      D = d.decode(v),
-      F = c.get(D);
+  return async (D) => {
+    let V = structuredClone(D),
+      f = Be([p, l, m, V]),
+      E = d.decode(f),
+      F = c.get(E);
     if (F !== void 0) return structuredClone(F);
     o && !u && ((await at(p)) !== l && _("root_pin_mismatch"), (u = !0));
     let H = await yt(V, p, m),
@@ -2378,9 +2378,9 @@ function nd(t, i, o = !1) {
     o &&
       (Je("KeyCertificatePayload", H),
       (oe = { payload: H, publicKeyId: await at(H.publicJwk), payloadDigest: await We(H) }));
-    let C = v.length + Be(oe).length;
+    let C = f.length + Be(oe).length;
     return (
-      !c.has(D) && c.size < 128 && b + C <= 1048576 && (c.set(D, structuredClone(oe)), (b += C)),
+      !c.has(E) && c.size < 128 && b + C <= 1048576 && (c.set(E, structuredClone(oe)), (b += C)),
       oe
     );
   };
@@ -2388,7 +2388,7 @@ function nd(t, i, o = !1) {
 function sd(t, i) {
   return nd(t, i, !0);
 }
-function bo(t) {
+function Io(t) {
   (rt(t.selectedHistory),
     (!ke(
       t.selectedHistory,
@@ -2407,7 +2407,7 @@ function yn(t) {
     ) || _("invalid_consent"));
   for (let o of t.permissions)
     (Oa(o.ref),
-      bo(o),
+      Io(o),
       (o.approvedAt < t.createdAt || o.approvedAt > t.updatedAt) && _("invalid_consent"),
       o.status === "active"
         ? ((o.revokedAt !== null || o.revocationFingerprint !== null) && _("invalid_consent"),
@@ -2420,12 +2420,12 @@ function yn(t) {
           _("invalid_consent"));
   return (rt(i), i.length > 10 && _("invalid_consent"), t);
 }
-async function Ao(t, i, o, p, l) {
+async function bo(t, i, o, p, l) {
   let m = Tr(ur(t.payload), !0),
     c = m.artifactType === "persistent_resource_approval";
   (Je(c ? "PersistentResourceApprovalPayload" : "PersistentResourceRevocationPayload", m),
     Be(t).length > 65536 && _("payload_too_large"),
-    vs(m, o));
+    fs(m, o));
   let d = p.snapshots.get(m.registrySequence);
   (!d || d.digest !== m.checkpointDigest || d.keyEpoch !== m.keyEpoch || m.issuedAt < d.issuedAt) &&
     _("registry_conflict");
@@ -2433,63 +2433,63 @@ async function Ao(t, i, o, p, l) {
     u = p.anchor.rootJwk;
   if (b.kid !== p.anchor.rootKeyId) {
     c && _("key_authorization_required");
-    let v = p.cert(b.kid, "device_sig", null, m.issuedAt, m.registrySequence);
-    (v.capabilities.includes("control_write") || _("key_authorization_required"),
-      (u = v.publicJwk));
+    let f = p.cert(b.kid, "device_sig", null, m.issuedAt, m.registrySequence);
+    (f.capabilities.includes("control_write") || _("key_authorization_required"),
+      (u = f.publicJwk));
   }
   (await yt(t, u, "fv-control+jws"),
     m.authorKeyId !== b.kid && _("recipient_binding_mismatch"),
-    i && (yn(i), vs(i, o), i.consentId !== m.consentId && _("recipient_binding_mismatch")),
+    i && (yn(i), fs(i, o), i.consentId !== m.consentId && _("recipient_binding_mismatch")),
     (m.expectedVersion !== (i?.version ?? 0) ||
       m.expectedConsentDigest !== (i ? await We(i) : null) ||
       m.issuedAt < (i?.updatedAt ?? o.registeredAt)) &&
       _("version_conflict"));
-  let x = new Map((i?.permissions ?? []).map((v) => [v.permissionId, structuredClone(v)])),
+  let D = new Map((i?.permissions ?? []).map((f) => [f.permissionId, structuredClone(f)])),
     V = await Ht(t);
   if (c) {
     (p.agent(o, m.issuedAt, m.registrySequence),
       (!Array.isArray(l) || l.length !== m.resources.length) && _("invalid_sources"));
-    let v = new Map();
-    for (let D of l) {
-      (Je("ConsentSourceState", D),
-        (D.ownerSubject !== o.ownerSubject || D.vaultId !== o.vaultId) &&
+    let f = new Map();
+    for (let E of l) {
+      (Je("ConsentSourceState", E),
+        (E.ownerSubject !== o.ownerSubject || E.vaultId !== o.vaultId) &&
           _("recipient_binding_mismatch"));
-      let F = new TextDecoder().decode(Be(D.ref));
-      (v.has(F) && _("invalid_sources"), v.set(F, D));
+      let F = new TextDecoder().decode(Be(E.ref));
+      (f.has(F) && _("invalid_sources"), f.set(F, E));
     }
-    (rt(m.resources.map((D) => D.permissionId)),
-      rt(m.resources.map((D) => new TextDecoder().decode(Be(D.ref)))));
-    for (let D of m.resources) {
-      bo(D);
-      let F = v.get(new TextDecoder().decode(Be(D.ref)));
+    (rt(m.resources.map((E) => E.permissionId)),
+      rt(m.resources.map((E) => new TextDecoder().decode(Be(E.ref)))));
+    for (let E of m.resources) {
+      Io(E);
+      let F = f.get(new TextDecoder().decode(Be(E.ref)));
       (!F ||
         F.state !== "active" ||
-        F.sourceEpoch !== D.sourceEpoch ||
+        F.sourceEpoch !== E.sourceEpoch ||
         F.currentRevision === null ||
-        D.fromRevision > F.currentRevision) &&
+        E.fromRevision > F.currentRevision) &&
         _("source_unavailable");
-      let H = x.get(D.permissionId);
+      let H = D.get(E.permissionId);
       if (H)
         ((H.status !== "active" ||
-          H.permissionEpoch !== D.expectedPermissionEpoch ||
-          !["ref", "sourceEpoch", "fromRevision"].every((oe) => ke(H[oe], D[oe])) ||
-          H.selectedHistory.some((oe) => !D.selectedHistory.includes(oe))) &&
+          H.permissionEpoch !== E.expectedPermissionEpoch ||
+          !["ref", "sourceEpoch", "fromRevision"].every((oe) => ke(H[oe], E[oe])) ||
+          H.selectedHistory.some((oe) => !E.selectedHistory.includes(oe))) &&
           _("version_conflict"),
-          ke(H.selectedHistory, D.selectedHistory) ||
-            x.set(D.permissionId, {
+          ke(H.selectedHistory, E.selectedHistory) ||
+            D.set(E.permissionId, {
               ...H,
-              selectedHistory: D.selectedHistory,
+              selectedHistory: E.selectedHistory,
               permissionEpoch: Ct(H.permissionEpoch + 1, 1),
               approvedAt: m.issuedAt,
               approvalFingerprint: V,
             }));
       else {
-        (D.expectedPermissionEpoch !== 0 ||
-          D.fromRevision !== F.currentRevision ||
-          [...x.values()].some((ce) => ce.status === "active" && ke(ce.ref, D.ref))) &&
+        (E.expectedPermissionEpoch !== 0 ||
+          E.fromRevision !== F.currentRevision ||
+          [...D.values()].some((ce) => ce.status === "active" && ke(ce.ref, E.ref))) &&
           _("version_conflict");
-        let { permissionId: oe, ref: C, sourceEpoch: O, fromRevision: B, selectedHistory: de } = D;
-        x.set(D.permissionId, {
+        let { permissionId: oe, ref: C, sourceEpoch: O, fromRevision: B, selectedHistory: de } = E;
+        D.set(E.permissionId, {
           permissionId: oe,
           ref: C,
           sourceEpoch: O,
@@ -2506,18 +2506,18 @@ async function Ao(t, i, o, p, l) {
       }
     }
   } else {
-    (i || _("not_found"), rt(m.targets.map((v) => v.permissionId)));
-    for (let v of m.targets) {
-      let D = x.get(v.permissionId);
-      ((!D ||
-        D.status !== "active" ||
-        D.permissionEpoch !== v.expectedPermissionEpoch ||
-        !ke(D.ref, v.ref)) &&
+    (i || _("not_found"), rt(m.targets.map((f) => f.permissionId)));
+    for (let f of m.targets) {
+      let E = D.get(f.permissionId);
+      ((!E ||
+        E.status !== "active" ||
+        E.permissionEpoch !== f.expectedPermissionEpoch ||
+        !ke(E.ref, f.ref)) &&
         _("version_conflict"),
-        x.set(v.permissionId, {
-          ...D,
+        D.set(f.permissionId, {
+          ...E,
           status: "revoked",
-          permissionEpoch: Ct(D.permissionEpoch + 1, 1),
+          permissionEpoch: Ct(E.permissionEpoch + 1, 1),
           revokedAt: m.issuedAt,
           revocationFingerprint: V,
         }));
@@ -2525,8 +2525,8 @@ async function Ao(t, i, o, p, l) {
   }
   return yn({
     contractVersion: dt,
-    profile: Io,
-    ...Object.fromEntries(ht.map((v) => [v, o[v]])),
+    profile: ko,
+    ...Object.fromEntries(ht.map((f) => [f, o[f]])),
     consentId: m.consentId,
     purpose: "analysis",
     version: Ct(m.expectedVersion + 1, 1),
@@ -2534,7 +2534,7 @@ async function Ao(t, i, o, p, l) {
     updatedAt: m.issuedAt,
     lastOperationId: m.stableOperationId,
     lastControlFingerprint: V,
-    permissions: [...x.values()].sort((v, D) => (v.permissionId < D.permissionId ? -1 : 1)),
+    permissions: [...D.values()].sort((f, E) => (f.permissionId < E.permissionId ? -1 : 1)),
   });
 }
 async function Zn({ consent: t, receipts: i, identity: o, registry: p, pin: l = null }) {
@@ -2544,7 +2544,7 @@ async function Zn({ consent: t, receipts: i, identity: o, registry: p, pin: l = 
   let m = null,
     c = l === null;
   for (let d of i)
-    ((m = await Ao(d.command, m, o, p, d.sourceStates)),
+    ((m = await bo(d.command, m, o, p, d.sourceStates)),
       (d.operationId !== m.lastOperationId ||
         !ke(d.consent, m) ||
         d.priorDigest !==
@@ -2601,23 +2601,23 @@ async function ji(t, { registry: i, identity: o, expected: p, now: l, purpose: m
             "ownerEnvelopeFingerprint",
           ]),
   ];
-  for (let v of b) (!Object.hasOwn(p, v) || !ke(c[v], p[v])) && _("recipient_binding_mismatch");
+  for (let f of b) (!Object.hasOwn(p, f) || !ke(c[f], p[f])) && _("recipient_binding_mismatch");
   let u = i.snapshots.get(c.registrySequence);
   ((!u || u.digest !== c.checkpointDigest || u.keyEpoch !== c.keyEpoch) && _("registry_conflict"),
     (c.issuedAt < o.registeredAt || c.issuedAt > l) && _("key_authorization_required"),
     m === "new_publication" &&
       (c.registrySequence !== i.sequence || c.issuedAt < Math.max(i.current.issuedAt, l - 300)) &&
       _("registry_conflict"));
-  let x = m === "owner_history" ? c.issuedAt : l,
-    { sig: V } = i.agent(o, x);
+  let D = m === "owner_history" ? c.issuedAt : l,
+    { sig: V } = i.agent(o, D);
   if (c.objectType === "result_revision") {
     (!V.capabilities.includes("result_write") || c.issuedAt < V.notBefore) &&
       _("key_authorization_required");
-    for (let v of c.recipients) i.cert(v.keyId, v.role, null, x);
+    for (let f of c.recipients) i.cert(f.keyId, f.role, null, D);
     await yt(t.proof, V.publicJwk, "fv-control+jws");
   } else {
     if (m !== "agent_read")
-      for (let v of c.recipients) v.role === "recovery_enc" && i.cert(v.keyId, v.role, null, x);
+      for (let f of c.recipients) f.role === "recovery_enc" && i.cert(f.keyId, f.role, null, D);
     await yt(t.proof, i.anchor.rootJwk, "fv-control+jws");
   }
   return (
@@ -2690,7 +2690,7 @@ function pd(t, i) {
   return (
     Je("AgentCredentialLease", t),
     Ct(i),
-    (t.issuedAt < t.expiresAt && t.expiresAt <= t.issuedAt + Do) || _("invalid_fields"),
+    (t.issuedAt < t.expiresAt && t.expiresAt <= t.issuedAt + Ao) || _("invalid_fields"),
     t.status === "revoked"
       ? "revoked"
       : i >= t.expiresAt
@@ -2706,7 +2706,7 @@ function ca(t, { identity: i, audience: o, now: p }) {
   for (let l of ht) i[l] !== t[l] && _("recipient_binding_mismatch");
   return t;
 }
-async function xo(
+async function Do(
   t,
   { registry: i, identity: o, currentLease: p = null, setupIntentId: l, audience: m, now: c },
 ) {
@@ -2743,7 +2743,7 @@ async function xo(
       _("registry_conflict"));
   for (let oe of ht) o[oe] !== b[oe] && _("recipient_binding_mismatch");
   (b.audience !== m || b.setupIntentId !== l) && _("recipient_binding_mismatch");
-  let x = 1,
+  let D = 1,
     V = null;
   if (p !== null) {
     Je("AgentCredentialLease", p);
@@ -2751,11 +2751,11 @@ async function xo(
       p[oe] !== o[oe] && _("recipient_binding_mismatch");
     for (let oe of ["agentId", "agentSigningKeyId", "agentEncryptionKeyId", "bindingFingerprint"])
       p[oe] === o[oe] && _("key_authorization_required");
-    ((x = p.generation + 1), (V = p.credentialFingerprint));
+    ((D = p.generation + 1), (V = p.credentialFingerprint));
   }
-  (b.generation !== x || b.previousCredentialFingerprint !== V) && _("version_conflict");
-  let { sig: v, enc: D } = i.agent(o, c);
-  (!(c < b.expiresAt && b.expiresAt <= Math.min(b.issuedAt + Do, v.expiresAt, D.expiresAt)) ||
+  (b.generation !== D || b.previousCredentialFingerprint !== V) && _("version_conflict");
+  let { sig: f, enc: E } = i.agent(o, c);
+  (!(c < b.expiresAt && b.expiresAt <= Math.min(b.issuedAt + Ao, f.expiresAt, E.expiresAt)) ||
     b.issuedAt < o.registeredAt) &&
     _("key_authorization_required");
   let F = new Set([
@@ -2793,7 +2793,7 @@ var Ip,
   Pn,
   pi,
   Vp,
-  Is,
+  ks,
   ct,
   Mt,
   pn,
@@ -2806,20 +2806,20 @@ var Ip,
   kn,
   di,
   In,
+  Is,
   bs,
-  As,
   Ka,
   li,
   $p,
   bn,
-  Es,
+  xs,
   Op,
   Lp,
   Ui,
   qp,
   ia,
   xn,
-  Ss,
+  _s,
   ta,
   ii,
   ui,
@@ -2831,21 +2831,21 @@ var Ip,
   zp,
   Wp,
   tc,
-  ao,
+  to,
   Ra,
   $n,
   Va,
   oc,
   pc,
   fa,
-  us,
+  ms,
   dc,
-  co,
+  po,
   Tn,
   uc,
   yc,
   hc,
-  mo,
+  lo,
   fc,
   vc,
   gc,
@@ -2854,16 +2854,16 @@ var Ip,
   kc,
   $a,
   Ic,
-  uo,
+  mo,
   bc,
   Ac,
   Ea,
-  yo,
+  uo,
   dn,
   Zt,
-  ys,
+  us,
   Bt,
-  ho,
+  yo,
   Dc,
   Ec,
   Fn,
@@ -2873,15 +2873,15 @@ var Ip,
   jc,
   zt,
   mn,
+  fo,
   vo,
-  go,
   Rc,
   Fc,
   Gc,
   Yc,
-  Po,
+  go,
   Qc,
-  wo,
+  Po,
   dt,
   qt,
   ht,
@@ -2890,10 +2890,10 @@ var Ip,
   td,
   ad,
   Za,
-  Io,
-  vs,
+  ko,
+  fs,
   hn,
-  Do,
+  Ao,
   od,
   Ut = Zi(() => {
     ((Ip = Object.create),
@@ -2995,12 +2995,12 @@ var Ip,
             y = p.evaluated;
           if ((y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0), r === 0))
             if (e && typeof e == "object" && !Array.isArray(e)) {
-              let E;
+              let x;
               if (
-                (e.kty === void 0 && (E = "kty")) ||
-                (e.crv === void 0 && (E = "crv")) ||
-                (e.x === void 0 && (E = "x")) ||
-                (e.y === void 0 && (E = "y"))
+                (e.kty === void 0 && (x = "kty")) ||
+                (e.crv === void 0 && (x = "crv")) ||
+                (e.x === void 0 && (x = "x")) ||
+                (e.y === void 0 && (x = "y"))
               )
                 return (
                   (p.errors = [
@@ -3008,7 +3008,7 @@ var Ip,
                       instancePath: s,
                       schemaPath: "#/required",
                       keyword: "required",
-                      params: { missingProperty: E },
+                      params: { missingProperty: x },
                     },
                   ]),
                   !1
@@ -3409,8 +3409,8 @@ var Ip,
             r === 0
           );
         }
-        ((u.evaluated = { dynamicProps: !1, dynamicItems: !1 }), (t.Digest = v));
-        var x = new RegExp("^[a-f0-9]{64}$", "u");
+        ((u.evaluated = { dynamicProps: !1, dynamicItems: !1 }), (t.Digest = f));
+        var D = new RegExp("^[a-f0-9]{64}$", "u");
         function V(
           e,
           {
@@ -3450,7 +3450,7 @@ var Ip,
                   ]),
                   !1
                 );
-              if (!x.test(e))
+              if (!D.test(e))
                 return (
                   (V.errors = [
                     {
@@ -3477,7 +3477,7 @@ var Ip,
           return ((V.errors = a), r === 0);
         }
         V.evaluated = { dynamicProps: !1, dynamicItems: !1 };
-        function v(
+        function f(
           e,
           {
             instancePath: s = "",
@@ -3489,7 +3489,7 @@ var Ip,
         ) {
           let a = null,
             r = 0,
-            y = v.evaluated;
+            y = f.evaluated;
           return (
             y.dynamicProps && (y.props = void 0),
             y.dynamicItems && (y.items = void 0),
@@ -3500,12 +3500,12 @@ var Ip,
               rootData: k,
               dynamicAnchors: I,
             }) || ((a = a === null ? V.errors : a.concat(V.errors)), (r = a.length)),
-            (v.errors = a),
+            (f.errors = a),
             r === 0
           );
         }
-        ((v.evaluated = { dynamicProps: !1, dynamicItems: !1 }), (t.TaskMetadata = Pe));
-        var D = {
+        ((f.evaluated = { dynamicProps: !1, dynamicItems: !1 }), (t.TaskMetadata = Pe));
+        var E = {
             type: "object",
             properties: {
               contractVersion: { const: "folioview.agent-workspace.v2.0" },
@@ -3618,7 +3618,7 @@ var Ip,
             y = O.evaluated;
           (y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0));
           let n = r,
-            E = !0,
+            x = !0,
             P = r;
           if (
             e &&
@@ -3654,7 +3654,7 @@ var Ip,
                 !1
               );
             var w = $ === r;
-            if (((E = w), E)) {
+            if (((x = w), x)) {
               var N = {};
               ((N.sourceService = !0), (N.kind = !0));
             }
@@ -3680,9 +3680,9 @@ var Ip,
                 !1
               );
             var w = $ === r;
-            ((E = w), E && N !== !0 && ((N = N || {}), (N.sourceService = !0)), (g = "else"));
+            ((x = w), x && N !== !0 && ((N = N || {}), (N.sourceService = !0)), (g = "else"));
           }
-          if (!E) {
+          if (!x) {
             let $ = {
               instancePath: s,
               schemaPath: "#/allOf/0/if",
@@ -3937,10 +3937,10 @@ var Ip,
             y = B.evaluated;
           if ((y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0), r === 0))
             if (e && typeof e == "object" && !Array.isArray(e)) {
-              let E;
+              let x;
               if (
-                (e.ref === void 0 && (E = "ref")) ||
-                (e.sourceEpoch === void 0 && (E = "sourceEpoch"))
+                (e.ref === void 0 && (x = "ref")) ||
+                (e.sourceEpoch === void 0 && (x = "sourceEpoch"))
               )
                 return (
                   (B.errors = [
@@ -3948,7 +3948,7 @@ var Ip,
                       instancePath: s,
                       schemaPath: "#/required",
                       keyword: "required",
-                      params: { missingProperty: E },
+                      params: { missingProperty: x },
                     },
                   ]),
                   !1
@@ -4087,7 +4087,7 @@ var Ip,
               {
                 let w = r;
                 for (let g in e)
-                  if (!F.call(D.properties, g))
+                  if (!F.call(E.properties, g))
                     return (
                       (ce.errors = [
                         {
@@ -4327,7 +4327,7 @@ var Ip,
                                       instancePath: s + "/status",
                                       schemaPath: "#/properties/status/enum",
                                       keyword: "enum",
-                                      params: { allowedValues: D.properties.status.enum },
+                                      params: { allowedValues: E.properties.status.enum },
                                     },
                                   ]),
                                   !1
@@ -4365,7 +4365,7 @@ var Ip,
                                         !1
                                       );
                                     {
-                                      var E = !0;
+                                      var x = !0;
                                       let R = U.length;
                                       for (let W = 0; W < R; W++) {
                                         let T = r;
@@ -4378,10 +4378,10 @@ var Ip,
                                         }) ||
                                           ((a = a === null ? B.errors : a.concat(B.errors)),
                                           (r = a.length));
-                                        var E = T === r;
-                                        if (!E) break;
+                                        var x = T === r;
+                                        if (!x) break;
                                       }
-                                      if (E) {
+                                      if (x) {
                                         let W = U.length,
                                           T;
                                         if (W > 1) {
@@ -4537,7 +4537,7 @@ var Ip,
                                               ]),
                                               !1
                                             );
-                                          if (!x.test(R))
+                                          if (!D.test(R))
                                             return (
                                               (ce.errors = [
                                                 {
@@ -4922,11 +4922,11 @@ var Ip,
             y = Ze.evaluated;
           if ((y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0), r === 0))
             if (e && typeof e == "object" && !Array.isArray(e)) {
-              let E;
+              let x;
               if (
-                (e.protected === void 0 && (E = "protected")) ||
-                (e.payload === void 0 && (E = "payload")) ||
-                (e.signature === void 0 && (E = "signature"))
+                (e.protected === void 0 && (x = "protected")) ||
+                (e.payload === void 0 && (x = "payload")) ||
+                (e.signature === void 0 && (x = "signature"))
               )
                 return (
                   (Ze.errors = [
@@ -4934,7 +4934,7 @@ var Ip,
                       instancePath: s,
                       schemaPath: "#/required",
                       keyword: "required",
-                      params: { missingProperty: E },
+                      params: { missingProperty: x },
                     },
                   ]),
                   !1
@@ -5155,10 +5155,10 @@ var Ip,
             y = br.evaluated;
           if ((y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0), r === 0))
             if (e && typeof e == "object" && !Array.isArray(e)) {
-              let E;
+              let x;
               if (
-                (e.certificate === void 0 && (E = "certificate")) ||
-                (e.active === void 0 && (E = "active"))
+                (e.certificate === void 0 && (x = "certificate")) ||
+                (e.active === void 0 && (x = "active"))
               )
                 return (
                   (br.errors = [
@@ -5166,7 +5166,7 @@ var Ip,
                       instancePath: s,
                       schemaPath: "#/required",
                       keyword: "required",
-                      params: { missingProperty: E },
+                      params: { missingProperty: x },
                     },
                   ]),
                   !1
@@ -5339,7 +5339,7 @@ var Ip,
                                 !1
                               );
                             {
-                              var E = !0;
+                              var x = !0;
                               let q = N.length;
                               for (let K = 0; K < q; K++) {
                                 let U = r;
@@ -5352,8 +5352,8 @@ var Ip,
                                 }) ||
                                   ((a = a === null ? br.errors : a.concat(br.errors)),
                                   (r = a.length));
-                                var E = U === r;
-                                if (!E) break;
+                                var x = U === r;
+                                if (!x) break;
                               }
                             }
                           } else
@@ -5858,7 +5858,7 @@ var Ip,
                                           params: { limit: 64 },
                                         };
                                         (a === null ? (a = [Y]) : a.push(Y), r++);
-                                      } else if (!x.test(z)) {
+                                      } else if (!D.test(z)) {
                                         let Y = {
                                           instancePath: s + "/previousDigest",
                                           schemaPath: "#/properties/previousDigest/anyOf/0/pattern",
@@ -5876,8 +5876,8 @@ var Ip,
                                       };
                                       (a === null ? (a = [Y]) : a.push(Y), r++);
                                     }
-                                  var E = J === r;
-                                  T = T || E;
+                                  var x = J === r;
+                                  T = T || x;
                                   let pe = r;
                                   if (z !== null) {
                                     let Y = {
@@ -5888,8 +5888,8 @@ var Ip,
                                     };
                                     (a === null ? (a = [Y]) : a.push(Y), r++);
                                   }
-                                  var E = pe === r;
-                                  if (((T = T || E), T))
+                                  var x = pe === r;
+                                  if (((T = T || x), T))
                                     ((r = W), a !== null && (W ? (a.length = W) : (a = null)));
                                   else {
                                     let Y = {
@@ -5937,7 +5937,7 @@ var Ip,
                                             ]),
                                             !1
                                           );
-                                        if (!x.test(R))
+                                        if (!D.test(R))
                                           return (
                                             (Ve.errors = [
                                               {
@@ -6349,7 +6349,7 @@ var Ip,
                   ]),
                   !1
                 );
-              if (!x.test(e))
+              if (!D.test(e))
                 return (
                   (ie.errors = [
                     {
@@ -6391,12 +6391,12 @@ var Ip,
             y = tr.evaluated;
           if ((y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0), r === 0))
             if (e && typeof e == "object" && !Array.isArray(e)) {
-              let E;
+              let x;
               if (
-                (e.registryEpoch === void 0 && (E = "registryEpoch")) ||
-                (e.registrySequence === void 0 && (E = "registrySequence")) ||
-                (e.checkpointDigest === void 0 && (E = "checkpointDigest")) ||
-                (e.keyEpoch === void 0 && (E = "keyEpoch"))
+                (e.registryEpoch === void 0 && (x = "registryEpoch")) ||
+                (e.registrySequence === void 0 && (x = "registrySequence")) ||
+                (e.checkpointDigest === void 0 && (x = "checkpointDigest")) ||
+                (e.keyEpoch === void 0 && (x = "keyEpoch"))
               )
                 return (
                   (tr.errors = [
@@ -6404,7 +6404,7 @@ var Ip,
                       instancePath: s,
                       schemaPath: "#/required",
                       keyword: "required",
-                      params: { missingProperty: E },
+                      params: { missingProperty: x },
                     },
                   ]),
                   !1
@@ -6779,12 +6779,12 @@ var Ip,
             y = Or.evaluated;
           if ((y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0), r === 0))
             if (e && typeof e == "object" && !Array.isArray(e)) {
-              let E;
+              let x;
               if (
-                (e.registryEpoch === void 0 && (E = "registryEpoch")) ||
-                (e.registrySequence === void 0 && (E = "registrySequence")) ||
-                (e.checkpointDigest === void 0 && (E = "checkpointDigest")) ||
-                (e.keyEpoch === void 0 && (E = "keyEpoch"))
+                (e.registryEpoch === void 0 && (x = "registryEpoch")) ||
+                (e.registrySequence === void 0 && (x = "registrySequence")) ||
+                (e.checkpointDigest === void 0 && (x = "checkpointDigest")) ||
+                (e.keyEpoch === void 0 && (x = "keyEpoch"))
               )
                 return (
                   (Or.errors = [
@@ -6792,7 +6792,7 @@ var Ip,
                       instancePath: s,
                       schemaPath: "#/required",
                       keyword: "required",
-                      params: { missingProperty: E },
+                      params: { missingProperty: x },
                     },
                   ]),
                   !1
@@ -6910,11 +6910,11 @@ var Ip,
             y = A.evaluated;
           if ((y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0), r === 0))
             if (e && typeof e == "object" && !Array.isArray(e)) {
-              let E;
+              let x;
               if (
-                (e.state === void 0 && (E = "state")) ||
-                (e.version === void 0 && (E = "version")) ||
-                (e.digest === void 0 && (E = "digest"))
+                (e.state === void 0 && (x = "state")) ||
+                (e.version === void 0 && (x = "version")) ||
+                (e.digest === void 0 && (x = "digest"))
               )
                 return (
                   (A.errors = [
@@ -6922,7 +6922,7 @@ var Ip,
                       instancePath: s,
                       schemaPath: "#/required",
                       keyword: "required",
-                      params: { missingProperty: E },
+                      params: { missingProperty: x },
                     },
                   ]),
                   !1
@@ -7289,7 +7289,7 @@ var Ip,
                                                 !1
                                               );
                                             {
-                                              var E = !0;
+                                              var x = !0;
                                               let pe = W.length;
                                               for (let G = 0; G < pe; G++) {
                                                 let Y = r;
@@ -7302,10 +7302,10 @@ var Ip,
                                                 }) ||
                                                   ((a = a === null ? M.errors : a.concat(M.errors)),
                                                   (r = a.length));
-                                                var E = Y === r;
-                                                if (!E) break;
+                                                var x = Y === r;
+                                                if (!x) break;
                                               }
-                                              if (E) {
+                                              if (x) {
                                                 let G = W.length,
                                                   Y;
                                                 if (G > 1) {
@@ -7425,7 +7425,7 @@ var Ip,
           );
         }
         ((xr.evaluated = { props: !0, dynamicProps: !1, dynamicItems: !1 }),
-          (t.KeyCertificatePayload = f));
+          (t.KeyCertificatePayload = v));
         var Ee = {
           type: "object",
           properties: {
@@ -7537,12 +7537,12 @@ var Ip,
             y = ye.evaluated;
           if ((y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0), r === 0))
             if (e && typeof e == "object" && !Array.isArray(e)) {
-              let E;
+              let x;
               if (
-                (e.kty === void 0 && (E = "kty")) ||
-                (e.crv === void 0 && (E = "crv")) ||
-                (e.x === void 0 && (E = "x")) ||
-                (e.y === void 0 && (E = "y"))
+                (e.kty === void 0 && (x = "kty")) ||
+                (e.crv === void 0 && (x = "crv")) ||
+                (e.x === void 0 && (x = "x")) ||
+                (e.y === void 0 && (x = "y"))
               )
                 return (
                   (ye.errors = [
@@ -7550,7 +7550,7 @@ var Ip,
                       instancePath: s,
                       schemaPath: "#/required",
                       keyword: "required",
-                      params: { missingProperty: E },
+                      params: { missingProperty: x },
                     },
                   ]),
                   !1
@@ -8197,8 +8197,8 @@ var Ip,
                                           };
                                           (a === null ? (a = [se]) : a.push(se), r++);
                                         }
-                                      var E = G === r;
-                                      pe = pe || E;
+                                      var x = G === r;
+                                      pe = pe || x;
                                       let Y = r;
                                       if (W !== null) {
                                         let se = {
@@ -8209,8 +8209,8 @@ var Ip,
                                         };
                                         (a === null ? (a = [se]) : a.push(se), r++);
                                       }
-                                      var E = Y === r;
-                                      if (((pe = pe || E), pe))
+                                      var x = Y === r;
+                                      if (((pe = pe || x), pe))
                                         ((r = J), a !== null && (J ? (a.length = J) : (a = null)));
                                       else {
                                         let se = {
@@ -8563,7 +8563,7 @@ var Ip,
           return ((h.errors = a), r === 0);
         }
         h.evaluated = { props: !0, dynamicProps: !1, dynamicItems: !1 };
-        function f(
+        function v(
           e,
           {
             instancePath: s = "",
@@ -8575,7 +8575,7 @@ var Ip,
         ) {
           let a = null,
             r = 0,
-            y = f.evaluated;
+            y = v.evaluated;
           return (
             y.dynamicProps && (y.props = void 0),
             y.dynamicItems && (y.items = void 0),
@@ -8586,11 +8586,11 @@ var Ip,
               rootData: k,
               dynamicAnchors: I,
             }) || ((a = a === null ? h.errors : a.concat(h.errors)), (r = a.length)),
-            (f.errors = a),
+            (v.errors = a),
             r === 0
           );
         }
-        ((f.evaluated = { props: !0, dynamicProps: !1, dynamicItems: !1 }),
+        ((v.evaluated = { props: !0, dynamicProps: !1, dynamicItems: !1 }),
           (t.AgentCredentialApproval = Te));
         var ne = {
             type: "object",
@@ -9187,8 +9187,8 @@ var Ip,
                                                                 ? ie.errors
                                                                 : a.concat(ie.errors)),
                                                             (r = a.length));
-                                                          var E = ze === r;
-                                                          Se = Se || E;
+                                                          var x = ze === r;
+                                                          Se = Se || x;
                                                           let Ne = r;
                                                           if (X !== null) {
                                                             let ar = {
@@ -9203,8 +9203,8 @@ var Ip,
                                                             (a === null ? (a = [ar]) : a.push(ar),
                                                               r++);
                                                           }
-                                                          var E = Ne === r;
-                                                          if (((Se = Se || E), Se))
+                                                          var x = Ne === r;
+                                                          if (((Se = Se || x), Se))
                                                             ((r = $e),
                                                               a !== null &&
                                                                 ($e
@@ -9837,8 +9837,8 @@ var Ip,
                                               }) ||
                                                 ((a = a === null ? ie.errors : a.concat(ie.errors)),
                                                 (r = a.length));
-                                              var E = se === r;
-                                              ae = ae || E;
+                                              var x = se === r;
+                                              ae = ae || x;
                                               let te = r;
                                               if (pe !== null) {
                                                 let he = {
@@ -9851,8 +9851,8 @@ var Ip,
                                                 };
                                                 (a === null ? (a = [he]) : a.push(he), r++);
                                               }
-                                              var E = te === r;
-                                              if (((ae = ae || E), ae))
+                                              var x = te === r;
+                                              if (((ae = ae || x), ae))
                                                 ((r = Y),
                                                   a !== null && (Y ? (a.length = Y) : (a = null)));
                                               else {
@@ -10532,8 +10532,8 @@ var Ip,
                                                     (a === null ? (a = [he]) : a.push(he), r++);
                                                   }
                                                 }
-                                                var E = se === r;
-                                                ae = ae || E;
+                                                var x = se === r;
+                                                ae = ae || x;
                                                 let te = r;
                                                 if (pe !== null) {
                                                   let he = {
@@ -10545,8 +10545,8 @@ var Ip,
                                                   };
                                                   (a === null ? (a = [he]) : a.push(he), r++);
                                                 }
-                                                var E = te === r;
-                                                if (((ae = ae || E), ae))
+                                                var x = te === r;
+                                                if (((ae = ae || x), ae))
                                                   ((r = Y),
                                                     a !== null &&
                                                       (Y ? (a.length = Y) : (a = null)));
@@ -10684,26 +10684,26 @@ var Ip,
             y = De.evaluated;
           if ((y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0), r === 0))
             if (e && typeof e == "object" && !Array.isArray(e)) {
-              let E;
+              let x;
               if (
-                (e.contractVersion === void 0 && (E = "contractVersion")) ||
-                (e.profile === void 0 && (E = "profile")) ||
-                (e.artifactType === void 0 && (E = "artifactType")) ||
-                (e.ownerSubject === void 0 && (E = "ownerSubject")) ||
-                (e.vaultId === void 0 && (E = "vaultId")) ||
-                (e.connectionId === void 0 && (E = "connectionId")) ||
-                (e.agentId === void 0 && (E = "agentId")) ||
-                (e.clientId === void 0 && (E = "clientId")) ||
-                (e.rootKeyId === void 0 && (E = "rootKeyId")) ||
-                (e.agentSigningKeyId === void 0 && (E = "agentSigningKeyId")) ||
-                (e.agentEncryptionKeyId === void 0 && (E = "agentEncryptionKeyId")) ||
-                (e.identityEpoch === void 0 && (E = "identityEpoch")) ||
-                (e.deviceSigningKeyId === void 0 && (E = "deviceSigningKeyId")) ||
-                (e.stableOperationId === void 0 && (E = "stableOperationId")) ||
-                (e.registrySequence === void 0 && (E = "registrySequence")) ||
-                (e.checkpointDigest === void 0 && (E = "checkpointDigest")) ||
-                (e.keyEpoch === void 0 && (E = "keyEpoch")) ||
-                (e.issuedAt === void 0 && (E = "issuedAt"))
+                (e.contractVersion === void 0 && (x = "contractVersion")) ||
+                (e.profile === void 0 && (x = "profile")) ||
+                (e.artifactType === void 0 && (x = "artifactType")) ||
+                (e.ownerSubject === void 0 && (x = "ownerSubject")) ||
+                (e.vaultId === void 0 && (x = "vaultId")) ||
+                (e.connectionId === void 0 && (x = "connectionId")) ||
+                (e.agentId === void 0 && (x = "agentId")) ||
+                (e.clientId === void 0 && (x = "clientId")) ||
+                (e.rootKeyId === void 0 && (x = "rootKeyId")) ||
+                (e.agentSigningKeyId === void 0 && (x = "agentSigningKeyId")) ||
+                (e.agentEncryptionKeyId === void 0 && (x = "agentEncryptionKeyId")) ||
+                (e.identityEpoch === void 0 && (x = "identityEpoch")) ||
+                (e.deviceSigningKeyId === void 0 && (x = "deviceSigningKeyId")) ||
+                (e.stableOperationId === void 0 && (x = "stableOperationId")) ||
+                (e.registrySequence === void 0 && (x = "registrySequence")) ||
+                (e.checkpointDigest === void 0 && (x = "checkpointDigest")) ||
+                (e.keyEpoch === void 0 && (x = "keyEpoch")) ||
+                (e.issuedAt === void 0 && (x = "issuedAt"))
               )
                 return (
                   (De.errors = [
@@ -10711,7 +10711,7 @@ var Ip,
                       instancePath: s,
                       schemaPath: "#/required",
                       keyword: "required",
-                      params: { missingProperty: E },
+                      params: { missingProperty: x },
                     },
                   ]),
                   !1
@@ -11288,15 +11288,15 @@ var Ip,
             y = Re.evaluated;
           if ((y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0), r === 0))
             if (e && typeof e == "object" && !Array.isArray(e)) {
-              let E;
-              if ((e.keyId === void 0 && (E = "keyId")) || (e.role === void 0 && (E = "role")))
+              let x;
+              if ((e.keyId === void 0 && (x = "keyId")) || (e.role === void 0 && (x = "role")))
                 return (
                   (Re.errors = [
                     {
                       instancePath: s,
                       schemaPath: "#/required",
                       keyword: "required",
-                      params: { missingProperty: E },
+                      params: { missingProperty: x },
                     },
                   ]),
                   !1
@@ -11999,7 +11999,7 @@ var Ip,
                                                                     !1
                                                                   );
                                                                 {
-                                                                  var E = !0;
+                                                                  var x = !0;
                                                                   let Le = Se.length;
                                                                   for (let ar = 0; ar < Le; ar++) {
                                                                     let Ce = r;
@@ -12016,8 +12016,8 @@ var Ip,
                                                                           ? Re.errors
                                                                           : a.concat(Re.errors)),
                                                                       (r = a.length));
-                                                                    var E = Ce === r;
-                                                                    if (!E) break;
+                                                                    var x = Ce === r;
+                                                                    if (!x) break;
                                                                   }
                                                                 }
                                                               } else
@@ -13457,7 +13457,7 @@ var Ip,
                                                                     !1
                                                                   );
                                                                 {
-                                                                  var E = !0;
+                                                                  var x = !0;
                                                                   let ze = he.length;
                                                                   for (let Ne = 0; Ne < ze; Ne++) {
                                                                     let Le = r;
@@ -13474,8 +13474,8 @@ var Ip,
                                                                           ? Re.errors
                                                                           : a.concat(Re.errors)),
                                                                       (r = a.length));
-                                                                    var E = Le === r;
-                                                                    if (!E) break;
+                                                                    var x = Le === r;
+                                                                    if (!x) break;
                                                                   }
                                                                 }
                                                               } else
@@ -14580,7 +14580,7 @@ var Ip,
                                                                     !1
                                                                   );
                                                                 {
-                                                                  var E = !0;
+                                                                  var x = !0;
                                                                   let ze = he.length;
                                                                   for (let Ne = 0; Ne < ze; Ne++) {
                                                                     let Le = r;
@@ -14597,8 +14597,8 @@ var Ip,
                                                                           ? Re.errors
                                                                           : a.concat(Re.errors)),
                                                                       (r = a.length));
-                                                                    var E = Le === r;
-                                                                    if (!E) break;
+                                                                    var x = Le === r;
+                                                                    if (!x) break;
                                                                   }
                                                                 }
                                                               } else
@@ -15031,7 +15031,7 @@ var Ip,
             y = _e.evaluated;
           (y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0));
           let n = r,
-            E = !1,
+            x = !1,
             P = null,
             w = r;
           ge(e, {
@@ -15043,7 +15043,7 @@ var Ip,
           }) || ((a = a === null ? ge.errors : a.concat(ge.errors)), (r = a.length));
           var j = w === r;
           if (j) {
-            ((E = !0), (P = 0));
+            ((x = !0), (P = 0));
             var g = !0;
           }
           let N = r;
@@ -15055,9 +15055,9 @@ var Ip,
             dynamicAnchors: I,
           }) || ((a = a === null ? xe.errors : a.concat(xe.errors)), (r = a.length));
           var j = N === r;
-          if (j && E) ((E = !1), (P = [P, 1]));
+          if (j && x) ((x = !1), (P = [P, 1]));
           else {
-            j && ((E = !0), (P = 1), g !== !0 && (g = !0));
+            j && ((x = !0), (P = 1), g !== !0 && (g = !0));
             let $ = r;
             le(e, {
               instancePath: s,
@@ -15067,9 +15067,9 @@ var Ip,
               dynamicAnchors: I,
             }) || ((a = a === null ? le.errors : a.concat(le.errors)), (r = a.length));
             var j = $ === r;
-            j && E ? ((E = !1), (P = [P, 2])) : j && ((E = !0), (P = 2), g !== !0 && (g = !0));
+            j && x ? ((x = !1), (P = [P, 2])) : j && ((x = !0), (P = 2), g !== !0 && (g = !0));
           }
-          if (E) ((r = n), a !== null && (n ? (a.length = n) : (a = null)));
+          if (x) ((r = n), a !== null && (n ? (a.length = n) : (a = null)));
           else {
             let $ = {
               instancePath: s,
@@ -15126,7 +15126,7 @@ var Ip,
             y = Fe.evaluated;
           (y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0));
           let n = r,
-            E = !0,
+            x = !0,
             P = r;
           if (
             e &&
@@ -15162,7 +15162,7 @@ var Ip,
                 !1
               );
             var w = $ === r;
-            if (((E = w), E)) {
+            if (((x = w), x)) {
               var N = {};
               ((N.sourceService = !0), (N.kind = !0));
             }
@@ -15188,9 +15188,9 @@ var Ip,
                 !1
               );
             var w = $ === r;
-            ((E = w), E && N !== !0 && ((N = N || {}), (N.sourceService = !0)), (g = "else"));
+            ((x = w), x && N !== !0 && ((N = N || {}), (N.sourceService = !0)), (g = "else"));
           }
-          if (!E) {
+          if (!x) {
             let $ = {
               instancePath: s,
               schemaPath: "#/allOf/0/if",
@@ -15546,11 +15546,11 @@ var Ip,
             y = ir.evaluated;
           if ((y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0), r === 0))
             if (e && typeof e == "object" && !Array.isArray(e)) {
-              let E;
+              let x;
               if (
-                (e.allowPartial === void 0 && (E = "allowPartial")) ||
-                (e.allowUnknownAsOf === void 0 && (E = "allowUnknownAsOf")) ||
-                (e.maxFetchedAgeSeconds === void 0 && (E = "maxFetchedAgeSeconds"))
+                (e.allowPartial === void 0 && (x = "allowPartial")) ||
+                (e.allowUnknownAsOf === void 0 && (x = "allowUnknownAsOf")) ||
+                (e.maxFetchedAgeSeconds === void 0 && (x = "maxFetchedAgeSeconds"))
               )
                 return (
                   (ir.errors = [
@@ -15558,7 +15558,7 @@ var Ip,
                       instancePath: s,
                       schemaPath: "#/required",
                       keyword: "required",
-                      params: { missingProperty: E },
+                      params: { missingProperty: x },
                     },
                   ]),
                   !1
@@ -15709,11 +15709,11 @@ var Ip,
             y = Xr.evaluated;
           if ((y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0), r === 0))
             if (e && typeof e == "object" && !Array.isArray(e)) {
-              let E;
+              let x;
               if (
-                (e.sectionId === void 0 && (E = "sectionId")) ||
-                (e.title === void 0 && (E = "title")) ||
-                (e.instructions === void 0 && (E = "instructions"))
+                (e.sectionId === void 0 && (x = "sectionId")) ||
+                (e.title === void 0 && (x = "title")) ||
+                (e.instructions === void 0 && (x = "instructions"))
               )
                 return (
                   (Xr.errors = [
@@ -15721,7 +15721,7 @@ var Ip,
                       instancePath: s,
                       schemaPath: "#/required",
                       keyword: "required",
-                      params: { missingProperty: E },
+                      params: { missingProperty: x },
                     },
                   ]),
                   !1
@@ -16026,7 +16026,7 @@ var Ip,
                               !1
                             );
                           {
-                            var E = !0;
+                            var x = !0;
                             let q = N.length;
                             for (let K = 0; K < q; K++) {
                               let U = r;
@@ -16039,8 +16039,8 @@ var Ip,
                               }) ||
                                 ((a = a === null ? Xr.errors : a.concat(Xr.errors)),
                                 (r = a.length));
-                              var E = U === r;
-                              if (!E) break;
+                              var x = U === r;
+                              if (!x) break;
                             }
                           }
                         } else
@@ -16177,7 +16177,7 @@ var Ip,
             y = Er.evaluated;
           (y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0));
           let n = r,
-            E = !0,
+            x = !0,
             P = r;
           if (
             e &&
@@ -16210,7 +16210,7 @@ var Ip,
                 );
             }
             var w = $ === r;
-            ((E = w), (g = "then"));
+            ((x = w), (g = "then"));
           } else {
             let $ = r,
               q = r,
@@ -16232,9 +16232,9 @@ var Ip,
               );
             ((r = q), a !== null && (q ? (a.length = q) : (a = null)));
             var w = $ === r;
-            ((E = w), (g = "else"));
+            ((x = w), (g = "else"));
           }
-          if (!E) {
+          if (!x) {
             let $ = {
               instancePath: s,
               schemaPath: "#/allOf/0/if",
@@ -16751,8 +16751,8 @@ var Ip,
                               }) ||
                                 ((a = a === null ? Er.errors : a.concat(Er.errors)),
                                 (r = a.length));
-                              var E = z === r;
-                              Z = Z || E;
+                              var x = z === r;
+                              Z = Z || x;
                               let R = r;
                               if (q !== null) {
                                 let T = {
@@ -16763,8 +16763,8 @@ var Ip,
                                 };
                                 (a === null ? (a = [T]) : a.push(T), r++);
                               }
-                              var E = R === r;
-                              if (((Z = Z || E), Z))
+                              var x = R === r;
+                              if (((Z = Z || x), Z))
                                 ((r = U), a !== null && (U ? (a.length = U) : (a = null)));
                               else {
                                 let T = {
@@ -16818,10 +16818,10 @@ var Ip,
             y = et.evaluated;
           if ((y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0), r === 0))
             if (e && typeof e == "object" && !Array.isArray(e)) {
-              let E;
+              let x;
               if (
-                (e.sectionId === void 0 && (E = "sectionId")) ||
-                (e.markdown === void 0 && (E = "markdown"))
+                (e.sectionId === void 0 && (x = "sectionId")) ||
+                (e.markdown === void 0 && (x = "markdown"))
               )
                 return (
                   (et.errors = [
@@ -16829,7 +16829,7 @@ var Ip,
                       instancePath: s,
                       schemaPath: "#/required",
                       keyword: "required",
-                      params: { missingProperty: E },
+                      params: { missingProperty: x },
                     },
                   ]),
                   !1
@@ -17245,8 +17245,8 @@ var Ip,
                                 };
                                 (a === null ? (a = [W]) : a.push(W), r++);
                               }
-                            var E = Z === r;
-                            U = U || E;
+                            var x = Z === r;
+                            U = U || x;
                             let z = r;
                             if ($ !== null) {
                               let W = {
@@ -17257,8 +17257,8 @@ var Ip,
                               };
                               (a === null ? (a = [W]) : a.push(W), r++);
                             }
-                            var E = z === r;
-                            if (((U = U || E), U))
+                            var x = z === r;
+                            if (((U = U || x), U))
                               ((r = K), a !== null && (K ? (a.length = K) : (a = null)));
                             else {
                               let W = {
@@ -17465,7 +17465,7 @@ var Ip,
                                 !1
                               );
                             {
-                              var E = !0;
+                              var x = !0;
                               let Z = q.length;
                               for (let z = 0; z < Z; z++) {
                                 let R = r;
@@ -17478,8 +17478,8 @@ var Ip,
                                 }) ||
                                   ((a = a === null ? et.errors : a.concat(et.errors)),
                                   (r = a.length));
-                                var E = R === r;
-                                if (!E) break;
+                                var x = R === r;
+                                if (!x) break;
                               }
                             }
                           } else
@@ -17672,7 +17672,7 @@ var Ip,
           return ((_r.errors = a), r === 0);
         }
         _r.evaluated = { props: !0, dynamicProps: !1, dynamicItems: !1 };
-        var ns = {
+        var is = {
             type: "object",
             properties: {
               state: { enum: ["ready", "empty"] },
@@ -17788,9 +17788,9 @@ var Ip,
                         ]),
                         !1
                       );
-                    var E = N === r;
-                  } else var E = !0;
-                  if (E)
+                    var x = N === r;
+                  } else var x = !0;
+                  if (x)
                     if (e.issues !== void 0) {
                       let g = e.issues,
                         N = r;
@@ -17906,8 +17906,8 @@ var Ip,
                             ]),
                             !1
                           );
-                      var E = N === r;
-                    } else var E = !0;
+                      var x = N === r;
+                    } else var x = !0;
                 }
               }
             } else
@@ -18076,8 +18076,8 @@ var Ip,
                           };
                           (a === null ? (a = [R]) : a.push(R), r++);
                         }
-                      var E = U === r;
-                      K = K || E;
+                      var x = U === r;
+                      K = K || x;
                       let Z = r;
                       if (j !== null) {
                         let R = {
@@ -18088,8 +18088,8 @@ var Ip,
                         };
                         (a === null ? (a = [R]) : a.push(R), r++);
                       }
-                      var E = Z === r;
-                      if (((K = K || E), K))
+                      var x = Z === r;
+                      if (((K = K || x), K))
                         ((r = q), a !== null && (q ? (a.length = q) : (a = null)));
                       else {
                         let R = {
@@ -18259,10 +18259,10 @@ var Ip,
             y = ut.evaluated;
           if ((y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0), r === 0))
             if (e && typeof e == "object" && !Array.isArray(e)) {
-              let E;
+              let x;
               if (
-                (e.currency === void 0 && (E = "currency")) ||
-                (e.amount === void 0 && (E = "amount"))
+                (e.currency === void 0 && (x = "currency")) ||
+                (e.amount === void 0 && (x = "amount"))
               )
                 return (
                   (ut.errors = [
@@ -18270,7 +18270,7 @@ var Ip,
                       instancePath: s,
                       schemaPath: "#/required",
                       keyword: "required",
-                      params: { missingProperty: E },
+                      params: { missingProperty: x },
                     },
                   ]),
                   !1
@@ -18581,8 +18581,8 @@ var Ip,
                             };
                             (a === null ? (a = [T]) : a.push(T), r++);
                           }
-                        var E = z === r;
-                        Z = Z || E;
+                        var x = z === r;
+                        Z = Z || x;
                         let R = r;
                         if (q !== null) {
                           let T = {
@@ -18593,8 +18593,8 @@ var Ip,
                           };
                           (a === null ? (a = [T]) : a.push(T), r++);
                         }
-                        var E = R === r;
-                        if (((Z = Z || E), Z))
+                        var x = R === r;
+                        if (((Z = Z || x), Z))
                           ((r = U), a !== null && (U ? (a.length = U) : (a = null)));
                         else {
                           let T = {
@@ -19085,7 +19085,7 @@ var Ip,
                                 !1
                               );
                             {
-                              var E = !0;
+                              var x = !0;
                               let U = $.length;
                               for (let Z = 0; Z < U; Z++) {
                                 let z = r;
@@ -19098,8 +19098,8 @@ var Ip,
                                 }) ||
                                   ((a = a === null ? kt.errors : a.concat(kt.errors)),
                                   (r = a.length));
-                                var E = z === r;
-                                if (!E) break;
+                                var x = z === r;
+                                if (!x) break;
                               }
                             }
                           } else
@@ -19354,7 +19354,7 @@ var Ip,
                                 !1
                               );
                             {
-                              var E = !0;
+                              var x = !0;
                               let Z = q.length;
                               for (let z = 0; z < Z; z++) {
                                 let R = r;
@@ -19367,8 +19367,8 @@ var Ip,
                                 }) ||
                                   ((a = a === null ? zr.errors : a.concat(zr.errors)),
                                   (r = a.length));
-                                var E = R === r;
-                                if (!E) break;
+                                var x = R === r;
+                                if (!x) break;
                               }
                             }
                           } else
@@ -19643,13 +19643,13 @@ var Ip,
             y = Mr.evaluated;
           if ((y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0), r === 0))
             if (e && typeof e == "object" && !Array.isArray(e)) {
-              let E;
+              let x;
               if (
-                (e.symbol === void 0 && (E = "symbol")) ||
-                (e.name === void 0 && (E = "name")) ||
-                (e.instrumentType === void 0 && (E = "instrumentType")) ||
-                (e.currency === void 0 && (E = "currency")) ||
-                (e.addedAt === void 0 && (E = "addedAt"))
+                (e.symbol === void 0 && (x = "symbol")) ||
+                (e.name === void 0 && (x = "name")) ||
+                (e.instrumentType === void 0 && (x = "instrumentType")) ||
+                (e.currency === void 0 && (x = "currency")) ||
+                (e.addedAt === void 0 && (x = "addedAt"))
               )
                 return (
                   (Mr.errors = [
@@ -19657,7 +19657,7 @@ var Ip,
                       instancePath: s,
                       schemaPath: "#/required",
                       keyword: "required",
-                      params: { missingProperty: E },
+                      params: { missingProperty: x },
                     },
                   ]),
                   !1
@@ -19941,9 +19941,9 @@ var Ip,
                         ]),
                         !1
                       );
-                    var E = g === r;
-                  } else var E = !0;
-                  if (E)
+                    var x = g === r;
+                  } else var x = !0;
+                  if (x)
                     if (e.items !== void 0) {
                       let g = e.items,
                         N = r;
@@ -20003,8 +20003,8 @@ var Ip,
                             ]),
                             !1
                           );
-                      var E = N === r;
-                    } else var E = !0;
+                      var x = N === r;
+                    } else var x = !0;
                 }
               }
             } else
@@ -20037,14 +20037,14 @@ var Ip,
             y = Vr.evaluated;
           if ((y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0), r === 0))
             if (e && typeof e == "object" && !Array.isArray(e)) {
-              let E;
+              let x;
               if (
-                (e.followId === void 0 && (E = "followId")) ||
-                (e.name === void 0 && (E = "name")) ||
-                (e.handleOrUrl === void 0 && (E = "handleOrUrl")) ||
-                (e.note === void 0 && (E = "note")) ||
-                (e.verification === void 0 && (E = "verification")) ||
-                (e.addedAt === void 0 && (E = "addedAt"))
+                (e.followId === void 0 && (x = "followId")) ||
+                (e.name === void 0 && (x = "name")) ||
+                (e.handleOrUrl === void 0 && (x = "handleOrUrl")) ||
+                (e.note === void 0 && (x = "note")) ||
+                (e.verification === void 0 && (x = "verification")) ||
+                (e.addedAt === void 0 && (x = "addedAt"))
               )
                 return (
                   (Vr.errors = [
@@ -20052,7 +20052,7 @@ var Ip,
                       instancePath: s,
                       schemaPath: "#/required",
                       keyword: "required",
-                      params: { missingProperty: E },
+                      params: { missingProperty: x },
                     },
                   ]),
                   !1
@@ -20445,7 +20445,7 @@ var Ip,
                               !1
                             );
                           {
-                            var E = !0;
+                            var x = !0;
                             let q = N.length;
                             for (let K = 0; K < q; K++) {
                               let U = r;
@@ -20458,8 +20458,8 @@ var Ip,
                               }) ||
                                 ((a = a === null ? Vr.errors : a.concat(Vr.errors)),
                                 (r = a.length));
-                              var E = U === r;
-                              if (!E) break;
+                              var x = U === r;
+                              if (!x) break;
                             }
                           }
                         } else
@@ -20526,7 +20526,7 @@ var Ip,
             y = Xt.evaluated;
           (y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0));
           let n = r,
-            E = !1,
+            x = !1,
             P = null,
             w = r;
           Ar(e, {
@@ -20538,7 +20538,7 @@ var Ip,
           }) || ((a = a === null ? Ar.errors : a.concat(Ar.errors)), (r = a.length));
           var j = w === r;
           if (j) {
-            ((E = !0), (P = 0));
+            ((x = !0), (P = 0));
             var g = !0;
           }
           let N = r;
@@ -20550,9 +20550,9 @@ var Ip,
             dynamicAnchors: I,
           }) || ((a = a === null ? It.errors : a.concat(It.errors)), (r = a.length));
           var j = N === r;
-          if (j && E) ((E = !1), (P = [P, 1]));
+          if (j && x) ((x = !1), (P = [P, 1]));
           else {
-            j && ((E = !0), (P = 1), g !== !0 && (g = !0));
+            j && ((x = !0), (P = 1), g !== !0 && (g = !0));
             let $ = r;
             gt(e, {
               instancePath: s,
@@ -20562,9 +20562,9 @@ var Ip,
               dynamicAnchors: I,
             }) || ((a = a === null ? gt.errors : a.concat(gt.errors)), (r = a.length));
             var j = $ === r;
-            j && E ? ((E = !1), (P = [P, 2])) : j && ((E = !0), (P = 2), g !== !0 && (g = !0));
+            j && x ? ((x = !1), (P = [P, 2])) : j && ((x = !0), (P = 2), g !== !0 && (g = !0));
           }
-          if (E) ((r = n), a !== null && (n ? (a.length = n) : (a = null)));
+          if (x) ((r = n), a !== null && (n ? (a.length = n) : (a = null)));
           else {
             let $ = {
               instancePath: s,
@@ -20645,7 +20645,7 @@ var Ip,
                             instancePath: s + "/state",
                             schemaPath: "#/properties/state/enum",
                             keyword: "enum",
-                            params: { allowedValues: ns.properties.state.enum },
+                            params: { allowedValues: is.properties.state.enum },
                           },
                         ]),
                         !1
@@ -20717,8 +20717,8 @@ var Ip,
                             };
                             (a === null ? (a = [R]) : a.push(R), r++);
                           }
-                        var E = U === r;
-                        K = K || E;
+                        var x = U === r;
+                        K = K || x;
                         let Z = r;
                         if (j !== null) {
                           let R = {
@@ -20729,8 +20729,8 @@ var Ip,
                           };
                           (a === null ? (a = [R]) : a.push(R), r++);
                         }
-                        var E = Z === r;
-                        if (((K = K || E), K))
+                        var x = Z === r;
+                        if (((K = K || x), K))
                           ((r = q), a !== null && (q ? (a.length = q) : (a = null)));
                         else {
                           let R = {
@@ -20823,7 +20823,7 @@ var Ip,
                                     instancePath: s + "/freshness",
                                     schemaPath: "#/properties/freshness/enum",
                                     keyword: "enum",
-                                    params: { allowedValues: ns.properties.freshness.enum },
+                                    params: { allowedValues: is.properties.freshness.enum },
                                   },
                                 ]),
                                 !1
@@ -20880,7 +20880,7 @@ var Ip,
             y = Br.evaluated;
           (y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0));
           let n = r,
-            E = r,
+            x = r,
             P = !0,
             w = r;
           if (
@@ -20894,7 +20894,7 @@ var Ip,
             (a === null ? (a = [J]) : a.push(J), r++);
           }
           var g = w === r;
-          if (((r = E), a !== null && (E ? (a.length = E) : (a = null)), g)) {
+          if (((r = x), a !== null && (x ? (a.length = x) : (a = null)), g)) {
             let J = r;
             e &&
               typeof e == "object" &&
@@ -21517,9 +21517,9 @@ var Ip,
                           ]),
                           !1
                         );
-                    var E = N === r;
-                  } else var E = !0;
-                  if (E)
+                    var x = N === r;
+                  } else var x = !0;
+                  if (x)
                     if (e.encrypted_key !== void 0) {
                       let g = e.encrypted_key,
                         N = r;
@@ -21573,8 +21573,8 @@ var Ip,
                             ]),
                             !1
                           );
-                      var E = N === r;
-                    } else var E = !0;
+                      var x = N === r;
+                    } else var x = !0;
                 }
               }
             } else
@@ -21736,7 +21736,7 @@ var Ip,
                               !1
                             );
                           {
-                            var E = !0;
+                            var x = !0;
                             let q = N.length;
                             for (let K = 0; K < q; K++) {
                               let U = r;
@@ -21749,8 +21749,8 @@ var Ip,
                               }) ||
                                 ((a = a === null ? Yr.errors : a.concat(Yr.errors)),
                                 (r = a.length));
-                              var E = U === r;
-                              if (!E) break;
+                              var x = U === r;
+                              if (!x) break;
                             }
                           }
                         } else
@@ -22027,12 +22027,12 @@ var Ip,
             y = Vt.evaluated;
           if ((y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0), r === 0))
             if (e && typeof e == "object" && !Array.isArray(e)) {
-              let E;
+              let x;
               if (
-                (e.contractVersion === void 0 && (E = "contractVersion")) ||
-                (e.profile === void 0 && (E = "profile")) ||
-                (e.proof === void 0 && (E = "proof")) ||
-                (e.jwe === void 0 && (E = "jwe"))
+                (e.contractVersion === void 0 && (x = "contractVersion")) ||
+                (e.profile === void 0 && (x = "profile")) ||
+                (e.proof === void 0 && (x = "proof")) ||
+                (e.jwe === void 0 && (x = "jwe"))
               )
                 return (
                   (Vt.errors = [
@@ -22040,7 +22040,7 @@ var Ip,
                       instancePath: s,
                       schemaPath: "#/required",
                       keyword: "required",
-                      params: { missingProperty: E },
+                      params: { missingProperty: x },
                     },
                   ]),
                   !1
@@ -22182,7 +22182,7 @@ var Ip,
             y = Qt.evaluated;
           (y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0));
           let n = r,
-            E = !1,
+            x = !1,
             P = null,
             w = r;
           ge(e, {
@@ -22194,7 +22194,7 @@ var Ip,
           }) || ((a = a === null ? ge.errors : a.concat(ge.errors)), (r = a.length));
           var j = w === r;
           if (j) {
-            ((E = !0), (P = 0));
+            ((x = !0), (P = 0));
             var g = !0;
           }
           let N = r;
@@ -22206,9 +22206,9 @@ var Ip,
             dynamicAnchors: I,
           }) || ((a = a === null ? xe.errors : a.concat(xe.errors)), (r = a.length));
           var j = N === r;
-          if (j && E) ((E = !1), (P = [P, 1]));
+          if (j && x) ((x = !1), (P = [P, 1]));
           else {
-            j && ((E = !0), (P = 1), g !== !0 && (g = !0));
+            j && ((x = !0), (P = 1), g !== !0 && (g = !0));
             let $ = r;
             le(e, {
               instancePath: s,
@@ -22218,9 +22218,9 @@ var Ip,
               dynamicAnchors: I,
             }) || ((a = a === null ? le.errors : a.concat(le.errors)), (r = a.length));
             var j = $ === r;
-            j && E ? ((E = !1), (P = [P, 2])) : j && ((E = !0), (P = 2), g !== !0 && (g = !0));
+            j && x ? ((x = !1), (P = [P, 2])) : j && ((x = !0), (P = 2), g !== !0 && (g = !0));
           }
-          if (E) ((r = n), a !== null && (n ? (a.length = n) : (a = null)));
+          if (x) ((r = n), a !== null && (n ? (a.length = n) : (a = null)));
           else {
             let $ = {
               instancePath: s,
@@ -22248,13 +22248,13 @@ var Ip,
             y = Et.evaluated;
           if ((y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0), r === 0))
             if (e && typeof e == "object" && !Array.isArray(e)) {
-              let E;
+              let x;
               if (
-                (e.contractVersion === void 0 && (E = "contractVersion")) ||
-                (e.profile === void 0 && (E = "profile")) ||
-                (e.artifactType === void 0 && (E = "artifactType")) ||
-                (e.context === void 0 && (E = "context")) ||
-                (e.ciphertextDigest === void 0 && (E = "ciphertextDigest"))
+                (e.contractVersion === void 0 && (x = "contractVersion")) ||
+                (e.profile === void 0 && (x = "profile")) ||
+                (e.artifactType === void 0 && (x = "artifactType")) ||
+                (e.context === void 0 && (x = "context")) ||
+                (e.ciphertextDigest === void 0 && (x = "ciphertextDigest"))
               )
                 return (
                   (Et.errors = [
@@ -22262,7 +22262,7 @@ var Ip,
                       instancePath: s,
                       schemaPath: "#/required",
                       keyword: "required",
-                      params: { missingProperty: E },
+                      params: { missingProperty: x },
                     },
                   ]),
                   !1
@@ -22588,7 +22588,7 @@ var Ip,
                                 !1
                               );
                             {
-                              var E = !0;
+                              var x = !0;
                               let Z = q.length;
                               for (let z = 0; z < Z; z++) {
                                 let R = r;
@@ -22601,8 +22601,8 @@ var Ip,
                                 }) ||
                                   ((a = a === null ? et.errors : a.concat(et.errors)),
                                   (r = a.length));
-                                var E = R === r;
-                                if (!E) break;
+                                var x = R === r;
+                                if (!x) break;
                               }
                             }
                           } else
@@ -22877,7 +22877,7 @@ var Ip,
             ],
             additionalProperties: !1,
           },
-          ss = {
+          ns = {
             type: "object",
             properties: {
               permissionId: { $ref: "#/$defs/Identifier" },
@@ -22964,7 +22964,7 @@ var Ip,
               {
                 let N = r;
                 for (let j in e)
-                  if (!F.call(ss.properties, j))
+                  if (!F.call(ns.properties, j))
                     return (
                       (cr.errors = [
                         {
@@ -23136,7 +23136,7 @@ var Ip,
                                       !1
                                     );
                                   {
-                                    var E = !0;
+                                    var x = !0;
                                     let W = Z.length;
                                     for (let T = 0; T < W; T++) {
                                       let J = Z[T],
@@ -23184,10 +23184,10 @@ var Ip,
                                             !1
                                           );
                                       }
-                                      var E = pe === r;
-                                      if (!E) break;
+                                      var x = pe === r;
+                                      if (!x) break;
                                     }
-                                    if (E) {
+                                    if (x) {
                                       let T = Z.length,
                                         J;
                                       if (T > 1) {
@@ -23284,7 +23284,7 @@ var Ip,
                                           instancePath: s + "/status",
                                           schemaPath: "#/properties/status/enum",
                                           keyword: "enum",
-                                          params: { allowedValues: ss.properties.status.enum },
+                                          params: { allowedValues: ns.properties.status.enum },
                                         },
                                       ]),
                                       !1
@@ -24023,7 +24023,7 @@ var Ip,
                                                                   !1
                                                                 );
                                                               {
-                                                                var E = !0;
+                                                                var x = !0;
                                                                 let $e = te.length;
                                                                 for (let Se = 0; Se < $e; Se++) {
                                                                   let ze = r;
@@ -24040,8 +24040,8 @@ var Ip,
                                                                         ? cr.errors
                                                                         : a.concat(cr.errors)),
                                                                     (r = a.length));
-                                                                  var E = ze === r;
-                                                                  if (!E) break;
+                                                                  var x = ze === r;
+                                                                  if (!x) break;
                                                                 }
                                                               }
                                                             } else
@@ -24404,7 +24404,7 @@ var Ip,
                                       !1
                                     );
                                   {
-                                    var E = !0;
+                                    var x = !0;
                                     let z = K.length;
                                     for (let R = 0; R < z; R++) {
                                       let W = K[R],
@@ -24452,10 +24452,10 @@ var Ip,
                                             !1
                                           );
                                       }
-                                      var E = T === r;
-                                      if (!E) break;
+                                      var x = T === r;
+                                      if (!x) break;
                                     }
-                                    if (E) {
+                                    if (x) {
                                       let R = K.length,
                                         W;
                                       if (R > 1) {
@@ -24953,8 +24953,8 @@ var Ip,
                                                           ? ie.errors
                                                           : a.concat(ie.errors)),
                                                       (r = a.length));
-                                                    var E = $e === r;
-                                                    he = he || E;
+                                                    var x = $e === r;
+                                                    he = he || x;
                                                     let Se = r;
                                                     if (se !== null) {
                                                       let Ne = {
@@ -24966,8 +24966,8 @@ var Ip,
                                                       };
                                                       (a === null ? (a = [Ne]) : a.push(Ne), r++);
                                                     }
-                                                    var E = Se === r;
-                                                    if (((he = he || E), he))
+                                                    var x = Se === r;
+                                                    if (((he = he || x), he))
                                                       ((r = X),
                                                         a !== null &&
                                                           (X ? (a.length = X) : (a = null)));
@@ -25448,11 +25448,11 @@ var Ip,
             y = _t.evaluated;
           if ((y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0), r === 0))
             if (e && typeof e == "object" && !Array.isArray(e)) {
-              let E;
+              let x;
               if (
-                (e.permissionId === void 0 && (E = "permissionId")) ||
-                (e.ref === void 0 && (E = "ref")) ||
-                (e.expectedPermissionEpoch === void 0 && (E = "expectedPermissionEpoch"))
+                (e.permissionId === void 0 && (x = "permissionId")) ||
+                (e.ref === void 0 && (x = "ref")) ||
+                (e.expectedPermissionEpoch === void 0 && (x = "expectedPermissionEpoch"))
               )
                 return (
                   (_t.errors = [
@@ -25460,7 +25460,7 @@ var Ip,
                       instancePath: s,
                       schemaPath: "#/required",
                       keyword: "required",
-                      params: { missingProperty: E },
+                      params: { missingProperty: x },
                     },
                   ]),
                   !1
@@ -25954,8 +25954,8 @@ var Ip,
                                                           ? ie.errors
                                                           : a.concat(ie.errors)),
                                                       (r = a.length));
-                                                    var E = $e === r;
-                                                    he = he || E;
+                                                    var x = $e === r;
+                                                    he = he || x;
                                                     let Se = r;
                                                     if (se !== null) {
                                                       let Ne = {
@@ -25967,8 +25967,8 @@ var Ip,
                                                       };
                                                       (a === null ? (a = [Ne]) : a.push(Ne), r++);
                                                     }
-                                                    var E = Se === r;
-                                                    if (((he = he || E), he))
+                                                    var x = Se === r;
+                                                    if (((he = he || x), he))
                                                       ((r = X),
                                                         a !== null &&
                                                           (X ? (a.length = X) : (a = null)));
@@ -26518,8 +26518,8 @@ var Ip,
                               (a === null ? (a = [T]) : a.push(T), r++);
                             }
                           }
-                          var E = z === r;
-                          Z = Z || E;
+                          var x = z === r;
+                          Z = Z || x;
                           let R = r;
                           if (q !== null) {
                             let T = {
@@ -26530,8 +26530,8 @@ var Ip,
                             };
                             (a === null ? (a = [T]) : a.push(T), r++);
                           }
-                          var E = R === r;
-                          if (((Z = Z || E), Z))
+                          var x = R === r;
+                          if (((Z = Z || x), Z))
                             ((r = U), a !== null && (U ? (a.length = U) : (a = null)));
                           else {
                             let T = {
@@ -26679,7 +26679,7 @@ var Ip,
         }
         ((ri.evaluated = { props: !0, dynamicProps: !1, dynamicItems: !1 }),
           (t.PersistentAgentRequestPayload = ti));
-        var os = {
+        var ss = {
             type: "object",
             properties: {
               contractVersion: { const: "folioview.agent-workspace.v2.0" },
@@ -26751,30 +26751,30 @@ var Ip,
             y = mr.evaluated;
           if ((y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0), r === 0))
             if (e && typeof e == "object" && !Array.isArray(e)) {
-              let E;
+              let x;
               if (
-                (e.contractVersion === void 0 && (E = "contractVersion")) ||
-                (e.profile === void 0 && (E = "profile")) ||
-                (e.artifactType === void 0 && (E = "artifactType")) ||
-                (e.purpose === void 0 && (E = "purpose")) ||
-                (e.ownerSubject === void 0 && (E = "ownerSubject")) ||
-                (e.vaultId === void 0 && (E = "vaultId")) ||
-                (e.connectionId === void 0 && (E = "connectionId")) ||
-                (e.agentId === void 0 && (E = "agentId")) ||
-                (e.clientId === void 0 && (E = "clientId")) ||
-                (e.rootKeyId === void 0 && (E = "rootKeyId")) ||
-                (e.agentSigningKeyId === void 0 && (E = "agentSigningKeyId")) ||
-                (e.agentEncryptionKeyId === void 0 && (E = "agentEncryptionKeyId")) ||
-                (e.identityEpoch === void 0 && (E = "identityEpoch")) ||
-                (e.bindingFingerprint === void 0 && (E = "bindingFingerprint")) ||
-                (e.audience === void 0 && (E = "audience")) ||
-                (e.method === void 0 && (E = "method")) ||
-                (e.path === void 0 && (E = "path")) ||
-                (e.bodyDigest === void 0 && (E = "bodyDigest")) ||
-                (e.requestId === void 0 && (E = "requestId")) ||
-                (e.nonce === void 0 && (E = "nonce")) ||
-                (e.issuedAt === void 0 && (E = "issuedAt")) ||
-                (e.expiresAt === void 0 && (E = "expiresAt"))
+                (e.contractVersion === void 0 && (x = "contractVersion")) ||
+                (e.profile === void 0 && (x = "profile")) ||
+                (e.artifactType === void 0 && (x = "artifactType")) ||
+                (e.purpose === void 0 && (x = "purpose")) ||
+                (e.ownerSubject === void 0 && (x = "ownerSubject")) ||
+                (e.vaultId === void 0 && (x = "vaultId")) ||
+                (e.connectionId === void 0 && (x = "connectionId")) ||
+                (e.agentId === void 0 && (x = "agentId")) ||
+                (e.clientId === void 0 && (x = "clientId")) ||
+                (e.rootKeyId === void 0 && (x = "rootKeyId")) ||
+                (e.agentSigningKeyId === void 0 && (x = "agentSigningKeyId")) ||
+                (e.agentEncryptionKeyId === void 0 && (x = "agentEncryptionKeyId")) ||
+                (e.identityEpoch === void 0 && (x = "identityEpoch")) ||
+                (e.bindingFingerprint === void 0 && (x = "bindingFingerprint")) ||
+                (e.audience === void 0 && (x = "audience")) ||
+                (e.method === void 0 && (x = "method")) ||
+                (e.path === void 0 && (x = "path")) ||
+                (e.bodyDigest === void 0 && (x = "bodyDigest")) ||
+                (e.requestId === void 0 && (x = "requestId")) ||
+                (e.nonce === void 0 && (x = "nonce")) ||
+                (e.issuedAt === void 0 && (x = "issuedAt")) ||
+                (e.expiresAt === void 0 && (x = "expiresAt"))
               )
                 return (
                   (mr.errors = [
@@ -26782,7 +26782,7 @@ var Ip,
                       instancePath: s,
                       schemaPath: "#/required",
                       keyword: "required",
-                      params: { missingProperty: E },
+                      params: { missingProperty: x },
                     },
                   ]),
                   !1
@@ -26790,7 +26790,7 @@ var Ip,
               {
                 let P = r;
                 for (let w in e)
-                  if (!F.call(os.properties, w))
+                  if (!F.call(ss.properties, w))
                     return (
                       (mr.errors = [
                         {
@@ -27102,7 +27102,7 @@ var Ip,
                                                           keyword: "enum",
                                                           params: {
                                                             allowedValues:
-                                                              os.properties.method.enum,
+                                                              ss.properties.method.enum,
                                                           },
                                                         },
                                                       ]),
@@ -27432,7 +27432,7 @@ var Ip,
         }
         ((ti.evaluated = { props: !0, dynamicProps: !1, dynamicItems: !1 }),
           (t.PersistentRunManifest = ai));
-        var ps = {
+        var os = {
           type: "object",
           properties: {
             contractVersion: { const: "folioview.agent-workspace.v2.0" },
@@ -27514,16 +27514,16 @@ var Ip,
             y = st.evaluated;
           if ((y.dynamicProps && (y.props = void 0), y.dynamicItems && (y.items = void 0), r === 0))
             if (e && typeof e == "object" && !Array.isArray(e)) {
-              let E;
+              let x;
               if (
-                (e.ref === void 0 && (E = "ref")) ||
-                (e.sourceRevision === void 0 && (E = "sourceRevision")) ||
-                (e.sourceEpoch === void 0 && (E = "sourceEpoch")) ||
-                (e.permissionId === void 0 && (E = "permissionId")) ||
-                (e.permissionEpoch === void 0 && (E = "permissionEpoch")) ||
-                (e.publicationId === void 0 && (E = "publicationId")) ||
-                (e.publicationFingerprint === void 0 && (E = "publicationFingerprint")) ||
-                (e.objectId === void 0 && (E = "objectId"))
+                (e.ref === void 0 && (x = "ref")) ||
+                (e.sourceRevision === void 0 && (x = "sourceRevision")) ||
+                (e.sourceEpoch === void 0 && (x = "sourceEpoch")) ||
+                (e.permissionId === void 0 && (x = "permissionId")) ||
+                (e.permissionEpoch === void 0 && (x = "permissionEpoch")) ||
+                (e.publicationId === void 0 && (x = "publicationId")) ||
+                (e.publicationFingerprint === void 0 && (x = "publicationFingerprint")) ||
+                (e.objectId === void 0 && (x = "objectId"))
               )
                 return (
                   (st.errors = [
@@ -27531,7 +27531,7 @@ var Ip,
                       instancePath: s,
                       schemaPath: "#/required",
                       keyword: "required",
-                      params: { missingProperty: E },
+                      params: { missingProperty: x },
                     },
                   ]),
                   !1
@@ -27840,7 +27840,7 @@ var Ip,
               {
                 let w = r;
                 for (let g in e)
-                  if (!F.call(ps.properties, g))
+                  if (!F.call(os.properties, g))
                     return (
                       (nr.errors = [
                         {
@@ -27914,7 +27914,7 @@ var Ip,
                                   instancePath: s + "/resultPolicy",
                                   schemaPath: "#/properties/resultPolicy/enum",
                                   keyword: "enum",
-                                  params: { allowedValues: ps.properties.resultPolicy.enum },
+                                  params: { allowedValues: os.properties.resultPolicy.enum },
                                 },
                               ]),
                               !1
@@ -28568,7 +28568,7 @@ var Ip,
                                                                                 !1
                                                                               );
                                                                             {
-                                                                              var E = !0;
+                                                                              var x = !0;
                                                                               let fr = Le.length;
                                                                               for (
                                                                                 let Pt = 0;
@@ -28594,8 +28594,8 @@ var Ip,
                                                                                           st.errors,
                                                                                         )),
                                                                                   (r = a.length));
-                                                                                var E = Nt === r;
-                                                                                if (!E) break;
+                                                                                var x = Nt === r;
+                                                                                if (!x) break;
                                                                               }
                                                                             }
                                                                           } else
@@ -28694,8 +28694,8 @@ var Ip,
       EmbeddedJWK: () => Oc,
       EncryptJWT: () => kc,
       FlattenedEncrypt: () => yc,
-      FlattenedSign: () => mo,
-      GeneralEncrypt: () => ao,
+      FlattenedSign: () => lo,
+      GeneralEncrypt: () => to,
       GeneralSign: () => vc,
       SignJWT: () => Pc,
       UnsecuredJWT: () => Fc,
@@ -28707,16 +28707,16 @@ var Ip,
       createLocalJWKSet: () => ln,
       createRemoteJWKSet: () => Tc,
       cryptoRuntime: () => Gc,
-      customFetch: () => vo,
+      customFetch: () => fo,
       decodeJwt: () => Zc,
       decodeProtectedHeader: () => Wc,
-      errors: () => Is,
-      exportJWK: () => fo,
+      errors: () => ks,
+      exportJWK: () => ho,
       exportPKCS8: () => Vc,
       exportSPKI: () => Kc,
       flattenedDecrypt: () => rc,
-      flattenedVerify: () => po,
-      generalDecrypt: () => Qs,
+      flattenedVerify: () => oo,
+      generalDecrypt: () => Xs,
       generalVerify: () => sc,
       generateKeyPair: () => Mc,
       generateSecret: () => Bc,
@@ -28724,7 +28724,7 @@ var Ip,
       importPKCS8: () => zc,
       importSPKI: () => Hc,
       importX509: () => Jc,
-      jwksCache: () => go,
+      jwksCache: () => vo,
       jwtDecrypt: () => mc,
       jwtVerify: () => lc,
     });
@@ -28733,8 +28733,8 @@ var Ip,
       (Pn = new TextDecoder("utf-8", { fatal: !0 })),
       (pi = 2 ** 32));
     Vp = /[^\x00-\x7f]/;
-    Is = {};
-    vn(Is, {
+    ks = {};
+    vn(ks, {
       JOSEAlgNotAllowed: () => ci,
       JOSEError: () => ct,
       JOSENotSupported: () => tt,
@@ -28742,9 +28742,9 @@ var Ip,
       JWEInvalid: () => be,
       JWKInvalid: () => kn,
       JWKSInvalid: () => di,
-      JWKSMultipleMatchingKeys: () => bs,
+      JWKSMultipleMatchingKeys: () => Is,
       JWKSNoMatchingKey: () => In,
-      JWKSTimeout: () => As,
+      JWKSTimeout: () => bs,
       JWSInvalid: () => Me,
       JWSSignatureVerificationFailed: () => Ka,
       JWTClaimValidationFailed: () => Mt,
@@ -28828,7 +28828,7 @@ var Ip,
           super(t, i);
         }
       }),
-      (bs = class extends ct {
+      (Is = class extends ct {
         [Symbol.asyncIterator] = async function* () {};
         static code = "ERR_JWKS_MULTIPLE_MATCHING_KEYS";
         code = "ERR_JWKS_MULTIPLE_MATCHING_KEYS";
@@ -28836,7 +28836,7 @@ var Ip,
           super(t, i);
         }
       }),
-      (As = class extends ct {
+      (bs = class extends ct {
         static code = "ERR_JWKS_TIMEOUT";
         code = "ERR_JWKS_TIMEOUT";
         constructor(t = "request timed out", i) {
@@ -28853,7 +28853,7 @@ var Ip,
       (li = {}));
     vn(li, { decode: () => wa, encode: () => Gr });
     $p = "The input to be decoded is not correctly encoded.";
-    ((bn = { __proto__: null, b64: !0 }), (Es = { __proto__: null }));
+    ((bn = { __proto__: null, b64: !0 }), (xs = { __proto__: null }));
     ((Op = (t) => t[Symbol.toStringTag]),
       (Lp = (t, i, o) => {
         let { alg: p } = t;
@@ -28886,8 +28886,8 @@ var Ip,
       }
     }),
       (xn = (t) => t?.[Symbol.toStringTag] === "KeyObject"),
-      (Ss = (t) => ia(t) || xn(t)));
-    ta = (t, ...i) => Ns("Key must be ", t, ...i);
+      (_s = (t) => ia(t) || xn(t)));
+    ta = (t, ...i) => Ss("Key must be ", t, ...i);
     ii = (t, i = "algorithm.name") =>
       new TypeError(`CryptoKey does not support this operation, its ${i} must be ${t}`);
     ui = (t) => crypto.getRandomValues(new Uint8Array(t.cekBits >> 3));
@@ -28956,7 +28956,7 @@ var Ip,
         return this.#e;
       }
     }),
-      (ao = class {
+      (to = class {
         #e;
         #t = [];
         #i;
@@ -28986,10 +28986,10 @@ var Ip,
             o = this.#i,
             p = this.#p,
             l = [];
-          for (let D of this.#t) {
-            let [F, H, oe, C] = D.state,
+          for (let E of this.#t) {
+            let [F, H, oe, C] = E.state,
               O = [this.#e, o, F, p, this.#m, void 0, void 0, H, C, t],
-              B = eo(O, void 0, l.length > 0);
+              B = Qs(O, void 0, l.length > 0);
             (l.length || ((o = O[1]), (p = O[3])), l.push([O, B, oe]));
             let [{ alg: de, enc: ce }, , Pe] = B;
             if (t && Pe && !ra(Pe)) throw new be(`"${de}" alg may only have a single recipient`);
@@ -28999,25 +28999,25 @@ var Ip,
                 'JWE "enc" (Encryption Algorithm) Header Parameter must be the same for all recipients',
               );
           }
-          for (let [, D] of l) D[2] ??= sa(D[0].alg);
+          for (let [, E] of l) E[2] ??= sa(E[0].alg);
           let [m, c, d] = l[0],
             b = t ? ui(c[1]) : void 0;
           m[5] = b;
-          let { encrypted_key: u, header: x, ...V } = await ro(m, c, d),
-            v = { ...V, recipients: [{}] };
-          (u && (v.recipients[0].encrypted_key = u), x && (v.recipients[0].header = x));
-          for (let D = 1; D < l.length; D++) {
-            let [F, [H, oe, C], O] = l[D],
+          let { encrypted_key: u, header: D, ...V } = await eo(m, c, d),
+            f = { ...V, recipients: [{}] };
+          (u && (f.recipients[0].encrypted_key = u), D && (f.recipients[0].header = D));
+          for (let E = 1; E < l.length; E++) {
+            let [F, [H, oe, C], O] = l[E],
               B = F[2],
-              [, de, ce] = await zs(C, oe, O, H, b, F[7]),
+              [, de, ce] = await Js(C, oe, O, H, b, F[7]),
               Pe = { encrypted_key: Gr(de) };
             if (B || ce) {
               let or = { ...B, ...ce };
               (ce && Kn(F[1], or, F[3]), (Pe.header = or));
             }
-            v.recipients.push(Pe);
+            f.recipients.push(Pe);
           }
-          return v;
+          return f;
         }
       }),
       (Ra = [["verify"], ["sign"]]));
@@ -29034,8 +29034,8 @@ var Ip,
       ES256: Yi("P-256", 256),
       ES384: Yi("P-384", 384),
       ES512: Yi("P-521", 512),
-      EdDSA: ms(),
-      Ed25519: ms(),
+      EdDSA: ls(),
+      Ed25519: ls(),
       "ML-DSA-44": Xi(44),
       "ML-DSA-65": Xi(65),
       "ML-DSA-87": Xi(87),
@@ -29045,7 +29045,7 @@ var Ip,
       (pc =
         /^(\+|\-)? ?(\d+|\d+\.\d+) ?(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w|years?|yrs?|y)(?: (ago|from now))?$/i),
       (fa = "check_failed"));
-    ((us = (t) => {
+    ((ms = (t) => {
       let i = t.toLowerCase();
       return t.includes("/") ? i : `application/${i}`;
     }),
@@ -29058,7 +29058,7 @@ var Ip,
     Tn = class {
       constructor(t = {}) {
         if (!Cr(t)) throw new TypeError("JWT Claims Set MUST be an object");
-        (co ||= new WeakMap()).set(this, structuredClone(t));
+        (po ||= new WeakMap()).set(this, structuredClone(t));
       }
       setIssuer(t) {
         return (en("iss", t), (Wt(this).iss = t), this);
@@ -29108,7 +29108,7 @@ var Ip,
         return (qr(this.#e[7], "setKeyManagementParameters"), (this.#e[7] = t), this);
       }
       async encrypt(t, i) {
-        return to(await Vn([...this.#e], t, i));
+        return ro(await Vn([...this.#e], t, i));
       }
     }),
       (yc = class {
@@ -29151,12 +29151,12 @@ var Ip,
         return (qr(this.#t, "setProtectedHeader"), (this.#t = t), this);
       }
       async sign(t, i) {
-        return lo(this.#e, this.#t, i?.crit, t, () => {
+        return co(this.#e, this.#t, i?.crit, t, () => {
           throw new TypeError("use the flattened module for creating JWS with b64: false");
         });
       }
     }),
-      (mo = class {
+      (lo = class {
         #e;
         constructor(t) {
           (Lt(t, "payload"), (this.#e = [t]));
@@ -29214,9 +29214,9 @@ var Ip,
             o;
           for (let p of this.#t) {
             let [l, m, c, d] = p.state,
-              [{ payload: b, ...u }, x] = await Rn([this.#e, l, m, d, i], c);
-            if (o === void 0) ((o = x), (t.payload = b));
-            else if (o !== x) throw new Me("inconsistent use of JWS Unencoded Payload (RFC7797)");
+              [{ payload: b, ...u }, D] = await Rn([this.#e, l, m, d, i], c);
+            if (o === void 0) ((o = D), (t.payload = b));
+            else if (o !== D) throw new Me("inconsistent use of JWS Unencoded Payload (RFC7797)");
             t.signatures.push(u);
           }
           return t;
@@ -29229,7 +29229,7 @@ var Ip,
           return (qr(this.#e, "setProtectedHeader"), (this.#e = t), this);
         }
         async sign(t, i) {
-          return lo(Cn(this), this.#e, i?.crit, t, () => {
+          return co(Cn(this), this.#e, i?.crit, t, () => {
             throw new ot("JWTs MUST NOT use unencoded payload");
           });
         }
@@ -29272,7 +29272,7 @@ var Ip,
               aud: this.#p ? nn(this, "aud") : void 0,
             });
           let p = [...this.#e];
-          return ((p[0] = o), to(await Vn(p, t, i)));
+          return ((p[0] = o), ro(await Vn(p, t, i)));
         }
       }),
       ($a = '"alg" (Algorithm)'));
@@ -29283,7 +29283,7 @@ var Ip,
 ${o}
 -----END ${i}-----`;
     }),
-      (uo = async (t, i, o) => {
+      (mo = async (t, i, o) => {
         if (xn(o)) {
           if (o.type !== t) throw new TypeError(`key is not a ${t} key`);
           return o.export({ format: "pem", type: i });
@@ -29292,18 +29292,18 @@ ${o}
         if (!o.extractable) throw new TypeError("CryptoKey is not extractable");
         if (o.type !== t) throw new TypeError(`key is not a ${t} key`);
         return Ic(
-          Ps(new Uint8Array(await crypto.subtle.exportKey(i, o))),
+          gs(new Uint8Array(await crypto.subtle.exportKey(i, o))),
           `${t.toUpperCase()} KEY`,
         );
       }),
-      (bc = (t) => uo("public", "spki", t)),
-      (Ac = (t) => uo("private", "pkcs8", t)),
+      (bc = (t) => mo("public", "spki", t)),
+      (Ac = (t) => mo("private", "pkcs8", t)),
       (Ea = (t, i) => {
         if (t.byteLength !== i.length) return !1;
         for (let o = 0; o < t.byteLength; o++) if (t[o] !== i[o]) return !1;
         return !0;
       }),
-      (yo = (t) => ({ data: t, pos: 0 })),
+      (uo = (t) => ({ data: t, pos: 0 })),
       (dn = (t) => {
         let i = t.data[t.pos++];
         if (i === void 0) throw new Error("Unexpected end of ASN.1 input");
@@ -29319,7 +29319,7 @@ ${o}
         }
         return i;
       }),
-      (ys = (t, i = 1) => {
+      (us = (t, i = 1) => {
         for (; i-- > 0;) {
           t.pos++;
           let o = Zt(t);
@@ -29329,7 +29329,7 @@ ${o}
       (Bt = (t, i, o) => {
         if (dn(t) !== i) throw new Error(o);
       }),
-      (ho = (t, i) => {
+      (yo = (t, i) => {
         if (i < 0 || t.pos + i > t.data.length) throw new Error("Unexpected end of ASN.1 input");
         let o = t.data.subarray(t.pos, t.pos + i);
         return ((t.pos += i), o);
@@ -29337,7 +29337,7 @@ ${o}
       (Dc = (t) => {
         Bt(t, 6, "Expected algorithm OID");
         let i = Zt(t);
-        return ho(t, i);
+        return yo(t, i);
       }));
     ((Ec = (t) => {
       let i = Dc(t);
@@ -29345,7 +29345,7 @@ ${o}
       if (!Ea(i, [42, 134, 72, 206, 61, 2, 1])) throw new Error("Unsupported key algorithm");
       Bt(t, 6, "Expected curve OID");
       let o = Zt(t),
-        p = ho(t, o);
+        p = yo(t, o);
       if (Ea(p, [42, 134, 72, 206, 61, 3, 1, 7])) return "P-256";
       if (Ea(p, [43, 129, 4, 0, 34])) return "P-384";
       if (Ea(p, [43, 129, 4, 0, 35])) return "P-521";
@@ -29359,7 +29359,7 @@ ${o}
           d;
         if (m.resolve)
           try {
-            let b = yo(i);
+            let b = uo(i);
             (xc(b, t), (d = m.resolve({ crv: Ec(b) })));
           } catch (b) {
             throw new tt("Invalid or unsupported key format", { cause: b });
@@ -29367,7 +29367,7 @@ ${o}
         else d = m.subtle;
         return crypto.subtle.importKey(t, i, d, l ?? c, m.usages[c ? 0 : 1]);
       }),
-      (Hn = (t, i) => ws(t.replace(i, ""))),
+      (Hn = (t, i) => Ps(t.replace(i, ""))),
       (_c = (t, i, o) => {
         let p = Hn(t, /(?:-----(?:BEGIN|END) PRIVATE KEY-----|\s)/g);
         return Fn("pkcs8", p, i, o);
@@ -29391,8 +29391,8 @@ ${o}
     };
     (typeof navigator > "u" || !navigator.userAgent?.startsWith?.("Mozilla/5.0 ")) &&
       (mn = "jose/v6.2.13");
+    fo = Symbol();
     vo = Symbol();
-    go = Symbol();
     ((Rc = Tn),
       (Fc = class extends Rc {
         encode() {
@@ -29419,9 +29419,9 @@ ${o}
       }));
     Gc = "WebCryptoAPI";
     Yc = _p(Kp(), 1);
-    ((Po = new TextEncoder()),
+    ((go = new TextEncoder()),
       (Qc = new TextDecoder("utf-8", { fatal: !0 })),
-      (wo = 524288),
+      (Po = 524288),
       (dt = "folioview.agent-workspace.v2.0"),
       (qt = "folioview.persistent-content.v1"),
       (ht = [
@@ -29475,35 +29475,35 @@ ${o}
           (Je("RegistryBundle", b), Be(b).length > 131072 && _("payload_too_large"));
           let u = structuredClone(b);
           (Je("RegistryBundle", u), Be(u).length > 131072 && _("payload_too_large"));
-          let x = await yt(u.checkpoint, l, "fv-control+jws");
-          (Je("RegistryCheckpointPayload", x), this.checkIdentity(x));
+          let D = await yt(u.checkpoint, l, "fv-control+jws");
+          (Je("RegistryCheckpointPayload", D), this.checkIdentity(D));
           let V = this.sequence === 0 ? d?.nextHead : void 0;
-          (x.rootKeyId !== m ||
-            x.rootEpoch !== this.anchor.rootEpoch ||
-            x.issuedAt > i ||
-            (this.sequence === 0 && (x.rootEpoch !== 1 || (!V && x.keyEpoch !== 1)))) &&
+          (D.rootKeyId !== m ||
+            D.rootEpoch !== this.anchor.rootEpoch ||
+            D.issuedAt > i ||
+            (this.sequence === 0 && (D.rootEpoch !== 1 || (!V && D.keyEpoch !== 1)))) &&
             _("root_pin_mismatch");
-          let v = await We(x);
-          if (this.history.has(x.registrySequence)) {
-            this.history.get(x.registrySequence) !== v && _("registry_rollback");
+          let f = await We(D);
+          if (this.history.has(D.registrySequence)) {
+            this.history.get(D.registrySequence) !== f && _("registry_rollback");
             continue;
           }
-          ((x.registrySequence !== (V?.registrySequence ?? this.sequence + 1) ||
-            (!d && x.registrySequence > 32) ||
-            x.previousDigest !==
+          ((D.registrySequence !== (V?.registrySequence ?? this.sequence + 1) ||
+            (!d && D.registrySequence > 32) ||
+            D.previousDigest !==
               (V ? d.previousHead.checkpointDigest : (this.current?.digest ?? null))) &&
             _("registry_chain_mismatch"),
             V &&
-              (v !== V.checkpointDigest ||
-                x.keyEpoch !== V.keyEpoch ||
-                x.issuedAt !== d.issuedAt) &&
+              (f !== V.checkpointDigest ||
+                D.keyEpoch !== V.keyEpoch ||
+                D.issuedAt !== d.issuedAt) &&
               _("checkpoint_pin_mismatch"),
             this.current &&
-              (x.keyEpoch < this.current.keyEpoch ||
-                x.issuedAt < this.current.issuedAt ||
-                [...this.current.revoked].some((C) => !x.revokedKeyIds.includes(C))) &&
+              (D.keyEpoch < this.current.keyEpoch ||
+                D.issuedAt < this.current.issuedAt ||
+                [...this.current.revoked].some((C) => !D.revokedKeyIds.includes(C))) &&
               _("registry_rollback"));
-          let D = new Map(),
+          let E = new Map(),
             F = [],
             H = [],
             oe = new Set();
@@ -29512,11 +29512,11 @@ ${o}
             (this.checkIdentity(O),
               (O.issuerKeyId !== m ||
                 O.keyId !== B ||
-                D.has(O.keyId) ||
+                E.has(O.keyId) ||
                 O.expiresAt <= O.notBefore ||
                 !td.includes(O.role) ||
                 O.role.startsWith("agent_") !== (O.connectionId !== null) ||
-                C.active === x.revokedKeyIds.includes(O.keyId) ||
+                C.active === D.revokedKeyIds.includes(O.keyId) ||
                 (O.role === "root_sig") != (O.keyId === m)) &&
                 _("invalid_certificate"));
             let ce =
@@ -29537,7 +29537,7 @@ ${o}
                 this.current &&
                 O.keyEpoch <= (this.localEpochs.get(Pe) ?? 0) &&
                 _("key_epoch_conflict"),
-              D.set(O.keyId, { ...O, active: C.active }),
+              E.set(O.keyId, { ...O, active: C.active }),
               F.push(O.certificateId),
               H.push({ certificateId: O.certificateId, payloadDigest: de, active: C.active }));
           }
@@ -29547,37 +29547,37 @@ ${o}
               H.sort((C, O) =>
                 C.certificateId < O.certificateId ? -1 : C.certificateId > O.certificateId ? 1 : 0,
               ),
-            )) !== x.entriesDigest && _("registry_digest_mismatch"),
-            x.registrySequence === this.anchor.registrySequence &&
-              v !== this.anchor.checkpointDigest &&
+            )) !== D.entriesDigest && _("registry_digest_mismatch"),
+            D.registrySequence === this.anchor.registrySequence &&
+              f !== this.anchor.checkpointDigest &&
               _("checkpoint_pin_mismatch"),
             V)
           ) {
-            let C = d.ownerKeyIds.map((O) => D.get(O));
-            (C.length !== D.size ||
+            let C = d.ownerKeyIds.map((O) => E.get(O));
+            (C.length !== E.size ||
               C.some(
                 (O) =>
                   !O?.active ||
                   O.connectionId !== null ||
-                  !(O.notBefore <= x.issuedAt && x.issuedAt < O.expiresAt),
+                  !(O.notBefore <= D.issuedAt && D.issuedAt < O.expiresAt),
               ) ||
               !ad.every((O) => C.some((B) => B.role === O))) &&
               _("key_authorization_required");
           }
-          for (let C of D.values()) {
+          for (let C of E.values()) {
             let O = [C.principalId, C.role, C.connectionId].join("/");
             this.localEpochs.set(O, Math.max(C.keyEpoch, this.localEpochs.get(O) ?? 0));
           }
-          ((this.sequence = x.registrySequence),
-            this.history.set(x.registrySequence, v),
+          ((this.sequence = D.registrySequence),
+            this.history.set(D.registrySequence, f),
             (this.current = {
-              keys: D,
-              revoked: new Set(x.revokedKeyIds),
-              digest: v,
-              keyEpoch: x.keyEpoch,
-              issuedAt: x.issuedAt,
+              keys: E,
+              revoked: new Set(D.revokedKeyIds),
+              digest: f,
+              keyEpoch: D.keyEpoch,
+              issuedAt: D.issuedAt,
             }),
-            this.snapshots.set(x.registrySequence, {
+            this.snapshots.set(D.registrySequence, {
               ...this.current,
               localEpochs: new Map(this.localEpochs),
             }));
@@ -29655,27 +29655,27 @@ ${o}
         );
       }
     }),
-      (Io = "folioview.persistent-resource-consent.v1"),
-      (vs = (t, i) => {
+      (ko = "folioview.persistent-resource-consent.v1"),
+      (fs = (t, i) => {
         for (let o of ht) ke(t[o], i[o]) || _("recipient_binding_mismatch");
       }));
     hn = ["taskId", "taskVersion", "executionEpoch", "authorityId", "authorityVersion"];
-    ((Do = 2160 * 60 * 60), (od = 10080 * 60));
+    ((Ao = 2160 * 60 * 60), (od = 10080 * 60));
   });
 function Pd(t) {
   (jr(/^\d{4}-\d{2}-\d{2}$/.test(t)), Yt(t + "T00:00:00Z"));
 }
-function So(t) {
+function _o(t) {
   if (!(!t || typeof t != "object"))
     for (let [i, o] of Object.entries(t))
       o !== null && ["fetchedAt", "sourceAsOf", "recordedAt", "lastEditedAt"].includes(i)
         ? Yt(o)
         : o !== null && ["sourceDate", "reportDate"].includes(i)
           ? Pd(o)
-          : typeof o == "object" && So(o);
+          : typeof o == "object" && _o(o);
 }
 function wd(t, i, o = 524288) {
-  return (Be(i).length > o && _("payload_too_large"), jr(t(i)), So(i), structuredClone(i));
+  return (Be(i).length > o && _("payload_too_large"), jr(t(i)), _o(i), structuredClone(i));
 }
 function Id(t, { snapshotId: i = null, revision: o = null } = {}) {
   let p = wd(gd.default.HoldingsFactsContent, t, 196608),
@@ -29711,21 +29711,21 @@ function Id(t, { snapshotId: i = null, revision: o = null } = {}) {
           c[d] === null || c[d].currency === (d === "bookCostCad" ? "CAD" : c.instrument.currency),
         );
       for (let [d, b] of Object.entries(c.provenance)) {
-        let { recordedAt: u, lastEditedAt: x, sourceDate: V, origin: v } = b;
+        let { recordedAt: u, lastEditedAt: D, sourceDate: V, origin: f } = b;
         (jr(u === null || Yt(u) <= Yt(p.fetchedAt)),
-          jr(x === null || (u !== null && Yt(x) <= Yt(u))),
+          jr(D === null || (u !== null && Yt(D) <= Yt(u))),
           jr(V === null || V <= p.fetchedAt.slice(0, 10)),
-          v === "manual" && jr(u !== null && x === u),
-          v === "unknown" && jr(u === null && x === null && V === null),
+          f === "manual" && jr(u !== null && D === u),
+          f === "unknown" && jr(u === null && D === null && V === null),
           ["unitCost", "bookCost", "bookCostCad"].includes(d) &&
             c[d] !== null &&
-            jr(v !== "unknown"));
+            jr(f !== "unknown"));
       }
     }
   }
   return p;
 }
-function No(t) {
+function So(t) {
   (pa(t),
     jr(
       t.objectType === "holdings_snapshot" &&
@@ -29734,7 +29734,7 @@ function No(t) {
     ));
 }
 function bd(t, i) {
-  (No(i),
+  (So(i),
     vr(t, ["privateSchemaVersion", "profile", "objectId", "objectType", "revision", "payload"]),
     jr(t.privateSchemaVersion === 1 && t.profile === qt));
   for (let o of ["objectId", "objectType", "revision"]) jr(t[o] === i[o]);
@@ -29744,7 +29744,7 @@ function bd(t, i) {
   );
 }
 async function Ki(t, i, o) {
-  No(o);
+  So(o);
   let p = Jt(t);
   jr(ke(p.context, o));
   let l = await La.generalDecrypt(t.jwe, i, {
@@ -29756,12 +29756,12 @@ async function Ki(t, i, o) {
   return m?.payload?.data?.profile === kd ? bd(m, o) : ka(m, o);
 }
 var cd,
-  Eo,
+  xo,
   dd,
   ld,
   md,
   ud,
-  _o,
+  Eo,
   yd,
   hd,
   fd,
@@ -29771,16 +29771,16 @@ var cd,
   Bn,
   Yt,
   kd,
-  jo = Zi(() => {
+  No = Zi(() => {
     Ut();
     Ut();
     ((cd = Object.create),
-      (Eo = Object.defineProperty),
+      (xo = Object.defineProperty),
       (dd = Object.getOwnPropertyDescriptor),
       (ld = Object.getOwnPropertyNames),
       (md = Object.getPrototypeOf),
       (ud = Object.prototype.hasOwnProperty),
-      (_o = (t, i) => () => {
+      (Eo = (t, i) => () => {
         try {
           return (i || t((i = { exports: {} }).exports, i), i.exports);
         } catch (o) {
@@ -29792,14 +29792,14 @@ var cd,
           for (let l of ld(i))
             !ud.call(t, l) &&
               l !== o &&
-              Eo(t, l, { get: () => i[l], enumerable: !(p = dd(i, l)) || p.enumerable });
+              xo(t, l, { get: () => i[l], enumerable: !(p = dd(i, l)) || p.enumerable });
         return t;
       }),
       (hd = (t, i, o) => (
         (o = t != null ? cd(md(t)) : {}),
-        yd(i || !t || !t.__esModule ? Eo(o, "default", { value: t, enumerable: !0 }) : o, t)
+        yd(i || !t || !t.__esModule ? xo(o, "default", { value: t, enumerable: !0 }) : o, t)
       )),
-      (fd = _o((t) => {
+      (fd = Eo((t) => {
         "use strict";
         Object.defineProperty(t, "__esModule", { value: !0 });
         function i(o) {
@@ -29818,7 +29818,7 @@ var cd,
         }
         ((t.default = i), (i.code = 'require("ajv/dist/runtime/ucs2length").default'));
       })),
-      (vd = _o((t) => {
+      (vd = Eo((t) => {
         "use strict";
         t.HoldingsFactsContent = la;
         var i = {
@@ -29861,12 +29861,12 @@ var cd,
           } = {},
         ) {
           let h = null,
-            f = 0,
+            v = 0,
             ne = l.evaluated;
           if (
             (ne.dynamicProps && (ne.props = void 0),
             ne.dynamicItems && (ne.items = void 0),
-            f === 0)
+            v === 0)
           )
             if (A && typeof A == "object" && !Array.isArray(A)) {
               let Te;
@@ -29886,7 +29886,7 @@ var cd,
                   !1
                 );
               {
-                let je = f;
+                let je = v;
                 for (let me in A)
                   if (!(me === "state" || me === "issues"))
                     return (
@@ -29900,10 +29900,10 @@ var cd,
                       ]),
                       !1
                     );
-                if (je === f) {
+                if (je === v) {
                   if (A.state !== void 0) {
                     let me = A.state,
-                      Ue = f;
+                      Ue = v;
                     if (typeof me != "string")
                       return (
                         (l.errors = [
@@ -29928,13 +29928,13 @@ var cd,
                         ]),
                         !1
                       );
-                    var ue = Ue === f;
+                    var ue = Ue === v;
                   } else var ue = !0;
                   if (ue)
                     if (A.issues !== void 0) {
                       let me = A.issues,
-                        Ue = f;
-                      if (f === Ue)
+                        Ue = v;
+                      if (v === Ue)
                         if (Array.isArray(me)) {
                           if (me.length > 20)
                             return (
@@ -29965,8 +29965,8 @@ var cd,
                             let we = me.length;
                             for (let Ae = 0; Ae < we; Ae++) {
                               let He = me[Ae],
-                                De = f;
-                              if (f === De)
+                                De = v;
+                              if (v === De)
                                 if (typeof He == "string") {
                                   if (p(He) > 80)
                                     return (
@@ -30004,7 +30004,7 @@ var cd,
                                     ]),
                                     !1
                                   );
-                              var Q = De === f;
+                              var Q = De === v;
                               if (!Q) break;
                             }
                             if (Q) {
@@ -30046,7 +30046,7 @@ var cd,
                             ]),
                             !1
                           );
-                      var ue = Ue === f;
+                      var ue = Ue === v;
                     } else var ue = !0;
                 }
               }
@@ -30062,7 +30062,7 @@ var cd,
                 ]),
                 !1
               );
-          return ((l.errors = h), f === 0);
+          return ((l.errors = h), v === 0);
         }
         l.evaluated = { props: !0, dynamicProps: !1, dynamicItems: !1 };
         var m = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/,
@@ -30078,12 +30078,12 @@ var cd,
           } = {},
         ) {
           let h = null,
-            f = 0,
+            v = 0,
             ne = d.evaluated;
           if (
             (ne.dynamicProps && (ne.props = void 0),
             ne.dynamicItems && (ne.items = void 0),
-            f === 0 && f === 0)
+            v === 0 && v === 0)
           )
             if (typeof A == "string") {
               if (p(A) > 32)
@@ -30149,7 +30149,7 @@ var cd,
                 ]),
                 !1
               );
-          return ((d.errors = h), f === 0);
+          return ((d.errors = h), v === 0);
         }
         d.evaluated = { dynamicProps: !1, dynamicItems: !1 };
         var b = {
@@ -30199,7 +30199,7 @@ var cd,
             additionalProperties: !1,
           },
           u = Object.prototype.hasOwnProperty,
-          x = new RegExp("^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$", "u");
+          D = new RegExp("^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$", "u");
         function V(
           A,
           {
@@ -30211,12 +30211,12 @@ var cd,
           } = {},
         ) {
           let h = null,
-            f = 0,
+            v = 0,
             ne = V.evaluated;
           if (
             (ne.dynamicProps && (ne.props = void 0),
             ne.dynamicItems && (ne.items = void 0),
-            f === 0)
+            v === 0)
           )
             if (typeof A == "string") {
               if (p(A) > 128)
@@ -30243,7 +30243,7 @@ var cd,
                   ]),
                   !1
                 );
-              if (!x.test(A))
+              if (!D.test(A))
                 return (
                   (V.errors = [
                     {
@@ -30267,11 +30267,11 @@ var cd,
                 ]),
                 !1
               );
-          return ((V.errors = h), f === 0);
+          return ((V.errors = h), v === 0);
         }
         V.evaluated = { dynamicProps: !1, dynamicItems: !1 };
-        var v = /^\d{4}-\d{2}-\d{2}$/,
-          D = new RegExp("^\\d{4}-\\d{2}-\\d{2}$", "u");
+        var f = /^\d{4}-\d{2}-\d{2}$/,
+          E = new RegExp("^\\d{4}-\\d{2}-\\d{2}$", "u");
         function F(
           A,
           {
@@ -30283,12 +30283,12 @@ var cd,
           } = {},
         ) {
           let h = null,
-            f = 0,
+            v = 0,
             ne = F.evaluated;
           if (
             (ne.dynamicProps && (ne.props = void 0),
             ne.dynamicItems && (ne.items = void 0),
-            f === 0 && f === 0)
+            v === 0 && v === 0)
           )
             if (typeof A == "string") {
               if (p(A) > 10)
@@ -30315,8 +30315,8 @@ var cd,
                   ]),
                   !1
                 );
-              if (D.test(A)) {
-                if (!v.test(A))
+              if (E.test(A)) {
+                if (!f.test(A))
                   return (
                     (F.errors = [
                       {
@@ -30352,7 +30352,7 @@ var cd,
                 ]),
                 !1
               );
-          return ((F.errors = h), f === 0);
+          return ((F.errors = h), v === 0);
         }
         F.evaluated = { dynamicProps: !1, dynamicItems: !1 };
         function H(
@@ -30366,7 +30366,7 @@ var cd,
           } = {},
         ) {
           let h = null,
-            f = 0,
+            v = 0,
             ne = H.evaluated;
           if (
             (ne.dynamicProps && (ne.props = void 0),
@@ -30384,7 +30384,7 @@ var cd,
               ]),
               !1
             );
-          if (f === 0 && typeof A == "number") {
+          if (v === 0 && typeof A == "number") {
             if (A > 9007199254740991 || isNaN(A))
               return (
                 (H.errors = [
@@ -30410,7 +30410,7 @@ var cd,
                 !1
               );
           }
-          return ((H.errors = h), f === 0);
+          return ((H.errors = h), v === 0);
         }
         H.evaluated = { dynamicProps: !1, dynamicItems: !1 };
         function oe(
@@ -30424,12 +30424,12 @@ var cd,
           } = {},
         ) {
           let h = null,
-            f = 0,
+            v = 0,
             ne = oe.evaluated;
           if (
             (ne.dynamicProps && (ne.props = void 0),
             ne.dynamicItems && (ne.items = void 0),
-            f === 0)
+            v === 0)
           )
             if (A && typeof A == "object" && !Array.isArray(A)) {
               let ue;
@@ -30449,7 +30449,7 @@ var cd,
                   !1
                 );
               {
-                let Te = f;
+                let Te = v;
                 for (let je in A)
                   if (!(je === "snapshotId" || je === "sourceRevision"))
                     return (
@@ -30463,22 +30463,22 @@ var cd,
                       ]),
                       !1
                     );
-                if (Te === f) {
+                if (Te === v) {
                   if (A.snapshotId !== void 0) {
-                    let je = f;
+                    let je = v;
                     V(A.snapshotId, {
                       instancePath: L + "/snapshotId",
                       parentData: A,
                       parentDataProperty: "snapshotId",
                       rootData: Ee,
                       dynamicAnchors: ye,
-                    }) || ((h = h === null ? V.errors : h.concat(V.errors)), (f = h.length));
-                    var Q = je === f;
+                    }) || ((h = h === null ? V.errors : h.concat(V.errors)), (v = h.length));
+                    var Q = je === v;
                   } else var Q = !0;
                   if (Q)
                     if (A.sourceRevision !== void 0) {
                       let je = A.sourceRevision,
-                        me = f;
+                        me = v;
                       if (
                         (H(je, {
                           instancePath: L + "/sourceRevision",
@@ -30486,8 +30486,8 @@ var cd,
                           parentDataProperty: "sourceRevision",
                           rootData: Ee,
                           dynamicAnchors: ye,
-                        }) || ((h = h === null ? H.errors : h.concat(H.errors)), (f = h.length)),
-                        f === me && typeof je == "number" && (je < 1 || isNaN(je)))
+                        }) || ((h = h === null ? H.errors : h.concat(H.errors)), (v = h.length)),
+                        v === me && typeof je == "number" && (je < 1 || isNaN(je)))
                       )
                         return (
                           (oe.errors = [
@@ -30500,7 +30500,7 @@ var cd,
                           ]),
                           !1
                         );
-                      var Q = me === f;
+                      var Q = me === v;
                     } else var Q = !0;
                 }
               }
@@ -30516,7 +30516,7 @@ var cd,
                 ]),
                 !1
               );
-          return ((oe.errors = h), f === 0);
+          return ((oe.errors = h), v === 0);
         }
         oe.evaluated = { props: !0, dynamicProps: !1, dynamicItems: !1 };
         var C = {
@@ -30556,7 +30556,7 @@ var cd,
           } = {},
         ) {
           let h = null,
-            f = 0,
+            v = 0,
             ne = B.evaluated;
           return (
             ne.dynamicProps && (ne.props = void 0),
@@ -30573,7 +30573,7 @@ var cd,
             A === "NZD" ||
             A === "SGD" ||
             A === "TWD"
-              ? ((B.errors = h), f === 0)
+              ? ((B.errors = h), v === 0)
               : ((B.errors = [
                   {
                     instancePath: L,
@@ -30598,12 +30598,12 @@ var cd,
           } = {},
         ) {
           let h = null,
-            f = 0,
+            v = 0,
             ne = ce.evaluated;
           if (
             (ne.dynamicProps && (ne.props = void 0),
             ne.dynamicItems && (ne.items = void 0),
-            f === 0)
+            v === 0)
           )
             if (typeof A == "string") {
               if (p(A) > 40)
@@ -30654,7 +30654,7 @@ var cd,
                 ]),
                 !1
               );
-          return ((ce.errors = h), f === 0);
+          return ((ce.errors = h), v === 0);
         }
         ce.evaluated = { dynamicProps: !1, dynamicItems: !1 };
         function Pe(
@@ -30668,12 +30668,12 @@ var cd,
           } = {},
         ) {
           let h = null,
-            f = 0,
+            v = 0,
             ne = Pe.evaluated;
           if (
             (ne.dynamicProps && (ne.props = void 0),
             ne.dynamicItems && (ne.items = void 0),
-            f === 0)
+            v === 0)
           )
             if (A && typeof A == "object" && !Array.isArray(A)) {
               let Te;
@@ -30694,7 +30694,7 @@ var cd,
                   !1
                 );
               {
-                let je = f;
+                let je = v;
                 for (let me in A)
                   if (!(me === "currency" || me === "cashBalance" || me === "buyingPower"))
                     return (
@@ -30708,35 +30708,35 @@ var cd,
                       ]),
                       !1
                     );
-                if (je === f) {
+                if (je === v) {
                   if (A.currency !== void 0) {
-                    let me = f;
+                    let me = v;
                     B(A.currency, {
                       instancePath: L + "/currency",
                       parentData: A,
                       parentDataProperty: "currency",
                       rootData: Ee,
                       dynamicAnchors: ye,
-                    }) || ((h = h === null ? B.errors : h.concat(B.errors)), (f = h.length));
-                    var Q = me === f;
+                    }) || ((h = h === null ? B.errors : h.concat(B.errors)), (v = h.length));
+                    var Q = me === v;
                   } else var Q = !0;
                   if (Q) {
                     if (A.cashBalance !== void 0) {
                       let Ue = A.cashBalance,
-                        Oe = f,
-                        we = f,
+                        Oe = v,
+                        we = v,
                         Ae = !1,
-                        He = f;
+                        He = v;
                       ce(Ue, {
                         instancePath: L + "/cashBalance",
                         parentData: A,
                         parentDataProperty: "cashBalance",
                         rootData: Ee,
                         dynamicAnchors: ye,
-                      }) || ((h = h === null ? ce.errors : h.concat(ce.errors)), (f = h.length));
-                      var ue = He === f;
+                      }) || ((h = h === null ? ce.errors : h.concat(ce.errors)), (v = h.length));
+                      var ue = He === v;
                       Ae = Ae || ue;
-                      let De = f;
+                      let De = v;
                       if (Ue !== null) {
                         let wr = {
                           instancePath: L + "/cashBalance",
@@ -30744,11 +30744,11 @@ var cd,
                           keyword: "type",
                           params: { type: "null" },
                         };
-                        (h === null ? (h = [wr]) : h.push(wr), f++);
+                        (h === null ? (h = [wr]) : h.push(wr), v++);
                       }
-                      var ue = De === f;
+                      var ue = De === v;
                       if (((Ae = Ae || ue), Ae))
-                        ((f = we), h !== null && (we ? (h.length = we) : (h = null)));
+                        ((v = we), h !== null && (we ? (h.length = we) : (h = null)));
                       else {
                         let wr = {
                           instancePath: L + "/cashBalance",
@@ -30756,13 +30756,13 @@ var cd,
                           keyword: "anyOf",
                           params: {},
                         };
-                        return (h === null ? (h = [wr]) : h.push(wr), f++, (Pe.errors = h), !1);
+                        return (h === null ? (h = [wr]) : h.push(wr), v++, (Pe.errors = h), !1);
                       }
-                      var Q = Oe === f;
+                      var Q = Oe === v;
                     } else var Q = !0;
                     if (Q)
                       if (A.buyingPower !== void 0) {
-                        let Ue = f;
+                        let Ue = v;
                         if (A.buyingPower !== null)
                           return (
                             (Pe.errors = [
@@ -30775,7 +30775,7 @@ var cd,
                             ]),
                             !1
                           );
-                        var Q = Ue === f;
+                        var Q = Ue === v;
                       } else var Q = !0;
                   }
                 }
@@ -30792,7 +30792,7 @@ var cd,
                 ]),
                 !1
               );
-          return ((Pe.errors = h), f === 0);
+          return ((Pe.errors = h), v === 0);
         }
         Pe.evaluated = { props: !0, dynamicProps: !1, dynamicItems: !1 };
         var or = {
@@ -30850,12 +30850,12 @@ var cd,
           } = {},
         ) {
           let h = null,
-            f = 0,
+            v = 0,
             ne = sr.evaluated;
           if (
             (ne.dynamicProps && (ne.props = void 0),
             ne.dynamicItems && (ne.items = void 0),
-            f === 0)
+            v === 0)
           )
             if (typeof A == "string") {
               if (p(A) > 32)
@@ -30906,7 +30906,7 @@ var cd,
                 ]),
                 !1
               );
-          return ((sr.errors = h), f === 0);
+          return ((sr.errors = h), v === 0);
         }
         sr.evaluated = { dynamicProps: !1, dynamicItems: !1 };
         var Ze = new RegExp("^(?:[A-Z0-9]{4}|UNKNOWN)$", "u");
@@ -30921,12 +30921,12 @@ var cd,
           } = {},
         ) {
           let h = null,
-            f = 0,
+            v = 0,
             ne = br.evaluated;
           if (
             (ne.dynamicProps && (ne.props = void 0),
             ne.dynamicItems && (ne.items = void 0),
-            f === 0)
+            v === 0)
           )
             if (typeof A == "string") {
               if (p(A) > 7)
@@ -30977,7 +30977,7 @@ var cd,
                 ]),
                 !1
               );
-          return ((br.errors = h), f === 0);
+          return ((br.errors = h), v === 0);
         }
         br.evaluated = { dynamicProps: !1, dynamicItems: !1 };
         function Ge(
@@ -30991,12 +30991,12 @@ var cd,
           } = {},
         ) {
           let h = null,
-            f = 0,
+            v = 0,
             ne = Ge.evaluated;
           if (
             (ne.dynamicProps && (ne.props = void 0),
             ne.dynamicItems && (ne.items = void 0),
-            f === 0)
+            v === 0)
           )
             if (A && typeof A == "object" && !Array.isArray(A)) {
               let Te;
@@ -31017,7 +31017,7 @@ var cd,
                   !1
                 );
               {
-                let je = f;
+                let je = v;
                 for (let me in A)
                   if (!(me === "symbol" || me === "market" || me === "currency"))
                     return (
@@ -31031,23 +31031,23 @@ var cd,
                       ]),
                       !1
                     );
-                if (je === f) {
+                if (je === v) {
                   if (A.symbol !== void 0) {
                     let me = A.symbol,
-                      Ue = f,
-                      Oe = f,
+                      Ue = v,
+                      Oe = v,
                       we = !1,
-                      Ae = f;
+                      Ae = v;
                     sr(me, {
                       instancePath: L + "/symbol",
                       parentData: A,
                       parentDataProperty: "symbol",
                       rootData: Ee,
                       dynamicAnchors: ye,
-                    }) || ((h = h === null ? sr.errors : h.concat(sr.errors)), (f = h.length));
-                    var Q = Ae === f;
+                    }) || ((h = h === null ? sr.errors : h.concat(sr.errors)), (v = h.length));
+                    var Q = Ae === v;
                     we = we || Q;
-                    let He = f;
+                    let He = v;
                     if (me !== null) {
                       let Ke = {
                         instancePath: L + "/symbol",
@@ -31055,11 +31055,11 @@ var cd,
                         keyword: "type",
                         params: { type: "null" },
                       };
-                      (h === null ? (h = [Ke]) : h.push(Ke), f++);
+                      (h === null ? (h = [Ke]) : h.push(Ke), v++);
                     }
-                    var Q = He === f;
+                    var Q = He === v;
                     if (((we = we || Q), we))
-                      ((f = Oe), h !== null && (Oe ? (h.length = Oe) : (h = null)));
+                      ((v = Oe), h !== null && (Oe ? (h.length = Oe) : (h = null)));
                     else {
                       let Ke = {
                         instancePath: L + "/symbol",
@@ -31067,33 +31067,33 @@ var cd,
                         keyword: "anyOf",
                         params: {},
                       };
-                      return (h === null ? (h = [Ke]) : h.push(Ke), f++, (Ge.errors = h), !1);
+                      return (h === null ? (h = [Ke]) : h.push(Ke), v++, (Ge.errors = h), !1);
                     }
-                    var ue = Ue === f;
+                    var ue = Ue === v;
                   } else var ue = !0;
                   if (ue) {
                     if (A.market !== void 0) {
-                      let Ue = f;
+                      let Ue = v;
                       br(A.market, {
                         instancePath: L + "/market",
                         parentData: A,
                         parentDataProperty: "market",
                         rootData: Ee,
                         dynamicAnchors: ye,
-                      }) || ((h = h === null ? br.errors : h.concat(br.errors)), (f = h.length));
-                      var ue = Ue === f;
+                      }) || ((h = h === null ? br.errors : h.concat(br.errors)), (v = h.length));
+                      var ue = Ue === v;
                     } else var ue = !0;
                     if (ue)
                       if (A.currency !== void 0) {
-                        let Ue = f;
+                        let Ue = v;
                         B(A.currency, {
                           instancePath: L + "/currency",
                           parentData: A,
                           parentDataProperty: "currency",
                           rootData: Ee,
                           dynamicAnchors: ye,
-                        }) || ((h = h === null ? B.errors : h.concat(B.errors)), (f = h.length));
-                        var ue = Ue === f;
+                        }) || ((h = h === null ? B.errors : h.concat(B.errors)), (v = h.length));
+                        var ue = Ue === v;
                       } else var ue = !0;
                   }
                 }
@@ -31110,7 +31110,7 @@ var cd,
                 ]),
                 !1
               );
-          return ((Ge.errors = h), f === 0);
+          return ((Ge.errors = h), v === 0);
         }
         Ge.evaluated = { props: !0, dynamicProps: !1, dynamicItems: !1 };
         var Hr = new RegExp("^(0|[1-9][0-9]{0,19})(\\.[0-9]{1,12})?$", "u");
@@ -31125,12 +31125,12 @@ var cd,
           } = {},
         ) {
           let h = null,
-            f = 0,
+            v = 0,
             ne = Rr.evaluated;
           if (
             (ne.dynamicProps && (ne.props = void 0),
             ne.dynamicItems && (ne.items = void 0),
-            f === 0)
+            v === 0)
           )
             if (typeof A == "string") {
               if (p(A) > 33)
@@ -31181,7 +31181,7 @@ var cd,
                 ]),
                 !1
               );
-          return ((Rr.errors = h), f === 0);
+          return ((Rr.errors = h), v === 0);
         }
         Rr.evaluated = { dynamicProps: !1, dynamicItems: !1 };
         var Ve = new RegExp("^(0|[1-9][0-9]{0,19})(\\.[0-9]{1,18})?$", "u");
@@ -31196,12 +31196,12 @@ var cd,
           } = {},
         ) {
           let h = null,
-            f = 0,
+            v = 0,
             ne = mt.evaluated;
           if (
             (ne.dynamicProps && (ne.props = void 0),
             ne.dynamicItems && (ne.items = void 0),
-            f === 0)
+            v === 0)
           )
             if (typeof A == "string") {
               if (p(A) > 39)
@@ -31252,7 +31252,7 @@ var cd,
                 ]),
                 !1
               );
-          return ((mt.errors = h), f === 0);
+          return ((mt.errors = h), v === 0);
         }
         mt.evaluated = { dynamicProps: !1, dynamicItems: !1 };
         function qe(
@@ -31266,12 +31266,12 @@ var cd,
           } = {},
         ) {
           let h = null,
-            f = 0,
+            v = 0,
             ne = qe.evaluated;
           if (
             (ne.dynamicProps && (ne.props = void 0),
             ne.dynamicItems && (ne.items = void 0),
-            f === 0)
+            v === 0)
           )
             if (A && typeof A == "object" && !Array.isArray(A)) {
               let ue;
@@ -31291,7 +31291,7 @@ var cd,
                   !1
                 );
               {
-                let Te = f;
+                let Te = v;
                 for (let je in A)
                   if (!(je === "currency" || je === "amount"))
                     return (
@@ -31305,29 +31305,29 @@ var cd,
                       ]),
                       !1
                     );
-                if (Te === f) {
+                if (Te === v) {
                   if (A.currency !== void 0) {
-                    let je = f;
+                    let je = v;
                     B(A.currency, {
                       instancePath: L + "/currency",
                       parentData: A,
                       parentDataProperty: "currency",
                       rootData: Ee,
                       dynamicAnchors: ye,
-                    }) || ((h = h === null ? B.errors : h.concat(B.errors)), (f = h.length));
-                    var Q = je === f;
+                    }) || ((h = h === null ? B.errors : h.concat(B.errors)), (v = h.length));
+                    var Q = je === v;
                   } else var Q = !0;
                   if (Q)
                     if (A.amount !== void 0) {
-                      let je = f;
+                      let je = v;
                       mt(A.amount, {
                         instancePath: L + "/amount",
                         parentData: A,
                         parentDataProperty: "amount",
                         rootData: Ee,
                         dynamicAnchors: ye,
-                      }) || ((h = h === null ? mt.errors : h.concat(mt.errors)), (f = h.length));
-                      var Q = je === f;
+                      }) || ((h = h === null ? mt.errors : h.concat(mt.errors)), (v = h.length));
+                      var Q = je === v;
                     } else var Q = !0;
                 }
               }
@@ -31343,7 +31343,7 @@ var cd,
                 ]),
                 !1
               );
-          return ((qe.errors = h), f === 0);
+          return ((qe.errors = h), v === 0);
         }
         qe.evaluated = { props: !0, dynamicProps: !1, dynamicItems: !1 };
         var ie = {
@@ -31368,12 +31368,12 @@ var cd,
           } = {},
         ) {
           let h = null,
-            f = 0,
+            v = 0,
             ne = tr.evaluated;
           if (
             (ne.dynamicProps && (ne.props = void 0),
             ne.dynamicItems && (ne.items = void 0),
-            f === 0)
+            v === 0)
           )
             if (A && typeof A == "object" && !Array.isArray(A)) {
               let me;
@@ -31395,7 +31395,7 @@ var cd,
                   !1
                 );
               {
-                let Ue = f;
+                let Ue = v;
                 for (let Oe in A)
                   if (!(
                     Oe === "origin" ||
@@ -31414,10 +31414,10 @@ var cd,
                       ]),
                       !1
                     );
-                if (Ue === f) {
+                if (Ue === v) {
                   if (A.origin !== void 0) {
                     let Oe = A.origin,
-                      we = f;
+                      we = v;
                     if (!(
                       Oe === "import" ||
                       Oe === "manual" ||
@@ -31436,25 +31436,25 @@ var cd,
                         ]),
                         !1
                       );
-                    var Q = we === f;
+                    var Q = we === v;
                   } else var Q = !0;
                   if (Q) {
                     if (A.recordedAt !== void 0) {
                       let we = A.recordedAt,
-                        Ae = f,
-                        He = f,
+                        Ae = v,
+                        He = v,
                         De = !1,
-                        Ke = f;
+                        Ke = v;
                       d(we, {
                         instancePath: L + "/recordedAt",
                         parentData: A,
                         parentDataProperty: "recordedAt",
                         rootData: Ee,
                         dynamicAnchors: ye,
-                      }) || ((h = h === null ? d.errors : h.concat(d.errors)), (f = h.length));
-                      var ue = Ke === f;
+                      }) || ((h = h === null ? d.errors : h.concat(d.errors)), (v = h.length));
+                      var ue = Ke === v;
                       De = De || ue;
-                      let wr = f;
+                      let wr = v;
                       if (we !== null) {
                         let Re = {
                           instancePath: L + "/recordedAt",
@@ -31462,11 +31462,11 @@ var cd,
                           keyword: "type",
                           params: { type: "null" },
                         };
-                        (h === null ? (h = [Re]) : h.push(Re), f++);
+                        (h === null ? (h = [Re]) : h.push(Re), v++);
                       }
-                      var ue = wr === f;
+                      var ue = wr === v;
                       if (((De = De || ue), De))
-                        ((f = He), h !== null && (He ? (h.length = He) : (h = null)));
+                        ((v = He), h !== null && (He ? (h.length = He) : (h = null)));
                       else {
                         let Re = {
                           instancePath: L + "/recordedAt",
@@ -31474,27 +31474,27 @@ var cd,
                           keyword: "anyOf",
                           params: {},
                         };
-                        return (h === null ? (h = [Re]) : h.push(Re), f++, (tr.errors = h), !1);
+                        return (h === null ? (h = [Re]) : h.push(Re), v++, (tr.errors = h), !1);
                       }
-                      var Q = Ae === f;
+                      var Q = Ae === v;
                     } else var Q = !0;
                     if (Q) {
                       if (A.sourceDate !== void 0) {
                         let Ae = A.sourceDate,
-                          He = f,
-                          De = f,
+                          He = v,
+                          De = v,
                           Ke = !1,
-                          wr = f;
+                          wr = v;
                         F(Ae, {
                           instancePath: L + "/sourceDate",
                           parentData: A,
                           parentDataProperty: "sourceDate",
                           rootData: Ee,
                           dynamicAnchors: ye,
-                        }) || ((h = h === null ? F.errors : h.concat(F.errors)), (f = h.length));
-                        var Te = wr === f;
+                        }) || ((h = h === null ? F.errors : h.concat(F.errors)), (v = h.length));
+                        var Te = wr === v;
                         Ke = Ke || Te;
-                        let hr = f;
+                        let hr = v;
                         if (Ae !== null) {
                           let ge = {
                             instancePath: L + "/sourceDate",
@@ -31502,11 +31502,11 @@ var cd,
                             keyword: "type",
                             params: { type: "null" },
                           };
-                          (h === null ? (h = [ge]) : h.push(ge), f++);
+                          (h === null ? (h = [ge]) : h.push(ge), v++);
                         }
-                        var Te = hr === f;
+                        var Te = hr === v;
                         if (((Ke = Ke || Te), Ke))
-                          ((f = De), h !== null && (De ? (h.length = De) : (h = null)));
+                          ((v = De), h !== null && (De ? (h.length = De) : (h = null)));
                         else {
                           let ge = {
                             instancePath: L + "/sourceDate",
@@ -31514,27 +31514,27 @@ var cd,
                             keyword: "anyOf",
                             params: {},
                           };
-                          return (h === null ? (h = [ge]) : h.push(ge), f++, (tr.errors = h), !1);
+                          return (h === null ? (h = [ge]) : h.push(ge), v++, (tr.errors = h), !1);
                         }
-                        var Q = He === f;
+                        var Q = He === v;
                       } else var Q = !0;
                       if (Q)
                         if (A.lastEditedAt !== void 0) {
                           let Ae = A.lastEditedAt,
-                            He = f,
-                            De = f,
+                            He = v,
+                            De = v,
                             Ke = !1,
-                            wr = f;
+                            wr = v;
                           d(Ae, {
                             instancePath: L + "/lastEditedAt",
                             parentData: A,
                             parentDataProperty: "lastEditedAt",
                             rootData: Ee,
                             dynamicAnchors: ye,
-                          }) || ((h = h === null ? d.errors : h.concat(d.errors)), (f = h.length));
-                          var je = wr === f;
+                          }) || ((h = h === null ? d.errors : h.concat(d.errors)), (v = h.length));
+                          var je = wr === v;
                           Ke = Ke || je;
-                          let hr = f;
+                          let hr = v;
                           if (Ae !== null) {
                             let ge = {
                               instancePath: L + "/lastEditedAt",
@@ -31542,11 +31542,11 @@ var cd,
                               keyword: "type",
                               params: { type: "null" },
                             };
-                            (h === null ? (h = [ge]) : h.push(ge), f++);
+                            (h === null ? (h = [ge]) : h.push(ge), v++);
                           }
-                          var je = hr === f;
+                          var je = hr === v;
                           if (((Ke = Ke || je), Ke))
-                            ((f = De), h !== null && (De ? (h.length = De) : (h = null)));
+                            ((v = De), h !== null && (De ? (h.length = De) : (h = null)));
                           else {
                             let ge = {
                               instancePath: L + "/lastEditedAt",
@@ -31554,9 +31554,9 @@ var cd,
                               keyword: "anyOf",
                               params: {},
                             };
-                            return (h === null ? (h = [ge]) : h.push(ge), f++, (tr.errors = h), !1);
+                            return (h === null ? (h = [ge]) : h.push(ge), v++, (tr.errors = h), !1);
                           }
-                          var Q = He === f;
+                          var Q = He === v;
                         } else var Q = !0;
                     }
                   }
@@ -31574,7 +31574,7 @@ var cd,
                 ]),
                 !1
               );
-          return ((tr.errors = h), f === 0);
+          return ((tr.errors = h), v === 0);
         }
         tr.evaluated = { props: !0, dynamicProps: !1, dynamicItems: !1 };
         function pt(
@@ -31588,12 +31588,12 @@ var cd,
           } = {},
         ) {
           let h = null,
-            f = 0,
+            v = 0,
             ne = pt.evaluated;
           if (
             (ne.dynamicProps && (ne.props = void 0),
             ne.dynamicItems && (ne.items = void 0),
-            f === 0)
+            v === 0)
           )
             if (A && typeof A == "object" && !Array.isArray(A)) {
               let ue;
@@ -31613,7 +31613,7 @@ var cd,
                   !1
                 );
               {
-                let Te = f;
+                let Te = v;
                 for (let je in A)
                   if (!(je === "currency" || je === "amount"))
                     return (
@@ -31627,29 +31627,29 @@ var cd,
                       ]),
                       !1
                     );
-                if (Te === f) {
+                if (Te === v) {
                   if (A.currency !== void 0) {
-                    let je = f;
+                    let je = v;
                     B(A.currency, {
                       instancePath: L + "/currency",
                       parentData: A,
                       parentDataProperty: "currency",
                       rootData: Ee,
                       dynamicAnchors: ye,
-                    }) || ((h = h === null ? B.errors : h.concat(B.errors)), (f = h.length));
-                    var Q = je === f;
+                    }) || ((h = h === null ? B.errors : h.concat(B.errors)), (v = h.length));
+                    var Q = je === v;
                   } else var Q = !0;
                   if (Q)
                     if (A.amount !== void 0) {
-                      let je = f;
+                      let je = v;
                       ce(A.amount, {
                         instancePath: L + "/amount",
                         parentData: A,
                         parentDataProperty: "amount",
                         rootData: Ee,
                         dynamicAnchors: ye,
-                      }) || ((h = h === null ? ce.errors : h.concat(ce.errors)), (f = h.length));
-                      var Q = je === f;
+                      }) || ((h = h === null ? ce.errors : h.concat(ce.errors)), (v = h.length));
+                      var Q = je === v;
                     } else var Q = !0;
                 }
               }
@@ -31665,7 +31665,7 @@ var cd,
                 ]),
                 !1
               );
-          return ((pt.errors = h), f === 0);
+          return ((pt.errors = h), v === 0);
         }
         pt.evaluated = { props: !0, dynamicProps: !1, dynamicItems: !1 };
         function vt(
@@ -31679,12 +31679,12 @@ var cd,
           } = {},
         ) {
           let h = null,
-            f = 0,
+            v = 0,
             ne = vt.evaluated;
           if (
             (ne.dynamicProps && (ne.props = void 0),
             ne.dynamicItems && (ne.items = void 0),
-            f === 0)
+            v === 0)
           )
             if (A && typeof A == "object" && !Array.isArray(A)) {
               let me;
@@ -31705,7 +31705,7 @@ var cd,
                   !1
                 );
               {
-                let Ue = f;
+                let Ue = v;
                 for (let Oe in A)
                   if (!(Oe === "unitPrice" || Oe === "marketValue" || Oe === "unrealizedReturn"))
                     return (
@@ -31719,23 +31719,23 @@ var cd,
                       ]),
                       !1
                     );
-                if (Ue === f) {
+                if (Ue === v) {
                   if (A.unitPrice !== void 0) {
                     let Oe = A.unitPrice,
-                      we = f,
-                      Ae = f,
+                      we = v,
+                      Ae = v,
                       He = !1,
-                      De = f;
+                      De = v;
                     qe(Oe, {
                       instancePath: L + "/unitPrice",
                       parentData: A,
                       parentDataProperty: "unitPrice",
                       rootData: Ee,
                       dynamicAnchors: ye,
-                    }) || ((h = h === null ? qe.errors : h.concat(qe.errors)), (f = h.length));
-                    var Q = De === f;
+                    }) || ((h = h === null ? qe.errors : h.concat(qe.errors)), (v = h.length));
+                    var Q = De === v;
                     He = He || Q;
-                    let Ke = f;
+                    let Ke = v;
                     if (Oe !== null) {
                       let hr = {
                         instancePath: L + "/unitPrice",
@@ -31743,11 +31743,11 @@ var cd,
                         keyword: "type",
                         params: { type: "null" },
                       };
-                      (h === null ? (h = [hr]) : h.push(hr), f++);
+                      (h === null ? (h = [hr]) : h.push(hr), v++);
                     }
-                    var Q = Ke === f;
+                    var Q = Ke === v;
                     if (((He = He || Q), He))
-                      ((f = Ae), h !== null && (Ae ? (h.length = Ae) : (h = null)));
+                      ((v = Ae), h !== null && (Ae ? (h.length = Ae) : (h = null)));
                     else {
                       let hr = {
                         instancePath: L + "/unitPrice",
@@ -31755,27 +31755,27 @@ var cd,
                         keyword: "anyOf",
                         params: {},
                       };
-                      return (h === null ? (h = [hr]) : h.push(hr), f++, (vt.errors = h), !1);
+                      return (h === null ? (h = [hr]) : h.push(hr), v++, (vt.errors = h), !1);
                     }
-                    var ue = we === f;
+                    var ue = we === v;
                   } else var ue = !0;
                   if (ue) {
                     if (A.marketValue !== void 0) {
                       let we = A.marketValue,
-                        Ae = f,
-                        He = f,
+                        Ae = v,
+                        He = v,
                         De = !1,
-                        Ke = f;
+                        Ke = v;
                       pt(we, {
                         instancePath: L + "/marketValue",
                         parentData: A,
                         parentDataProperty: "marketValue",
                         rootData: Ee,
                         dynamicAnchors: ye,
-                      }) || ((h = h === null ? pt.errors : h.concat(pt.errors)), (f = h.length));
-                      var Te = Ke === f;
+                      }) || ((h = h === null ? pt.errors : h.concat(pt.errors)), (v = h.length));
+                      var Te = Ke === v;
                       De = De || Te;
-                      let wr = f;
+                      let wr = v;
                       if (we !== null) {
                         let Re = {
                           instancePath: L + "/marketValue",
@@ -31783,11 +31783,11 @@ var cd,
                           keyword: "type",
                           params: { type: "null" },
                         };
-                        (h === null ? (h = [Re]) : h.push(Re), f++);
+                        (h === null ? (h = [Re]) : h.push(Re), v++);
                       }
-                      var Te = wr === f;
+                      var Te = wr === v;
                       if (((De = De || Te), De))
-                        ((f = He), h !== null && (He ? (h.length = He) : (h = null)));
+                        ((v = He), h !== null && (He ? (h.length = He) : (h = null)));
                       else {
                         let Re = {
                           instancePath: L + "/marketValue",
@@ -31795,27 +31795,27 @@ var cd,
                           keyword: "anyOf",
                           params: {},
                         };
-                        return (h === null ? (h = [Re]) : h.push(Re), f++, (vt.errors = h), !1);
+                        return (h === null ? (h = [Re]) : h.push(Re), v++, (vt.errors = h), !1);
                       }
-                      var ue = Ae === f;
+                      var ue = Ae === v;
                     } else var ue = !0;
                     if (ue)
                       if (A.unrealizedReturn !== void 0) {
                         let we = A.unrealizedReturn,
-                          Ae = f,
-                          He = f,
+                          Ae = v,
+                          He = v,
                           De = !1,
-                          Ke = f;
+                          Ke = v;
                         pt(we, {
                           instancePath: L + "/unrealizedReturn",
                           parentData: A,
                           parentDataProperty: "unrealizedReturn",
                           rootData: Ee,
                           dynamicAnchors: ye,
-                        }) || ((h = h === null ? pt.errors : h.concat(pt.errors)), (f = h.length));
-                        var je = Ke === f;
+                        }) || ((h = h === null ? pt.errors : h.concat(pt.errors)), (v = h.length));
+                        var je = Ke === v;
                         De = De || je;
-                        let wr = f;
+                        let wr = v;
                         if (we !== null) {
                           let Re = {
                             instancePath: L + "/unrealizedReturn",
@@ -31823,11 +31823,11 @@ var cd,
                             keyword: "type",
                             params: { type: "null" },
                           };
-                          (h === null ? (h = [Re]) : h.push(Re), f++);
+                          (h === null ? (h = [Re]) : h.push(Re), v++);
                         }
-                        var je = wr === f;
+                        var je = wr === v;
                         if (((De = De || je), De))
-                          ((f = He), h !== null && (He ? (h.length = He) : (h = null)));
+                          ((v = He), h !== null && (He ? (h.length = He) : (h = null)));
                         else {
                           let Re = {
                             instancePath: L + "/unrealizedReturn",
@@ -31835,9 +31835,9 @@ var cd,
                             keyword: "anyOf",
                             params: {},
                           };
-                          return (h === null ? (h = [Re]) : h.push(Re), f++, (vt.errors = h), !1);
+                          return (h === null ? (h = [Re]) : h.push(Re), v++, (vt.errors = h), !1);
                         }
-                        var ue = Ae === f;
+                        var ue = Ae === v;
                       } else var ue = !0;
                   }
                 }
@@ -31854,7 +31854,7 @@ var cd,
                 ]),
                 !1
               );
-          return ((vt.errors = h), f === 0);
+          return ((vt.errors = h), v === 0);
         }
         vt.evaluated = { props: !0, dynamicProps: !1, dynamicItems: !1 };
         function S(
@@ -31868,12 +31868,12 @@ var cd,
           } = {},
         ) {
           let h = null,
-            f = 0,
+            v = 0,
             ne = S.evaluated;
           if (
             (ne.dynamicProps && (ne.props = void 0),
             ne.dynamicItems && (ne.items = void 0),
-            f === 0)
+            v === 0)
           )
             if (A && typeof A == "object" && !Array.isArray(A)) {
               let Ae;
@@ -31902,7 +31902,7 @@ var cd,
                   !1
                 );
               {
-                let He = f;
+                let He = v;
                 for (let De in A)
                   if (!u.call(or.properties, De))
                     return (
@@ -31916,26 +31916,26 @@ var cd,
                       ]),
                       !1
                     );
-                if (He === f) {
+                if (He === v) {
                   if (A.assetId !== void 0) {
-                    let De = f;
+                    let De = v;
                     V(A.assetId, {
                       instancePath: L + "/assetId",
                       parentData: A,
                       parentDataProperty: "assetId",
                       rootData: Ee,
                       dynamicAnchors: ye,
-                    }) || ((h = h === null ? V.errors : h.concat(V.errors)), (f = h.length));
-                    var Q = De === f;
+                    }) || ((h = h === null ? V.errors : h.concat(V.errors)), (v = h.length));
+                    var Q = De === v;
                   } else var Q = !0;
                   if (Q) {
                     if (A.brokerAssetId !== void 0) {
                       let Ke = A.brokerAssetId,
-                        wr = f,
-                        hr = f,
+                        wr = v,
+                        hr = v,
                         Re = !1,
-                        ge = f;
-                      if (f === ge)
+                        ge = v;
+                      if (v === ge)
                         if (typeof Ke == "string") {
                           if (p(Ke) > 180) {
                             let Qe = {
@@ -31944,7 +31944,7 @@ var cd,
                               keyword: "maxLength",
                               params: { limit: 180 },
                             };
-                            (h === null ? (h = [Qe]) : h.push(Qe), f++);
+                            (h === null ? (h = [Qe]) : h.push(Qe), v++);
                           } else if (p(Ke) < 1) {
                             let Qe = {
                               instancePath: L + "/brokerAssetId",
@@ -31952,7 +31952,7 @@ var cd,
                               keyword: "minLength",
                               params: { limit: 1 },
                             };
-                            (h === null ? (h = [Qe]) : h.push(Qe), f++);
+                            (h === null ? (h = [Qe]) : h.push(Qe), v++);
                           }
                         } else {
                           let Qe = {
@@ -31961,11 +31961,11 @@ var cd,
                             keyword: "type",
                             params: { type: "string" },
                           };
-                          (h === null ? (h = [Qe]) : h.push(Qe), f++);
+                          (h === null ? (h = [Qe]) : h.push(Qe), v++);
                         }
-                      var ue = ge === f;
+                      var ue = ge === v;
                       Re = Re || ue;
-                      let Xe = f;
+                      let Xe = v;
                       if (Ke !== null) {
                         let Qe = {
                           instancePath: L + "/brokerAssetId",
@@ -31973,11 +31973,11 @@ var cd,
                           keyword: "type",
                           params: { type: "null" },
                         };
-                        (h === null ? (h = [Qe]) : h.push(Qe), f++);
+                        (h === null ? (h = [Qe]) : h.push(Qe), v++);
                       }
-                      var ue = Xe === f;
+                      var ue = Xe === v;
                       if (((Re = Re || ue), Re))
-                        ((f = hr), h !== null && (hr ? (h.length = hr) : (h = null)));
+                        ((v = hr), h !== null && (hr ? (h.length = hr) : (h = null)));
                       else {
                         let Qe = {
                           instancePath: L + "/brokerAssetId",
@@ -31985,30 +31985,30 @@ var cd,
                           keyword: "anyOf",
                           params: {},
                         };
-                        return (h === null ? (h = [Qe]) : h.push(Qe), f++, (S.errors = h), !1);
+                        return (h === null ? (h = [Qe]) : h.push(Qe), v++, (S.errors = h), !1);
                       }
-                      var Q = wr === f;
+                      var Q = wr === v;
                     } else var Q = !0;
                     if (Q) {
                       if (A.instrument !== void 0) {
-                        let wr = f;
+                        let wr = v;
                         Ge(A.instrument, {
                           instancePath: L + "/instrument",
                           parentData: A,
                           parentDataProperty: "instrument",
                           rootData: Ee,
                           dynamicAnchors: ye,
-                        }) || ((h = h === null ? Ge.errors : h.concat(Ge.errors)), (f = h.length));
-                        var Q = wr === f;
+                        }) || ((h = h === null ? Ge.errors : h.concat(Ge.errors)), (v = h.length));
+                        var Q = wr === v;
                       } else var Q = !0;
                       if (Q) {
                         if (A.name !== void 0) {
                           let hr = A.name,
-                            Re = f,
-                            ge = f,
+                            Re = v,
+                            ge = v,
                             Xe = !1,
-                            xe = f;
-                          if (f === xe)
+                            xe = v;
+                          if (v === xe)
                             if (typeof hr == "string") {
                               if (p(hr) > 180) {
                                 let _e = {
@@ -32017,7 +32017,7 @@ var cd,
                                   keyword: "maxLength",
                                   params: { limit: 180 },
                                 };
-                                (h === null ? (h = [_e]) : h.push(_e), f++);
+                                (h === null ? (h = [_e]) : h.push(_e), v++);
                               } else if (p(hr) < 1) {
                                 let _e = {
                                   instancePath: L + "/name",
@@ -32025,7 +32025,7 @@ var cd,
                                   keyword: "minLength",
                                   params: { limit: 1 },
                                 };
-                                (h === null ? (h = [_e]) : h.push(_e), f++);
+                                (h === null ? (h = [_e]) : h.push(_e), v++);
                               }
                             } else {
                               let _e = {
@@ -32034,11 +32034,11 @@ var cd,
                                 keyword: "type",
                                 params: { type: "string" },
                               };
-                              (h === null ? (h = [_e]) : h.push(_e), f++);
+                              (h === null ? (h = [_e]) : h.push(_e), v++);
                             }
-                          var Te = xe === f;
+                          var Te = xe === v;
                           Xe = Xe || Te;
-                          let Qe = f;
+                          let Qe = v;
                           if (hr !== null) {
                             let _e = {
                               instancePath: L + "/name",
@@ -32046,11 +32046,11 @@ var cd,
                               keyword: "type",
                               params: { type: "null" },
                             };
-                            (h === null ? (h = [_e]) : h.push(_e), f++);
+                            (h === null ? (h = [_e]) : h.push(_e), v++);
                           }
-                          var Te = Qe === f;
+                          var Te = Qe === v;
                           if (((Xe = Xe || Te), Xe))
-                            ((f = ge), h !== null && (ge ? (h.length = ge) : (h = null)));
+                            ((v = ge), h !== null && (ge ? (h.length = ge) : (h = null)));
                           else {
                             let _e = {
                               instancePath: L + "/name",
@@ -32058,14 +32058,14 @@ var cd,
                               keyword: "anyOf",
                               params: {},
                             };
-                            return (h === null ? (h = [_e]) : h.push(_e), f++, (S.errors = h), !1);
+                            return (h === null ? (h = [_e]) : h.push(_e), v++, (S.errors = h), !1);
                           }
-                          var Q = Re === f;
+                          var Q = Re === v;
                         } else var Q = !0;
                         if (Q) {
                           if (A.assetType !== void 0) {
                             let Re = A.assetType,
-                              ge = f;
+                              ge = v;
                             if (!(Re === "stock" || Re === "etf" || Re === "unsupported"))
                               return (
                                 (S.errors = [
@@ -32078,11 +32078,11 @@ var cd,
                                 ]),
                                 !1
                               );
-                            var Q = ge === f;
+                            var Q = ge === v;
                           } else var Q = !0;
                           if (Q) {
                             if (A.quantity !== void 0) {
-                              let ge = f;
+                              let ge = v;
                               Rr(A.quantity, {
                                 instancePath: L + "/quantity",
                                 parentData: A,
@@ -32091,16 +32091,16 @@ var cd,
                                 dynamicAnchors: ye,
                               }) ||
                                 ((h = h === null ? Rr.errors : h.concat(Rr.errors)),
-                                (f = h.length));
-                              var Q = ge === f;
+                                (v = h.length));
+                              var Q = ge === v;
                             } else var Q = !0;
                             if (Q) {
                               if (A.unitCost !== void 0) {
                                 let Xe = A.unitCost,
-                                  xe = f,
-                                  Qe = f,
+                                  xe = v,
+                                  Qe = v,
                                   le = !1,
-                                  _e = f;
+                                  _e = v;
                                 qe(Xe, {
                                   instancePath: L + "/unitCost",
                                   parentData: A,
@@ -32109,10 +32109,10 @@ var cd,
                                   dynamicAnchors: ye,
                                 }) ||
                                   ((h = h === null ? qe.errors : h.concat(qe.errors)),
-                                  (f = h.length));
-                                var je = _e === f;
+                                  (v = h.length));
+                                var je = _e === v;
                                 le = le || je;
-                                let er = f;
+                                let er = v;
                                 if (Xe !== null) {
                                   let lt = {
                                     instancePath: L + "/unitCost",
@@ -32120,11 +32120,11 @@ var cd,
                                     keyword: "type",
                                     params: { type: "null" },
                                   };
-                                  (h === null ? (h = [lt]) : h.push(lt), f++);
+                                  (h === null ? (h = [lt]) : h.push(lt), v++);
                                 }
-                                var je = er === f;
+                                var je = er === v;
                                 if (((le = le || je), le))
-                                  ((f = Qe), h !== null && (Qe ? (h.length = Qe) : (h = null)));
+                                  ((v = Qe), h !== null && (Qe ? (h.length = Qe) : (h = null)));
                                 else {
                                   let lt = {
                                     instancePath: L + "/unitCost",
@@ -32134,20 +32134,20 @@ var cd,
                                   };
                                   return (
                                     h === null ? (h = [lt]) : h.push(lt),
-                                    f++,
+                                    v++,
                                     (S.errors = h),
                                     !1
                                   );
                                 }
-                                var Q = xe === f;
+                                var Q = xe === v;
                               } else var Q = !0;
                               if (Q) {
                                 if (A.bookCost !== void 0) {
                                   let xe = A.bookCost,
-                                    Qe = f,
-                                    le = f,
+                                    Qe = v,
+                                    le = v,
                                     _e = !1,
-                                    er = f;
+                                    er = v;
                                   qe(xe, {
                                     instancePath: L + "/bookCost",
                                     parentData: A,
@@ -32156,10 +32156,10 @@ var cd,
                                     dynamicAnchors: ye,
                                   }) ||
                                     ((h = h === null ? qe.errors : h.concat(qe.errors)),
-                                    (f = h.length));
-                                  var me = er === f;
+                                    (v = h.length));
+                                  var me = er === v;
                                   _e = _e || me;
-                                  let Fe = f;
+                                  let Fe = v;
                                   if (xe !== null) {
                                     let Jr = {
                                       instancePath: L + "/bookCost",
@@ -32167,11 +32167,11 @@ var cd,
                                       keyword: "type",
                                       params: { type: "null" },
                                     };
-                                    (h === null ? (h = [Jr]) : h.push(Jr), f++);
+                                    (h === null ? (h = [Jr]) : h.push(Jr), v++);
                                   }
-                                  var me = Fe === f;
+                                  var me = Fe === v;
                                   if (((_e = _e || me), _e))
-                                    ((f = le), h !== null && (le ? (h.length = le) : (h = null)));
+                                    ((v = le), h !== null && (le ? (h.length = le) : (h = null)));
                                   else {
                                     let Jr = {
                                       instancePath: L + "/bookCost",
@@ -32181,20 +32181,20 @@ var cd,
                                     };
                                     return (
                                       h === null ? (h = [Jr]) : h.push(Jr),
-                                      f++,
+                                      v++,
                                       (S.errors = h),
                                       !1
                                     );
                                   }
-                                  var Q = Qe === f;
+                                  var Q = Qe === v;
                                 } else var Q = !0;
                                 if (Q) {
                                   if (A.bookCostCad !== void 0) {
                                     let Qe = A.bookCostCad,
-                                      le = f,
-                                      _e = f,
+                                      le = v,
+                                      _e = v,
                                       er = !1,
-                                      Fe = f;
+                                      Fe = v;
                                     qe(Qe, {
                                       instancePath: L + "/bookCostCad",
                                       parentData: A,
@@ -32203,10 +32203,10 @@ var cd,
                                       dynamicAnchors: ye,
                                     }) ||
                                       ((h = h === null ? qe.errors : h.concat(qe.errors)),
-                                      (f = h.length));
-                                    var Ue = Fe === f;
+                                      (v = h.length));
+                                    var Ue = Fe === v;
                                     er = er || Ue;
-                                    let lt = f;
+                                    let lt = v;
                                     if (Qe !== null) {
                                       let Kt = {
                                         instancePath: L + "/bookCostCad",
@@ -32214,11 +32214,11 @@ var cd,
                                         keyword: "type",
                                         params: { type: "null" },
                                       };
-                                      (h === null ? (h = [Kt]) : h.push(Kt), f++);
+                                      (h === null ? (h = [Kt]) : h.push(Kt), v++);
                                     }
-                                    var Ue = lt === f;
+                                    var Ue = lt === v;
                                     if (((er = er || Ue), er))
-                                      ((f = _e), h !== null && (_e ? (h.length = _e) : (h = null)));
+                                      ((v = _e), h !== null && (_e ? (h.length = _e) : (h = null)));
                                     else {
                                       let Kt = {
                                         instancePath: L + "/bookCostCad",
@@ -32228,18 +32228,18 @@ var cd,
                                       };
                                       return (
                                         h === null ? (h = [Kt]) : h.push(Kt),
-                                        f++,
+                                        v++,
                                         (S.errors = h),
                                         !1
                                       );
                                     }
-                                    var Q = le === f;
+                                    var Q = le === v;
                                   } else var Q = !0;
                                   if (Q) {
                                     if (A.provenance !== void 0) {
                                       let le = A.provenance,
-                                        _e = f;
-                                      if (f === _e)
+                                        _e = v;
+                                      if (v === _e)
                                         if (le && typeof le == "object" && !Array.isArray(le)) {
                                           let Fe;
                                           if (
@@ -32261,7 +32261,7 @@ var cd,
                                               !1
                                             );
                                           {
-                                            let lt = f;
+                                            let lt = v;
                                             for (let Jr in le)
                                               if (!(
                                                 Jr === "instrument" ||
@@ -32282,9 +32282,9 @@ var cd,
                                                   ]),
                                                   !1
                                                 );
-                                            if (lt === f) {
+                                            if (lt === v) {
                                               if (le.instrument !== void 0) {
-                                                let Jr = f;
+                                                let Jr = v;
                                                 tr(le.instrument, {
                                                   instancePath: L + "/provenance/instrument",
                                                   parentData: le,
@@ -32294,12 +32294,12 @@ var cd,
                                                 }) ||
                                                   ((h =
                                                     h === null ? tr.errors : h.concat(tr.errors)),
-                                                  (f = h.length));
-                                                var Oe = Jr === f;
+                                                  (v = h.length));
+                                                var Oe = Jr === v;
                                               } else var Oe = !0;
                                               if (Oe) {
                                                 if (le.quantity !== void 0) {
-                                                  let Kt = f;
+                                                  let Kt = v;
                                                   tr(le.quantity, {
                                                     instancePath: L + "/provenance/quantity",
                                                     parentData: le,
@@ -32309,12 +32309,12 @@ var cd,
                                                   }) ||
                                                     ((h =
                                                       h === null ? tr.errors : h.concat(tr.errors)),
-                                                    (f = h.length));
-                                                  var Oe = Kt === f;
+                                                    (v = h.length));
+                                                  var Oe = Kt === v;
                                                 } else var Oe = !0;
                                                 if (Oe) {
                                                   if (le.unitCost !== void 0) {
-                                                    let ir = f;
+                                                    let ir = v;
                                                     tr(le.unitCost, {
                                                       instancePath: L + "/provenance/unitCost",
                                                       parentData: le,
@@ -32326,12 +32326,12 @@ var cd,
                                                         h === null
                                                           ? tr.errors
                                                           : h.concat(tr.errors)),
-                                                      (f = h.length));
-                                                    var Oe = ir === f;
+                                                      (v = h.length));
+                                                    var Oe = ir === v;
                                                   } else var Oe = !0;
                                                   if (Oe) {
                                                     if (le.bookCost !== void 0) {
-                                                      let xt = f;
+                                                      let xt = v;
                                                       tr(le.bookCost, {
                                                         instancePath: L + "/provenance/bookCost",
                                                         parentData: le,
@@ -32343,12 +32343,12 @@ var cd,
                                                           h === null
                                                             ? tr.errors
                                                             : h.concat(tr.errors)),
-                                                        (f = h.length));
-                                                      var Oe = xt === f;
+                                                        (v = h.length));
+                                                      var Oe = xt === v;
                                                     } else var Oe = !0;
                                                     if (Oe)
                                                       if (le.bookCostCad !== void 0) {
-                                                        let xt = f;
+                                                        let xt = v;
                                                         tr(le.bookCostCad, {
                                                           instancePath:
                                                             L + "/provenance/bookCostCad",
@@ -32361,8 +32361,8 @@ var cd,
                                                             h === null
                                                               ? tr.errors
                                                               : h.concat(tr.errors)),
-                                                          (f = h.length));
-                                                        var Oe = xt === f;
+                                                          (v = h.length));
+                                                        var Oe = xt === v;
                                                       } else var Oe = !0;
                                                   }
                                                 }
@@ -32381,15 +32381,15 @@ var cd,
                                             ]),
                                             !1
                                           );
-                                      var Q = _e === f;
+                                      var Q = _e === v;
                                     } else var Q = !0;
                                     if (Q)
                                       if (A.reportedValues !== void 0) {
                                         let le = A.reportedValues,
-                                          _e = f,
-                                          er = f,
+                                          _e = v,
+                                          er = v,
                                           Fe = !1,
-                                          lt = f;
+                                          lt = v;
                                         vt(le, {
                                           instancePath: L + "/reportedValues",
                                           parentData: A,
@@ -32398,10 +32398,10 @@ var cd,
                                           dynamicAnchors: ye,
                                         }) ||
                                           ((h = h === null ? vt.errors : h.concat(vt.errors)),
-                                          (f = h.length));
-                                        var we = lt === f;
+                                          (v = h.length));
+                                        var we = lt === v;
                                         Fe = Fe || we;
-                                        let Jr = f;
+                                        let Jr = v;
                                         if (le !== null) {
                                           let ir = {
                                             instancePath: L + "/reportedValues",
@@ -32409,11 +32409,11 @@ var cd,
                                             keyword: "type",
                                             params: { type: "null" },
                                           };
-                                          (h === null ? (h = [ir]) : h.push(ir), f++);
+                                          (h === null ? (h = [ir]) : h.push(ir), v++);
                                         }
-                                        var we = Jr === f;
+                                        var we = Jr === v;
                                         if (((Fe = Fe || we), Fe))
-                                          ((f = er),
+                                          ((v = er),
                                             h !== null && (er ? (h.length = er) : (h = null)));
                                         else {
                                           let ir = {
@@ -32424,12 +32424,12 @@ var cd,
                                           };
                                           return (
                                             h === null ? (h = [ir]) : h.push(ir),
-                                            f++,
+                                            v++,
                                             (S.errors = h),
                                             !1
                                           );
                                         }
-                                        var Q = _e === f;
+                                        var Q = _e === v;
                                       } else var Q = !0;
                                   }
                                 }
@@ -32454,7 +32454,7 @@ var cd,
                 ]),
                 !1
               );
-          return ((S.errors = h), f === 0);
+          return ((S.errors = h), v === 0);
         }
         S.evaluated = { props: !0, dynamicProps: !1, dynamicItems: !1 };
         function M(
@@ -32468,12 +32468,12 @@ var cd,
           } = {},
         ) {
           let h = null,
-            f = 0,
+            v = 0,
             ne = M.evaluated;
           if (
             (ne.dynamicProps && (ne.props = void 0),
             ne.dynamicItems && (ne.items = void 0),
-            f === 0)
+            v === 0)
           )
             if (A && typeof A == "object" && !Array.isArray(A)) {
               let je;
@@ -32495,7 +32495,7 @@ var cd,
                   !1
                 );
               {
-                let me = f;
+                let me = v;
                 for (let Ue in A)
                   if (!(
                     Ue === "accountId" ||
@@ -32514,23 +32514,23 @@ var cd,
                       ]),
                       !1
                     );
-                if (me === f) {
+                if (me === v) {
                   if (A.accountId !== void 0) {
-                    let Ue = f;
+                    let Ue = v;
                     V(A.accountId, {
                       instancePath: L + "/accountId",
                       parentData: A,
                       parentDataProperty: "accountId",
                       rootData: Ee,
                       dynamicAnchors: ye,
-                    }) || ((h = h === null ? V.errors : h.concat(V.errors)), (f = h.length));
-                    var Q = Ue === f;
+                    }) || ((h = h === null ? V.errors : h.concat(V.errors)), (v = h.length));
+                    var Q = Ue === v;
                   } else var Q = !0;
                   if (Q) {
                     if (A.displayName !== void 0) {
                       let Oe = A.displayName,
-                        we = f;
-                      if (f === we)
+                        we = v;
+                      if (v === we)
                         if (typeof Oe == "string") {
                           if (p(Oe) > 180)
                             return (
@@ -32568,13 +32568,13 @@ var cd,
                             ]),
                             !1
                           );
-                      var Q = we === f;
+                      var Q = we === v;
                     } else var Q = !0;
                     if (Q) {
                       if (A.balances !== void 0) {
                         let we = A.balances,
-                          Ae = f;
-                        if (f === Ae)
+                          Ae = v;
+                        if (v === Ae)
                           if (Array.isArray(we)) {
                             if (we.length > 12)
                               return (
@@ -32604,7 +32604,7 @@ var cd,
                               var ue = !0;
                               let De = we.length;
                               for (let Ke = 0; Ke < De; Ke++) {
-                                let wr = f;
+                                let wr = v;
                                 Pe(we[Ke], {
                                   instancePath: L + "/balances/" + Ke,
                                   parentData: we,
@@ -32613,8 +32613,8 @@ var cd,
                                   dynamicAnchors: ye,
                                 }) ||
                                   ((h = h === null ? Pe.errors : h.concat(Pe.errors)),
-                                  (f = h.length));
-                                var ue = wr === f;
+                                  (v = h.length));
+                                var ue = wr === v;
                                 if (!ue) break;
                               }
                             }
@@ -32630,13 +32630,13 @@ var cd,
                               ]),
                               !1
                             );
-                        var Q = Ae === f;
+                        var Q = Ae === v;
                       } else var Q = !0;
                       if (Q)
                         if (A.positions !== void 0) {
                           let we = A.positions,
-                            Ae = f;
-                          if (f === Ae)
+                            Ae = v;
+                          if (v === Ae)
                             if (Array.isArray(we)) {
                               if (we.length > 1e3)
                                 return (
@@ -32666,7 +32666,7 @@ var cd,
                                 var Te = !0;
                                 let De = we.length;
                                 for (let Ke = 0; Ke < De; Ke++) {
-                                  let wr = f;
+                                  let wr = v;
                                   S(we[Ke], {
                                     instancePath: L + "/positions/" + Ke,
                                     parentData: we,
@@ -32675,8 +32675,8 @@ var cd,
                                     dynamicAnchors: ye,
                                   }) ||
                                     ((h = h === null ? S.errors : h.concat(S.errors)),
-                                    (f = h.length));
-                                  var Te = wr === f;
+                                    (v = h.length));
+                                  var Te = wr === v;
                                   if (!Te) break;
                                 }
                               }
@@ -32692,7 +32692,7 @@ var cd,
                                 ]),
                                 !1
                               );
-                          var Q = Ae === f;
+                          var Q = Ae === v;
                         } else var Q = !0;
                     }
                   }
@@ -32710,7 +32710,7 @@ var cd,
                 ]),
                 !1
               );
-          return ((M.errors = h), f === 0);
+          return ((M.errors = h), v === 0);
         }
         M.evaluated = { props: !0, dynamicProps: !1, dynamicItems: !1 };
         function ve(
@@ -32724,12 +32724,12 @@ var cd,
           } = {},
         ) {
           let h = null,
-            f = 0,
+            v = 0,
             ne = ve.evaluated;
           if (
             (ne.dynamicProps && (ne.props = void 0),
             ne.dynamicItems && (ne.items = void 0),
-            f === 0)
+            v === 0)
           )
             if (A && typeof A == "object" && !Array.isArray(A)) {
               let we;
@@ -32756,7 +32756,7 @@ var cd,
                   !1
                 );
               {
-                let Ae = f;
+                let Ae = v;
                 for (let He in A)
                   if (!u.call(b.properties, He))
                     return (
@@ -32770,9 +32770,9 @@ var cd,
                       ]),
                       !1
                     );
-                if (Ae === f) {
+                if (Ae === v) {
                   if (A.kind !== void 0) {
-                    let He = f;
+                    let He = v;
                     if (A.kind !== "holdings")
                       return (
                         (ve.errors = [
@@ -32785,11 +32785,11 @@ var cd,
                         ]),
                         !1
                       );
-                    var Q = He === f;
+                    var Q = He === v;
                   } else var Q = !0;
                   if (Q) {
                     if (A.profile !== void 0) {
-                      let De = f;
+                      let De = v;
                       if (A.profile !== "folioview.holdings-facts.v2")
                         return (
                           (ve.errors = [
@@ -32802,24 +32802,24 @@ var cd,
                           ]),
                           !1
                         );
-                      var Q = De === f;
+                      var Q = De === v;
                     } else var Q = !0;
                     if (Q) {
                       if (A.snapshotId !== void 0) {
-                        let Ke = f;
+                        let Ke = v;
                         V(A.snapshotId, {
                           instancePath: L + "/snapshotId",
                           parentData: A,
                           parentDataProperty: "snapshotId",
                           rootData: Ee,
                           dynamicAnchors: ye,
-                        }) || ((h = h === null ? V.errors : h.concat(V.errors)), (f = h.length));
-                        var Q = Ke === f;
+                        }) || ((h = h === null ? V.errors : h.concat(V.errors)), (v = h.length));
+                        var Q = Ke === v;
                       } else var Q = !0;
                       if (Q) {
                         if (A.editKind !== void 0) {
                           let wr = A.editKind,
-                            hr = f;
+                            hr = v;
                           if (!(wr === "import" || wr === "manual" || wr === "edit"))
                             return (
                               (ve.errors = [
@@ -32832,15 +32832,15 @@ var cd,
                               ]),
                               !1
                             );
-                          var Q = hr === f;
+                          var Q = hr === v;
                         } else var Q = !0;
                         if (Q) {
                           if (A.reportDate !== void 0) {
                             let hr = A.reportDate,
-                              Re = f,
-                              ge = f,
+                              Re = v,
+                              ge = v,
                               Xe = !1,
-                              xe = f;
+                              xe = v;
                             F(hr, {
                               instancePath: L + "/reportDate",
                               parentData: A,
@@ -32848,10 +32848,10 @@ var cd,
                               rootData: Ee,
                               dynamicAnchors: ye,
                             }) ||
-                              ((h = h === null ? F.errors : h.concat(F.errors)), (f = h.length));
-                            var ue = xe === f;
+                              ((h = h === null ? F.errors : h.concat(F.errors)), (v = h.length));
+                            var ue = xe === v;
                             Xe = Xe || ue;
-                            let Qe = f;
+                            let Qe = v;
                             if (hr !== null) {
                               let _e = {
                                 instancePath: L + "/reportDate",
@@ -32859,11 +32859,11 @@ var cd,
                                 keyword: "type",
                                 params: { type: "null" },
                               };
-                              (h === null ? (h = [_e]) : h.push(_e), f++);
+                              (h === null ? (h = [_e]) : h.push(_e), v++);
                             }
-                            var ue = Qe === f;
+                            var ue = Qe === v;
                             if (((Xe = Xe || ue), Xe))
-                              ((f = ge), h !== null && (ge ? (h.length = ge) : (h = null)));
+                              ((v = ge), h !== null && (ge ? (h.length = ge) : (h = null)));
                             else {
                               let _e = {
                                 instancePath: L + "/reportDate",
@@ -32873,20 +32873,20 @@ var cd,
                               };
                               return (
                                 h === null ? (h = [_e]) : h.push(_e),
-                                f++,
+                                v++,
                                 (ve.errors = h),
                                 !1
                               );
                             }
-                            var Q = Re === f;
+                            var Q = Re === v;
                           } else var Q = !0;
                           if (Q) {
                             if (A.importSnapshot !== void 0) {
                               let Re = A.importSnapshot,
-                                ge = f,
-                                Xe = f,
+                                ge = v,
+                                Xe = v,
                                 xe = !1,
-                                Qe = f;
+                                Qe = v;
                               oe(Re, {
                                 instancePath: L + "/importSnapshot",
                                 parentData: A,
@@ -32895,10 +32895,10 @@ var cd,
                                 dynamicAnchors: ye,
                               }) ||
                                 ((h = h === null ? oe.errors : h.concat(oe.errors)),
-                                (f = h.length));
-                              var Te = Qe === f;
+                                (v = h.length));
+                              var Te = Qe === v;
                               xe = xe || Te;
-                              let le = f;
+                              let le = v;
                               if (Re !== null) {
                                 let er = {
                                   instancePath: L + "/importSnapshot",
@@ -32906,11 +32906,11 @@ var cd,
                                   keyword: "type",
                                   params: { type: "null" },
                                 };
-                                (h === null ? (h = [er]) : h.push(er), f++);
+                                (h === null ? (h = [er]) : h.push(er), v++);
                               }
-                              var Te = le === f;
+                              var Te = le === v;
                               if (((xe = xe || Te), xe))
-                                ((f = Xe), h !== null && (Xe ? (h.length = Xe) : (h = null)));
+                                ((v = Xe), h !== null && (Xe ? (h.length = Xe) : (h = null)));
                               else {
                                 let er = {
                                   instancePath: L + "/importSnapshot",
@@ -32920,20 +32920,20 @@ var cd,
                                 };
                                 return (
                                   h === null ? (h = [er]) : h.push(er),
-                                  f++,
+                                  v++,
                                   (ve.errors = h),
                                   !1
                                 );
                               }
-                              var Q = ge === f;
+                              var Q = ge === v;
                             } else var Q = !0;
                             if (Q) {
                               if (A.previousSnapshot !== void 0) {
                                 let ge = A.previousSnapshot,
-                                  Xe = f,
-                                  xe = f,
+                                  Xe = v,
+                                  xe = v,
                                   Qe = !1,
-                                  le = f;
+                                  le = v;
                                 oe(ge, {
                                   instancePath: L + "/previousSnapshot",
                                   parentData: A,
@@ -32942,10 +32942,10 @@ var cd,
                                   dynamicAnchors: ye,
                                 }) ||
                                   ((h = h === null ? oe.errors : h.concat(oe.errors)),
-                                  (f = h.length));
-                                var je = le === f;
+                                  (v = h.length));
+                                var je = le === v;
                                 Qe = Qe || je;
-                                let _e = f;
+                                let _e = v;
                                 if (ge !== null) {
                                   let Fe = {
                                     instancePath: L + "/previousSnapshot",
@@ -32953,11 +32953,11 @@ var cd,
                                     keyword: "type",
                                     params: { type: "null" },
                                   };
-                                  (h === null ? (h = [Fe]) : h.push(Fe), f++);
+                                  (h === null ? (h = [Fe]) : h.push(Fe), v++);
                                 }
-                                var je = _e === f;
+                                var je = _e === v;
                                 if (((Qe = Qe || je), Qe))
-                                  ((f = xe), h !== null && (xe ? (h.length = xe) : (h = null)));
+                                  ((v = xe), h !== null && (xe ? (h.length = xe) : (h = null)));
                                 else {
                                   let Fe = {
                                     instancePath: L + "/previousSnapshot",
@@ -32967,18 +32967,18 @@ var cd,
                                   };
                                   return (
                                     h === null ? (h = [Fe]) : h.push(Fe),
-                                    f++,
+                                    v++,
                                     (ve.errors = h),
                                     !1
                                   );
                                 }
-                                var Q = Xe === f;
+                                var Q = Xe === v;
                               } else var Q = !0;
                               if (Q) {
                                 if (A.accounts !== void 0) {
                                   let Xe = A.accounts,
-                                    xe = f;
-                                  if (f === xe)
+                                    xe = v;
+                                  if (v === xe)
                                     if (Array.isArray(Xe)) {
                                       if (Xe.length > 20)
                                         return (
@@ -33008,7 +33008,7 @@ var cd,
                                         var me = !0;
                                         let le = Xe.length;
                                         for (let _e = 0; _e < le; _e++) {
-                                          let er = f;
+                                          let er = v;
                                           M(Xe[_e], {
                                             instancePath: L + "/accounts/" + _e,
                                             parentData: Xe,
@@ -33017,8 +33017,8 @@ var cd,
                                             dynamicAnchors: ye,
                                           }) ||
                                             ((h = h === null ? M.errors : h.concat(M.errors)),
-                                            (f = h.length));
-                                          var me = er === f;
+                                            (v = h.length));
+                                          var me = er === v;
                                           if (!me) break;
                                         }
                                       }
@@ -33034,13 +33034,13 @@ var cd,
                                         ]),
                                         !1
                                       );
-                                  var Q = xe === f;
+                                  var Q = xe === v;
                                 } else var Q = !0;
                                 if (Q)
                                   if (A.excludedAssets !== void 0) {
                                     let Xe = A.excludedAssets,
-                                      xe = f;
-                                    if (f === xe)
+                                      xe = v;
+                                    if (v === xe)
                                       if (Array.isArray(Xe)) {
                                         if (Xe.length > 1e3)
                                           return (
@@ -33071,8 +33071,8 @@ var cd,
                                           let le = Xe.length;
                                           for (let _e = 0; _e < le; _e++) {
                                             let er = Xe[_e],
-                                              Fe = f;
-                                            if (f === Fe)
+                                              Fe = v;
+                                            if (v === Fe)
                                               if (
                                                 er &&
                                                 typeof er == "object" &&
@@ -33097,7 +33097,7 @@ var cd,
                                                     !1
                                                   );
                                                 {
-                                                  let Kt = f;
+                                                  let Kt = v;
                                                   for (let ir in er)
                                                     if (!(
                                                       ir === "brokerAssetId" || ir === "reason"
@@ -33115,11 +33115,11 @@ var cd,
                                                         ]),
                                                         !1
                                                       );
-                                                  if (Kt === f) {
+                                                  if (Kt === v) {
                                                     if (er.brokerAssetId !== void 0) {
                                                       let ir = er.brokerAssetId,
-                                                        xt = f;
-                                                      if (f === xt)
+                                                        xt = v;
+                                                      if (v === xt)
                                                         if (typeof ir == "string") {
                                                           if (p(ir) > 180)
                                                             return (
@@ -33172,13 +33172,13 @@ var cd,
                                                             ]),
                                                             !1
                                                           );
-                                                      var Oe = xt === f;
+                                                      var Oe = xt === v;
                                                     } else var Oe = !0;
                                                     if (Oe)
                                                       if (er.reason !== void 0) {
                                                         let ir = er.reason,
-                                                          xt = f;
-                                                        if (f === xt)
+                                                          xt = v;
+                                                        if (v === xt)
                                                           if (typeof ir == "string") {
                                                             if (p(ir) > 64)
                                                               return (
@@ -33231,7 +33231,7 @@ var cd,
                                                               ]),
                                                               !1
                                                             );
-                                                        var Oe = xt === f;
+                                                        var Oe = xt === v;
                                                       } else var Oe = !0;
                                                   }
                                                 }
@@ -33248,7 +33248,7 @@ var cd,
                                                   ]),
                                                   !1
                                                 );
-                                            var Ue = Fe === f;
+                                            var Ue = Fe === v;
                                             if (!Ue) break;
                                           }
                                         }
@@ -33264,7 +33264,7 @@ var cd,
                                           ]),
                                           !1
                                         );
-                                    var Q = xe === f;
+                                    var Q = xe === v;
                                   } else var Q = !0;
                               }
                             }
@@ -33287,7 +33287,7 @@ var cd,
                 ]),
                 !1
               );
-          return ((ve.errors = h), f === 0);
+          return ((ve.errors = h), v === 0);
         }
         ve.evaluated = { props: !0, dynamicProps: !1, dynamicItems: !1 };
         function Or(
@@ -33301,12 +33301,12 @@ var cd,
           } = {},
         ) {
           let h = null,
-            f = 0,
+            v = 0,
             ne = Or.evaluated;
           if (
             (ne.dynamicProps && (ne.props = void 0),
             ne.dynamicItems && (ne.items = void 0),
-            f === 0)
+            v === 0)
           )
             if (A && typeof A == "object" && !Array.isArray(A)) {
               let Te;
@@ -33330,7 +33330,7 @@ var cd,
                   !1
                 );
               {
-                let je = f;
+                let je = v;
                 for (let me in A)
                   if (!(
                     me === "state" ||
@@ -33351,10 +33351,10 @@ var cd,
                       ]),
                       !1
                     );
-                if (je === f) {
+                if (je === v) {
                   if (A.state !== void 0) {
                     let me = A.state,
-                      Ue = f;
+                      Ue = v;
                     if (!(me === "ready" || me === "empty"))
                       return (
                         (Or.errors = [
@@ -33367,37 +33367,37 @@ var cd,
                         ]),
                         !1
                       );
-                    var Q = Ue === f;
+                    var Q = Ue === v;
                   } else var Q = !0;
                   if (Q) {
                     if (A.coverage !== void 0) {
-                      let Ue = f;
+                      let Ue = v;
                       l(A.coverage, {
                         instancePath: L + "/coverage",
                         parentData: A,
                         parentDataProperty: "coverage",
                         rootData: Ee,
                         dynamicAnchors: ye,
-                      }) || ((h = h === null ? l.errors : h.concat(l.errors)), (f = h.length));
-                      var Q = Ue === f;
+                      }) || ((h = h === null ? l.errors : h.concat(l.errors)), (v = h.length));
+                      var Q = Ue === v;
                     } else var Q = !0;
                     if (Q) {
                       if (A.sourceAsOf !== void 0) {
                         let Oe = A.sourceAsOf,
-                          we = f,
-                          Ae = f,
+                          we = v,
+                          Ae = v,
                           He = !1,
-                          De = f;
+                          De = v;
                         d(Oe, {
                           instancePath: L + "/sourceAsOf",
                           parentData: A,
                           parentDataProperty: "sourceAsOf",
                           rootData: Ee,
                           dynamicAnchors: ye,
-                        }) || ((h = h === null ? d.errors : h.concat(d.errors)), (f = h.length));
-                        var ue = De === f;
+                        }) || ((h = h === null ? d.errors : h.concat(d.errors)), (v = h.length));
+                        var ue = De === v;
                         He = He || ue;
-                        let Ke = f;
+                        let Ke = v;
                         if (Oe !== null) {
                           let hr = {
                             instancePath: L + "/sourceAsOf",
@@ -33405,11 +33405,11 @@ var cd,
                             keyword: "type",
                             params: { type: "null" },
                           };
-                          (h === null ? (h = [hr]) : h.push(hr), f++);
+                          (h === null ? (h = [hr]) : h.push(hr), v++);
                         }
-                        var ue = Ke === f;
+                        var ue = Ke === v;
                         if (((He = He || ue), He))
-                          ((f = Ae), h !== null && (Ae ? (h.length = Ae) : (h = null)));
+                          ((v = Ae), h !== null && (Ae ? (h.length = Ae) : (h = null)));
                         else {
                           let hr = {
                             instancePath: L + "/sourceAsOf",
@@ -33417,26 +33417,26 @@ var cd,
                             keyword: "anyOf",
                             params: {},
                           };
-                          return (h === null ? (h = [hr]) : h.push(hr), f++, (Or.errors = h), !1);
+                          return (h === null ? (h = [hr]) : h.push(hr), v++, (Or.errors = h), !1);
                         }
-                        var Q = we === f;
+                        var Q = we === v;
                       } else var Q = !0;
                       if (Q) {
                         if (A.fetchedAt !== void 0) {
-                          let we = f;
+                          let we = v;
                           d(A.fetchedAt, {
                             instancePath: L + "/fetchedAt",
                             parentData: A,
                             parentDataProperty: "fetchedAt",
                             rootData: Ee,
                             dynamicAnchors: ye,
-                          }) || ((h = h === null ? d.errors : h.concat(d.errors)), (f = h.length));
-                          var Q = we === f;
+                          }) || ((h = h === null ? d.errors : h.concat(d.errors)), (v = h.length));
+                          var Q = we === v;
                         } else var Q = !0;
                         if (Q) {
                           if (A.freshness !== void 0) {
                             let Ae = A.freshness,
-                              He = f;
+                              He = v;
                             if (!(Ae === "fresh" || Ae === "stale" || Ae === "unknown"))
                               return (
                                 (Or.errors = [
@@ -33449,11 +33449,11 @@ var cd,
                                 ]),
                                 !1
                               );
-                            var Q = He === f;
+                            var Q = He === v;
                           } else var Q = !0;
                           if (Q)
                             if (A.data !== void 0) {
-                              let Ae = f;
+                              let Ae = v;
                               ve(A.data, {
                                 instancePath: L + "/data",
                                 parentData: A,
@@ -33462,8 +33462,8 @@ var cd,
                                 dynamicAnchors: ye,
                               }) ||
                                 ((h = h === null ? ve.errors : h.concat(ve.errors)),
-                                (f = h.length));
-                              var Q = Ae === f;
+                                (v = h.length));
+                              var Q = Ae === v;
                             } else var Q = !0;
                         }
                       }
@@ -33483,7 +33483,7 @@ var cd,
                 ]),
                 !1
               );
-          return ((Or.errors = h), f === 0);
+          return ((Or.errors = h), v === 0);
         }
         Or.evaluated = { props: !0, dynamicProps: !1, dynamicItems: !1 };
         function la(
@@ -33497,7 +33497,7 @@ var cd,
           } = {},
         ) {
           let h = null,
-            f = 0,
+            v = 0,
             ne = la.evaluated;
           return (
             ne.dynamicProps && (ne.props = void 0),
@@ -33508,9 +33508,9 @@ var cd,
               parentDataProperty: xr,
               rootData: Ee,
               dynamicAnchors: ye,
-            }) || ((h = h === null ? Or.errors : h.concat(Or.errors)), (f = h.length)),
+            }) || ((h = h === null ? Or.errors : h.concat(Or.errors)), (v = h.length)),
             (la.errors = h),
-            f === 0
+            v === 0
           );
         }
         la.evaluated = { props: !0, dynamicProps: !1, dynamicItems: !1 };
@@ -33527,8 +33527,8 @@ var cd,
       )));
     kd = "folioview.holdings-facts.v2";
   });
-var Ko = {};
-Pp(Ko, {
+var jo = {};
+Pp(jo, {
   BINDING: () => ht,
   CONTRACT: () => dt,
   JWE_HEADER: () => oa,
@@ -33540,7 +33540,7 @@ Pp(Ko, {
   context: () => pa,
   deny: () => _,
   digest: () => We,
-  digestString: () => ko,
+  digestString: () => wo,
   exact: () => vr,
   fingerprint: () => Ht,
   identifier: () => Wr,
@@ -33567,9 +33567,9 @@ Pp(Ko, {
 });
 var da = Zi(() => {
   Ut();
-  jo();
+  No();
 });
-var To = gp((Ia) => {
+var Co = gp((Ia) => {
   "use strict";
   var Ad = Object.getOwnPropertyNames,
     Yn = (t, i) =>
@@ -33638,7 +33638,7 @@ var To = gp((Ia) => {
       },
     });
   Ia.CenterSchedule = Vi;
-  var Lo = {
+  var Oo = {
       type: "object",
       properties: {
         frequency: { enum: ["daily", "weekly"] },
@@ -33667,7 +33667,7 @@ var To = gp((Ia) => {
       ],
       additionalProperties: !1,
     },
-    qo = new RegExp("^([01][0-9]|2[0-3]):[0-5][0-9]$", "u"),
+    Lo = new RegExp("^([01][0-9]|2[0-3]):[0-5][0-9]$", "u"),
     wt = Dd().default;
   function Dr(
     t,
@@ -33707,17 +33707,17 @@ var To = gp((Ia) => {
             !1
           );
         {
-          let v = d;
-          for (let D in t)
+          let f = d;
+          for (let E in t)
             if (!(
-              D === "frequency" ||
-              D === "days" ||
-              D === "localTime" ||
-              D === "timeZone" ||
-              D === "graceMinutes" ||
-              D === "effectiveFrom" ||
-              D === "dstGap" ||
-              D === "dstFold"
+              E === "frequency" ||
+              E === "days" ||
+              E === "localTime" ||
+              E === "timeZone" ||
+              E === "graceMinutes" ||
+              E === "effectiveFrom" ||
+              E === "dstGap" ||
+              E === "dstFold"
             )) {
               return (
                 (Dr.errors = [
@@ -33725,25 +33725,25 @@ var To = gp((Ia) => {
                     instancePath: i,
                     schemaPath: "#/additionalProperties",
                     keyword: "additionalProperties",
-                    params: { additionalProperty: D },
+                    params: { additionalProperty: E },
                   },
                 ]),
                 !1
               );
               break;
             }
-          if (v === d) {
+          if (f === d) {
             if (t.frequency !== void 0) {
-              let D = t.frequency,
+              let E = t.frequency,
                 F = d;
-              if (!(D === "daily" || D === "weekly"))
+              if (!(E === "daily" || E === "weekly"))
                 return (
                   (Dr.errors = [
                     {
                       instancePath: i + "/frequency",
                       schemaPath: "#/properties/frequency/enum",
                       keyword: "enum",
-                      params: { allowedValues: Lo.properties.frequency.enum },
+                      params: { allowedValues: Oo.properties.frequency.enum },
                     },
                   ]),
                   !1
@@ -33752,11 +33752,11 @@ var To = gp((Ia) => {
             } else var u = !0;
             if (u) {
               if (t.days !== void 0) {
-                let D = t.days,
+                let E = t.days,
                   F = d;
                 if (d === F)
-                  if (Array.isArray(D)) {
-                    if (D.length > 7)
+                  if (Array.isArray(E)) {
+                    if (E.length > 7)
                       return (
                         (Dr.errors = [
                           {
@@ -33769,10 +33769,10 @@ var To = gp((Ia) => {
                         !1
                       );
                     {
-                      var x = !0;
-                      let oe = D.length;
+                      var D = !0;
+                      let oe = E.length;
                       for (let C = 0; C < oe; C++) {
-                        let O = D[C],
+                        let O = E[C],
                           B = d;
                         if (!(typeof O == "number" && !(O % 1) && !isNaN(O)))
                           return (
@@ -33812,16 +33812,16 @@ var To = gp((Ia) => {
                               !1
                             );
                         }
-                        var x = B === d;
-                        if (!x) break;
+                        var D = B === d;
+                        if (!D) break;
                       }
-                      if (x) {
-                        let C = D.length,
+                      if (D) {
+                        let C = E.length,
                           O;
                         if (C > 1) {
                           let B = {};
                           for (; C--;) {
-                            let de = D[C];
+                            let de = E[C];
                             if (typeof de == "number" && !(de % 1) && !isNaN(de)) {
                               if (typeof B[de] == "number") {
                                 return (
@@ -33860,11 +33860,11 @@ var To = gp((Ia) => {
               } else var u = !0;
               if (u) {
                 if (t.localTime !== void 0) {
-                  let D = t.localTime,
+                  let E = t.localTime,
                     F = d;
                   if (d === F)
-                    if (typeof D == "string") {
-                      if (!qo.test(D))
+                    if (typeof E == "string") {
+                      if (!Lo.test(E))
                         return (
                           (Dr.errors = [
                             {
@@ -33892,11 +33892,11 @@ var To = gp((Ia) => {
                 } else var u = !0;
                 if (u) {
                   if (t.timeZone !== void 0) {
-                    let D = t.timeZone,
+                    let E = t.timeZone,
                       F = d;
                     if (d === F)
-                      if (typeof D == "string") {
-                        if (wt(D) > 80)
+                      if (typeof E == "string") {
+                        if (wt(E) > 80)
                           return (
                             (Dr.errors = [
                               {
@@ -33908,7 +33908,7 @@ var To = gp((Ia) => {
                             ]),
                             !1
                           );
-                        if (wt(D) < 1)
+                        if (wt(E) < 1)
                           return (
                             (Dr.errors = [
                               {
@@ -33936,9 +33936,9 @@ var To = gp((Ia) => {
                   } else var u = !0;
                   if (u) {
                     if (t.graceMinutes !== void 0) {
-                      let D = t.graceMinutes,
+                      let E = t.graceMinutes,
                         F = d;
-                      if (!(typeof D == "number" && !(D % 1) && !isNaN(D)))
+                      if (!(typeof E == "number" && !(E % 1) && !isNaN(E)))
                         return (
                           (Dr.errors = [
                             {
@@ -33950,8 +33950,8 @@ var To = gp((Ia) => {
                           ]),
                           !1
                         );
-                      if (d === F && typeof D == "number") {
-                        if (D > 1440 || isNaN(D))
+                      if (d === F && typeof E == "number") {
+                        if (E > 1440 || isNaN(E))
                           return (
                             (Dr.errors = [
                               {
@@ -33963,7 +33963,7 @@ var To = gp((Ia) => {
                             ]),
                             !1
                           );
-                        if (D < 0 || isNaN(D))
+                        if (E < 0 || isNaN(E))
                           return (
                             (Dr.errors = [
                               {
@@ -33980,9 +33980,9 @@ var To = gp((Ia) => {
                     } else var u = !0;
                     if (u) {
                       if (t.effectiveFrom !== void 0) {
-                        let D = t.effectiveFrom,
+                        let E = t.effectiveFrom,
                           F = d;
-                        if (!(typeof D == "number" && !(D % 1) && !isNaN(D)))
+                        if (!(typeof E == "number" && !(E % 1) && !isNaN(E)))
                           return (
                             (Dr.errors = [
                               {
@@ -33994,8 +33994,8 @@ var To = gp((Ia) => {
                             ]),
                             !1
                           );
-                        if (d === F && typeof D == "number") {
-                          if (D > 9007199254740991 || isNaN(D))
+                        if (d === F && typeof E == "number") {
+                          if (E > 9007199254740991 || isNaN(E))
                             return (
                               (Dr.errors = [
                                 {
@@ -34007,7 +34007,7 @@ var To = gp((Ia) => {
                               ]),
                               !1
                             );
-                          if (D < 0 || isNaN(D))
+                          if (E < 0 || isNaN(E))
                             return (
                               (Dr.errors = [
                                 {
@@ -34024,7 +34024,7 @@ var To = gp((Ia) => {
                       } else var u = !0;
                       if (u) {
                         if (t.dstGap !== void 0) {
-                          let D = d;
+                          let E = d;
                           if (t.dstGap !== "skip")
                             return (
                               (Dr.errors = [
@@ -34037,11 +34037,11 @@ var To = gp((Ia) => {
                               ]),
                               !1
                             );
-                          var u = D === d;
+                          var u = E === d;
                         } else var u = !0;
                         if (u)
                           if (t.dstFold !== void 0) {
-                            let D = d;
+                            let E = d;
                             if (t.dstFold !== "first")
                               return (
                                 (Dr.errors = [
@@ -34054,7 +34054,7 @@ var To = gp((Ia) => {
                                 ]),
                                 !1
                               );
-                            var u = D === d;
+                            var u = E === d;
                           } else var u = !0;
                       }
                     }
@@ -34103,7 +34103,7 @@ var To = gp((Ia) => {
   }
   Vi.evaluated = { props: !0, dynamicProps: !1, dynamicItems: !1 };
   Ia.CenterTaskDefinition = $i;
-  var Vo = {
+  var Ko = {
       type: "object",
       properties: {
         contractVersion: { const: "folioview.agent-workspace.v2.0" },
@@ -34244,17 +34244,17 @@ var To = gp((Ia) => {
             !1
           );
         {
-          let v = d;
-          for (let D in t)
+          let f = d;
+          for (let E in t)
             if (!(
-              D === "frequency" ||
-              D === "days" ||
-              D === "localTime" ||
-              D === "timeZone" ||
-              D === "graceMinutes" ||
-              D === "effectiveFrom" ||
-              D === "dstGap" ||
-              D === "dstFold"
+              E === "frequency" ||
+              E === "days" ||
+              E === "localTime" ||
+              E === "timeZone" ||
+              E === "graceMinutes" ||
+              E === "effectiveFrom" ||
+              E === "dstGap" ||
+              E === "dstFold"
             )) {
               return (
                 (yr.errors = [
@@ -34262,25 +34262,25 @@ var To = gp((Ia) => {
                     instancePath: i,
                     schemaPath: "#/additionalProperties",
                     keyword: "additionalProperties",
-                    params: { additionalProperty: D },
+                    params: { additionalProperty: E },
                   },
                 ]),
                 !1
               );
               break;
             }
-          if (v === d) {
+          if (f === d) {
             if (t.frequency !== void 0) {
-              let D = t.frequency,
+              let E = t.frequency,
                 F = d;
-              if (!(D === "daily" || D === "weekly"))
+              if (!(E === "daily" || E === "weekly"))
                 return (
                   (yr.errors = [
                     {
                       instancePath: i + "/frequency",
                       schemaPath: "#/properties/frequency/enum",
                       keyword: "enum",
-                      params: { allowedValues: Lo.properties.frequency.enum },
+                      params: { allowedValues: Oo.properties.frequency.enum },
                     },
                   ]),
                   !1
@@ -34289,11 +34289,11 @@ var To = gp((Ia) => {
             } else var u = !0;
             if (u) {
               if (t.days !== void 0) {
-                let D = t.days,
+                let E = t.days,
                   F = d;
                 if (d === F)
-                  if (Array.isArray(D)) {
-                    if (D.length > 7)
+                  if (Array.isArray(E)) {
+                    if (E.length > 7)
                       return (
                         (yr.errors = [
                           {
@@ -34306,10 +34306,10 @@ var To = gp((Ia) => {
                         !1
                       );
                     {
-                      var x = !0;
-                      let oe = D.length;
+                      var D = !0;
+                      let oe = E.length;
                       for (let C = 0; C < oe; C++) {
-                        let O = D[C],
+                        let O = E[C],
                           B = d;
                         if (!(typeof O == "number" && !(O % 1) && !isNaN(O)))
                           return (
@@ -34349,16 +34349,16 @@ var To = gp((Ia) => {
                               !1
                             );
                         }
-                        var x = B === d;
-                        if (!x) break;
+                        var D = B === d;
+                        if (!D) break;
                       }
-                      if (x) {
-                        let C = D.length,
+                      if (D) {
+                        let C = E.length,
                           O;
                         if (C > 1) {
                           let B = {};
                           for (; C--;) {
-                            let de = D[C];
+                            let de = E[C];
                             if (typeof de == "number" && !(de % 1) && !isNaN(de)) {
                               if (typeof B[de] == "number") {
                                 return (
@@ -34397,11 +34397,11 @@ var To = gp((Ia) => {
               } else var u = !0;
               if (u) {
                 if (t.localTime !== void 0) {
-                  let D = t.localTime,
+                  let E = t.localTime,
                     F = d;
                   if (d === F)
-                    if (typeof D == "string") {
-                      if (!qo.test(D))
+                    if (typeof E == "string") {
+                      if (!Lo.test(E))
                         return (
                           (yr.errors = [
                             {
@@ -34429,11 +34429,11 @@ var To = gp((Ia) => {
                 } else var u = !0;
                 if (u) {
                   if (t.timeZone !== void 0) {
-                    let D = t.timeZone,
+                    let E = t.timeZone,
                       F = d;
                     if (d === F)
-                      if (typeof D == "string") {
-                        if (wt(D) > 80)
+                      if (typeof E == "string") {
+                        if (wt(E) > 80)
                           return (
                             (yr.errors = [
                               {
@@ -34445,7 +34445,7 @@ var To = gp((Ia) => {
                             ]),
                             !1
                           );
-                        if (wt(D) < 1)
+                        if (wt(E) < 1)
                           return (
                             (yr.errors = [
                               {
@@ -34473,9 +34473,9 @@ var To = gp((Ia) => {
                   } else var u = !0;
                   if (u) {
                     if (t.graceMinutes !== void 0) {
-                      let D = t.graceMinutes,
+                      let E = t.graceMinutes,
                         F = d;
-                      if (!(typeof D == "number" && !(D % 1) && !isNaN(D)))
+                      if (!(typeof E == "number" && !(E % 1) && !isNaN(E)))
                         return (
                           (yr.errors = [
                             {
@@ -34487,8 +34487,8 @@ var To = gp((Ia) => {
                           ]),
                           !1
                         );
-                      if (d === F && typeof D == "number") {
-                        if (D > 1440 || isNaN(D))
+                      if (d === F && typeof E == "number") {
+                        if (E > 1440 || isNaN(E))
                           return (
                             (yr.errors = [
                               {
@@ -34500,7 +34500,7 @@ var To = gp((Ia) => {
                             ]),
                             !1
                           );
-                        if (D < 0 || isNaN(D))
+                        if (E < 0 || isNaN(E))
                           return (
                             (yr.errors = [
                               {
@@ -34517,9 +34517,9 @@ var To = gp((Ia) => {
                     } else var u = !0;
                     if (u) {
                       if (t.effectiveFrom !== void 0) {
-                        let D = t.effectiveFrom,
+                        let E = t.effectiveFrom,
                           F = d;
-                        if (!(typeof D == "number" && !(D % 1) && !isNaN(D)))
+                        if (!(typeof E == "number" && !(E % 1) && !isNaN(E)))
                           return (
                             (yr.errors = [
                               {
@@ -34531,8 +34531,8 @@ var To = gp((Ia) => {
                             ]),
                             !1
                           );
-                        if (d === F && typeof D == "number") {
-                          if (D > 9007199254740991 || isNaN(D))
+                        if (d === F && typeof E == "number") {
+                          if (E > 9007199254740991 || isNaN(E))
                             return (
                               (yr.errors = [
                                 {
@@ -34544,7 +34544,7 @@ var To = gp((Ia) => {
                               ]),
                               !1
                             );
-                          if (D < 0 || isNaN(D))
+                          if (E < 0 || isNaN(E))
                             return (
                               (yr.errors = [
                                 {
@@ -34561,7 +34561,7 @@ var To = gp((Ia) => {
                       } else var u = !0;
                       if (u) {
                         if (t.dstGap !== void 0) {
-                          let D = d;
+                          let E = d;
                           if (t.dstGap !== "skip")
                             return (
                               (yr.errors = [
@@ -34574,11 +34574,11 @@ var To = gp((Ia) => {
                               ]),
                               !1
                             );
-                          var u = D === d;
+                          var u = E === d;
                         } else var u = !0;
                         if (u)
                           if (t.dstFold !== void 0) {
-                            let D = d;
+                            let E = d;
                             if (t.dstFold !== "first")
                               return (
                                 (yr.errors = [
@@ -34591,7 +34591,7 @@ var To = gp((Ia) => {
                                 ]),
                                 !1
                               );
-                            var u = D === d;
+                            var u = E === d;
                           } else var u = !0;
                       }
                     }
@@ -34626,22 +34626,22 @@ var To = gp((Ia) => {
       b = Ir.evaluated;
     if ((b.dynamicProps && (b.props = void 0), b.dynamicItems && (b.items = void 0), d === 0))
       if (t && typeof t == "object" && !Array.isArray(t)) {
-        let D;
+        let E;
         if (
-          (t.contractVersion === void 0 && (D = "contractVersion")) ||
-          (t.profile === void 0 && (D = "profile")) ||
-          (t.ownerSubject === void 0 && (D = "ownerSubject")) ||
-          (t.vaultId === void 0 && (D = "vaultId")) ||
-          (t.taskId === void 0 && (D = "taskId")) ||
-          (t.taskVersion === void 0 && (D = "taskVersion")) ||
-          (t.executionEpoch === void 0 && (D = "executionEpoch")) ||
-          (t.ruleVersion === void 0 && (D = "ruleVersion")) ||
-          (t.lifecycleEpoch === void 0 && (D = "lifecycleEpoch")) ||
-          (t.definitionVersion === void 0 && (D = "definitionVersion")) ||
-          (t.status === void 0 && (D = "status")) ||
-          (t.schedule === void 0 && (D = "schedule")) ||
-          (t.deletedAt === void 0 && (D = "deletedAt")) ||
-          (t.purgeAfter === void 0 && (D = "purgeAfter"))
+          (t.contractVersion === void 0 && (E = "contractVersion")) ||
+          (t.profile === void 0 && (E = "profile")) ||
+          (t.ownerSubject === void 0 && (E = "ownerSubject")) ||
+          (t.vaultId === void 0 && (E = "vaultId")) ||
+          (t.taskId === void 0 && (E = "taskId")) ||
+          (t.taskVersion === void 0 && (E = "taskVersion")) ||
+          (t.executionEpoch === void 0 && (E = "executionEpoch")) ||
+          (t.ruleVersion === void 0 && (E = "ruleVersion")) ||
+          (t.lifecycleEpoch === void 0 && (E = "lifecycleEpoch")) ||
+          (t.definitionVersion === void 0 && (E = "definitionVersion")) ||
+          (t.status === void 0 && (E = "status")) ||
+          (t.schedule === void 0 && (E = "schedule")) ||
+          (t.deletedAt === void 0 && (E = "deletedAt")) ||
+          (t.purgeAfter === void 0 && (E = "purgeAfter"))
         )
           return (
             (Ir.errors = [
@@ -34649,7 +34649,7 @@ var To = gp((Ia) => {
                 instancePath: i,
                 schemaPath: "#/required",
                 keyword: "required",
-                params: { missingProperty: D },
+                params: { missingProperty: E },
               },
             ]),
             !1
@@ -34657,7 +34657,7 @@ var To = gp((Ia) => {
         {
           let F = d;
           for (let H in t)
-            if (!Ci.call(Vo.properties, H)) {
+            if (!Ci.call(Ko.properties, H)) {
               return (
                 (Ir.errors = [
                   {
@@ -34972,7 +34972,7 @@ var To = gp((Ia) => {
                                           instancePath: i + "/status",
                                           schemaPath: "#/properties/status/enum",
                                           keyword: "enum",
-                                          params: { allowedValues: Vo.properties.status.enum },
+                                          params: { allowedValues: Ko.properties.status.enum },
                                         },
                                       ]),
                                       !1
@@ -34995,8 +34995,8 @@ var To = gp((Ia) => {
                                     }) ||
                                       ((c = c === null ? yr.errors : c.concat(yr.errors)),
                                       (d = c.length));
-                                    var x = B === d;
-                                    O = O || x;
+                                    var D = B === d;
+                                    O = O || D;
                                     let de = d;
                                     if (H !== null) {
                                       let Pe = {
@@ -35007,8 +35007,8 @@ var To = gp((Ia) => {
                                       };
                                       (c === null ? (c = [Pe]) : c.push(Pe), d++);
                                     }
-                                    var x = de === d;
-                                    if (((O = O || x), O))
+                                    var D = de === d;
+                                    if (((O = O || D), O))
                                       ((d = C), c !== null && (C ? (c.length = C) : (c = null)));
                                     else {
                                       let Pe = {
@@ -35127,8 +35127,8 @@ var To = gp((Ia) => {
                                             (c === null ? (c = [Pe]) : c.push(Pe), d++);
                                           }
                                         }
-                                        var v = B === d;
-                                        O = O || v;
+                                        var f = B === d;
+                                        O = O || f;
                                         let de = d;
                                         if (H !== null) {
                                           let Pe = {
@@ -35139,8 +35139,8 @@ var To = gp((Ia) => {
                                           };
                                           (c === null ? (c = [Pe]) : c.push(Pe), d++);
                                         }
-                                        var v = de === d;
-                                        if (((O = O || v), O))
+                                        var f = de === d;
+                                        if (((O = O || f), O))
                                           ((d = C),
                                             c !== null && (C ? (c.length = C) : (c = null)));
                                         else {
@@ -35333,12 +35333,12 @@ var To = gp((Ia) => {
       b = ft.evaluated;
     if ((b.dynamicProps && (b.props = void 0), b.dynamicItems && (b.items = void 0), d === 0))
       if (t && typeof t == "object" && !Array.isArray(t)) {
-        let x;
+        let D;
         if (
-          (t.connectionId === void 0 && (x = "connectionId")) ||
-          (t.clientId === void 0 && (x = "clientId")) ||
-          (t.credentialGeneration === void 0 && (x = "credentialGeneration")) ||
-          (t.credentialFingerprint === void 0 && (x = "credentialFingerprint"))
+          (t.connectionId === void 0 && (D = "connectionId")) ||
+          (t.clientId === void 0 && (D = "clientId")) ||
+          (t.credentialGeneration === void 0 && (D = "credentialGeneration")) ||
+          (t.credentialFingerprint === void 0 && (D = "credentialFingerprint"))
         )
           return (
             (ft.errors = [
@@ -35346,19 +35346,19 @@ var To = gp((Ia) => {
                 instancePath: i,
                 schemaPath: "#/required",
                 keyword: "required",
-                params: { missingProperty: x },
+                params: { missingProperty: D },
               },
             ]),
             !1
           );
         {
           let V = d;
-          for (let v in t)
+          for (let f in t)
             if (!(
-              v === "connectionId" ||
-              v === "clientId" ||
-              v === "credentialGeneration" ||
-              v === "credentialFingerprint"
+              f === "connectionId" ||
+              f === "clientId" ||
+              f === "credentialGeneration" ||
+              f === "credentialFingerprint"
             )) {
               return (
                 (ft.errors = [
@@ -35366,7 +35366,7 @@ var To = gp((Ia) => {
                     instancePath: i,
                     schemaPath: "#/additionalProperties",
                     keyword: "additionalProperties",
-                    params: { additionalProperty: v },
+                    params: { additionalProperty: f },
                   },
                 ]),
                 !1
@@ -35375,7 +35375,7 @@ var To = gp((Ia) => {
             }
           if (V === d) {
             if (t.connectionId !== void 0) {
-              let v = d;
+              let f = d;
               Ie(t.connectionId, {
                 instancePath: i + "/connectionId",
                 parentData: t,
@@ -35383,11 +35383,11 @@ var To = gp((Ia) => {
                 rootData: l,
                 dynamicAnchors: m,
               }) || ((c = c === null ? Ie.errors : c.concat(Ie.errors)), (d = c.length));
-              var u = v === d;
+              var u = f === d;
             } else var u = !0;
             if (u) {
               if (t.clientId !== void 0) {
-                let v = d;
+                let f = d;
                 Ie(t.clientId, {
                   instancePath: i + "/clientId",
                   parentData: t,
@@ -35395,13 +35395,13 @@ var To = gp((Ia) => {
                   rootData: l,
                   dynamicAnchors: m,
                 }) || ((c = c === null ? Ie.errors : c.concat(Ie.errors)), (d = c.length));
-                var u = v === d;
+                var u = f === d;
               } else var u = !0;
               if (u) {
                 if (t.credentialGeneration !== void 0) {
-                  let v = t.credentialGeneration,
-                    D = d;
-                  if (!(typeof v == "number" && !(v % 1) && !isNaN(v)))
+                  let f = t.credentialGeneration,
+                    E = d;
+                  if (!(typeof f == "number" && !(f % 1) && !isNaN(f)))
                     return (
                       (ft.errors = [
                         {
@@ -35413,8 +35413,8 @@ var To = gp((Ia) => {
                       ]),
                       !1
                     );
-                  if (d === D && typeof v == "number") {
-                    if (v > 9007199254740991 || isNaN(v))
+                  if (d === E && typeof f == "number") {
+                    if (f > 9007199254740991 || isNaN(f))
                       return (
                         (ft.errors = [
                           {
@@ -35426,7 +35426,7 @@ var To = gp((Ia) => {
                         ]),
                         !1
                       );
-                    if (v < 1 || isNaN(v))
+                    if (f < 1 || isNaN(f))
                       return (
                         (ft.errors = [
                           {
@@ -35439,11 +35439,11 @@ var To = gp((Ia) => {
                         !1
                       );
                   }
-                  var u = D === d;
+                  var u = E === d;
                 } else var u = !0;
                 if (u)
                   if (t.credentialFingerprint !== void 0) {
-                    let v = d;
+                    let f = d;
                     Lr(t.credentialFingerprint, {
                       instancePath: i + "/credentialFingerprint",
                       parentData: t,
@@ -35451,7 +35451,7 @@ var To = gp((Ia) => {
                       rootData: l,
                       dynamicAnchors: m,
                     }) || ((c = c === null ? Lr.errors : c.concat(Lr.errors)), (d = c.length));
-                    var u = v === d;
+                    var u = f === d;
                   } else var u = !0;
               }
             }
@@ -35482,26 +35482,26 @@ var To = gp((Ia) => {
       b = gr.evaluated;
     if ((b.dynamicProps && (b.props = void 0), b.dynamicItems && (b.items = void 0), d === 0))
       if (t && typeof t == "object" && !Array.isArray(t)) {
-        let x;
+        let D;
         if (
-          (t.contractVersion === void 0 && (x = "contractVersion")) ||
-          (t.profile === void 0 && (x = "profile")) ||
-          (t.ownerSubject === void 0 && (x = "ownerSubject")) ||
-          (t.vaultId === void 0 && (x = "vaultId")) ||
-          (t.taskId === void 0 && (x = "taskId")) ||
-          (t.taskVersion === void 0 && (x = "taskVersion")) ||
-          (t.executionEpoch === void 0 && (x = "executionEpoch")) ||
-          (t.ruleVersion === void 0 && (x = "ruleVersion")) ||
-          (t.lifecycleEpoch === void 0 && (x = "lifecycleEpoch")) ||
-          (t.assignmentId === void 0 && (x = "assignmentId")) ||
-          (t.assignmentVersion === void 0 && (x = "assignmentVersion")) ||
-          (t.slotId === void 0 && (x = "slotId")) ||
-          (t.provider === void 0 && (x = "provider")) ||
-          (t.slotGeneration === void 0 && (x = "slotGeneration")) ||
-          (t.credential === void 0 && (x = "credential")) ||
-          (t.agentId === void 0 && (x = "agentId")) ||
-          (t.authorityFingerprint === void 0 && (x = "authorityFingerprint")) ||
-          (t.status === void 0 && (x = "status"))
+          (t.contractVersion === void 0 && (D = "contractVersion")) ||
+          (t.profile === void 0 && (D = "profile")) ||
+          (t.ownerSubject === void 0 && (D = "ownerSubject")) ||
+          (t.vaultId === void 0 && (D = "vaultId")) ||
+          (t.taskId === void 0 && (D = "taskId")) ||
+          (t.taskVersion === void 0 && (D = "taskVersion")) ||
+          (t.executionEpoch === void 0 && (D = "executionEpoch")) ||
+          (t.ruleVersion === void 0 && (D = "ruleVersion")) ||
+          (t.lifecycleEpoch === void 0 && (D = "lifecycleEpoch")) ||
+          (t.assignmentId === void 0 && (D = "assignmentId")) ||
+          (t.assignmentVersion === void 0 && (D = "assignmentVersion")) ||
+          (t.slotId === void 0 && (D = "slotId")) ||
+          (t.provider === void 0 && (D = "provider")) ||
+          (t.slotGeneration === void 0 && (D = "slotGeneration")) ||
+          (t.credential === void 0 && (D = "credential")) ||
+          (t.agentId === void 0 && (D = "agentId")) ||
+          (t.authorityFingerprint === void 0 && (D = "authorityFingerprint")) ||
+          (t.status === void 0 && (D = "status"))
         )
           return (
             (gr.errors = [
@@ -35509,22 +35509,22 @@ var To = gp((Ia) => {
                 instancePath: i,
                 schemaPath: "#/required",
                 keyword: "required",
-                params: { missingProperty: x },
+                params: { missingProperty: D },
               },
             ]),
             !1
           );
         {
           let V = d;
-          for (let v in t)
-            if (!Ci.call(Gn.properties, v)) {
+          for (let f in t)
+            if (!Ci.call(Gn.properties, f)) {
               return (
                 (gr.errors = [
                   {
                     instancePath: i,
                     schemaPath: "#/additionalProperties",
                     keyword: "additionalProperties",
-                    params: { additionalProperty: v },
+                    params: { additionalProperty: f },
                   },
                 ]),
                 !1
@@ -35533,7 +35533,7 @@ var To = gp((Ia) => {
             }
           if (V === d) {
             if (t.contractVersion !== void 0) {
-              let v = d;
+              let f = d;
               if (t.contractVersion !== "folioview.agent-workspace.v2.0")
                 return (
                   (gr.errors = [
@@ -35546,11 +35546,11 @@ var To = gp((Ia) => {
                   ]),
                   !1
                 );
-              var u = v === d;
+              var u = f === d;
             } else var u = !0;
             if (u) {
               if (t.profile !== void 0) {
-                let v = d;
+                let f = d;
                 if (t.profile !== "folioview.task-center.v1")
                   return (
                     (gr.errors = [
@@ -35563,11 +35563,11 @@ var To = gp((Ia) => {
                     ]),
                     !1
                   );
-                var u = v === d;
+                var u = f === d;
               } else var u = !0;
               if (u) {
                 if (t.ownerSubject !== void 0) {
-                  let v = d;
+                  let f = d;
                   Ie(t.ownerSubject, {
                     instancePath: i + "/ownerSubject",
                     parentData: t,
@@ -35575,11 +35575,11 @@ var To = gp((Ia) => {
                     rootData: l,
                     dynamicAnchors: m,
                   }) || ((c = c === null ? Ie.errors : c.concat(Ie.errors)), (d = c.length));
-                  var u = v === d;
+                  var u = f === d;
                 } else var u = !0;
                 if (u) {
                   if (t.vaultId !== void 0) {
-                    let v = d;
+                    let f = d;
                     Ie(t.vaultId, {
                       instancePath: i + "/vaultId",
                       parentData: t,
@@ -35587,11 +35587,11 @@ var To = gp((Ia) => {
                       rootData: l,
                       dynamicAnchors: m,
                     }) || ((c = c === null ? Ie.errors : c.concat(Ie.errors)), (d = c.length));
-                    var u = v === d;
+                    var u = f === d;
                   } else var u = !0;
                   if (u) {
                     if (t.taskId !== void 0) {
-                      let v = d;
+                      let f = d;
                       Ie(t.taskId, {
                         instancePath: i + "/taskId",
                         parentData: t,
@@ -35599,13 +35599,13 @@ var To = gp((Ia) => {
                         rootData: l,
                         dynamicAnchors: m,
                       }) || ((c = c === null ? Ie.errors : c.concat(Ie.errors)), (d = c.length));
-                      var u = v === d;
+                      var u = f === d;
                     } else var u = !0;
                     if (u) {
                       if (t.taskVersion !== void 0) {
-                        let v = t.taskVersion,
-                          D = d;
-                        if (!(typeof v == "number" && !(v % 1) && !isNaN(v)))
+                        let f = t.taskVersion,
+                          E = d;
+                        if (!(typeof f == "number" && !(f % 1) && !isNaN(f)))
                           return (
                             (gr.errors = [
                               {
@@ -35617,8 +35617,8 @@ var To = gp((Ia) => {
                             ]),
                             !1
                           );
-                        if (d === D && typeof v == "number") {
-                          if (v > 9007199254740991 || isNaN(v))
+                        if (d === E && typeof f == "number") {
+                          if (f > 9007199254740991 || isNaN(f))
                             return (
                               (gr.errors = [
                                 {
@@ -35630,7 +35630,7 @@ var To = gp((Ia) => {
                               ]),
                               !1
                             );
-                          if (v < 1 || isNaN(v))
+                          if (f < 1 || isNaN(f))
                             return (
                               (gr.errors = [
                                 {
@@ -35643,13 +35643,13 @@ var To = gp((Ia) => {
                               !1
                             );
                         }
-                        var u = D === d;
+                        var u = E === d;
                       } else var u = !0;
                       if (u) {
                         if (t.executionEpoch !== void 0) {
-                          let v = t.executionEpoch,
-                            D = d;
-                          if (!(typeof v == "number" && !(v % 1) && !isNaN(v)))
+                          let f = t.executionEpoch,
+                            E = d;
+                          if (!(typeof f == "number" && !(f % 1) && !isNaN(f)))
                             return (
                               (gr.errors = [
                                 {
@@ -35661,8 +35661,8 @@ var To = gp((Ia) => {
                               ]),
                               !1
                             );
-                          if (d === D && typeof v == "number") {
-                            if (v > 9007199254740991 || isNaN(v))
+                          if (d === E && typeof f == "number") {
+                            if (f > 9007199254740991 || isNaN(f))
                               return (
                                 (gr.errors = [
                                   {
@@ -35674,7 +35674,7 @@ var To = gp((Ia) => {
                                 ]),
                                 !1
                               );
-                            if (v < 1 || isNaN(v))
+                            if (f < 1 || isNaN(f))
                               return (
                                 (gr.errors = [
                                   {
@@ -35687,13 +35687,13 @@ var To = gp((Ia) => {
                                 !1
                               );
                           }
-                          var u = D === d;
+                          var u = E === d;
                         } else var u = !0;
                         if (u) {
                           if (t.ruleVersion !== void 0) {
-                            let v = t.ruleVersion,
-                              D = d;
-                            if (!(typeof v == "number" && !(v % 1) && !isNaN(v)))
+                            let f = t.ruleVersion,
+                              E = d;
+                            if (!(typeof f == "number" && !(f % 1) && !isNaN(f)))
                               return (
                                 (gr.errors = [
                                   {
@@ -35705,8 +35705,8 @@ var To = gp((Ia) => {
                                 ]),
                                 !1
                               );
-                            if (d === D && typeof v == "number") {
-                              if (v > 9007199254740991 || isNaN(v))
+                            if (d === E && typeof f == "number") {
+                              if (f > 9007199254740991 || isNaN(f))
                                 return (
                                   (gr.errors = [
                                     {
@@ -35718,7 +35718,7 @@ var To = gp((Ia) => {
                                   ]),
                                   !1
                                 );
-                              if (v < 1 || isNaN(v))
+                              if (f < 1 || isNaN(f))
                                 return (
                                   (gr.errors = [
                                     {
@@ -35731,13 +35731,13 @@ var To = gp((Ia) => {
                                   !1
                                 );
                             }
-                            var u = D === d;
+                            var u = E === d;
                           } else var u = !0;
                           if (u) {
                             if (t.lifecycleEpoch !== void 0) {
-                              let v = t.lifecycleEpoch,
-                                D = d;
-                              if (!(typeof v == "number" && !(v % 1) && !isNaN(v)))
+                              let f = t.lifecycleEpoch,
+                                E = d;
+                              if (!(typeof f == "number" && !(f % 1) && !isNaN(f)))
                                 return (
                                   (gr.errors = [
                                     {
@@ -35749,8 +35749,8 @@ var To = gp((Ia) => {
                                   ]),
                                   !1
                                 );
-                              if (d === D && typeof v == "number") {
-                                if (v > 9007199254740991 || isNaN(v))
+                              if (d === E && typeof f == "number") {
+                                if (f > 9007199254740991 || isNaN(f))
                                   return (
                                     (gr.errors = [
                                       {
@@ -35762,7 +35762,7 @@ var To = gp((Ia) => {
                                     ]),
                                     !1
                                   );
-                                if (v < 1 || isNaN(v))
+                                if (f < 1 || isNaN(f))
                                   return (
                                     (gr.errors = [
                                       {
@@ -35775,11 +35775,11 @@ var To = gp((Ia) => {
                                     !1
                                   );
                               }
-                              var u = D === d;
+                              var u = E === d;
                             } else var u = !0;
                             if (u) {
                               if (t.assignmentId !== void 0) {
-                                let v = d;
+                                let f = d;
                                 Ie(t.assignmentId, {
                                   instancePath: i + "/assignmentId",
                                   parentData: t,
@@ -35789,13 +35789,13 @@ var To = gp((Ia) => {
                                 }) ||
                                   ((c = c === null ? Ie.errors : c.concat(Ie.errors)),
                                   (d = c.length));
-                                var u = v === d;
+                                var u = f === d;
                               } else var u = !0;
                               if (u) {
                                 if (t.assignmentVersion !== void 0) {
-                                  let v = t.assignmentVersion,
-                                    D = d;
-                                  if (!(typeof v == "number" && !(v % 1) && !isNaN(v)))
+                                  let f = t.assignmentVersion,
+                                    E = d;
+                                  if (!(typeof f == "number" && !(f % 1) && !isNaN(f)))
                                     return (
                                       (gr.errors = [
                                         {
@@ -35807,8 +35807,8 @@ var To = gp((Ia) => {
                                       ]),
                                       !1
                                     );
-                                  if (d === D && typeof v == "number") {
-                                    if (v > 9007199254740991 || isNaN(v))
+                                  if (d === E && typeof f == "number") {
+                                    if (f > 9007199254740991 || isNaN(f))
                                       return (
                                         (gr.errors = [
                                           {
@@ -35820,7 +35820,7 @@ var To = gp((Ia) => {
                                         ]),
                                         !1
                                       );
-                                    if (v < 1 || isNaN(v))
+                                    if (f < 1 || isNaN(f))
                                       return (
                                         (gr.errors = [
                                           {
@@ -35833,11 +35833,11 @@ var To = gp((Ia) => {
                                         !1
                                       );
                                   }
-                                  var u = D === d;
+                                  var u = E === d;
                                 } else var u = !0;
                                 if (u) {
                                   if (t.slotId !== void 0) {
-                                    let v = d;
+                                    let f = d;
                                     Ie(t.slotId, {
                                       instancePath: i + "/slotId",
                                       parentData: t,
@@ -35847,13 +35847,13 @@ var To = gp((Ia) => {
                                     }) ||
                                       ((c = c === null ? Ie.errors : c.concat(Ie.errors)),
                                       (d = c.length));
-                                    var u = v === d;
+                                    var u = f === d;
                                   } else var u = !0;
                                   if (u) {
                                     if (t.provider !== void 0) {
-                                      let v = t.provider,
-                                        D = d;
-                                      if (!(v === "muse" || v === "chatgpt"))
+                                      let f = t.provider,
+                                        E = d;
+                                      if (!(f === "muse" || f === "chatgpt"))
                                         return (
                                           (gr.errors = [
                                             {
@@ -35867,13 +35867,13 @@ var To = gp((Ia) => {
                                           ]),
                                           !1
                                         );
-                                      var u = D === d;
+                                      var u = E === d;
                                     } else var u = !0;
                                     if (u) {
                                       if (t.slotGeneration !== void 0) {
-                                        let v = t.slotGeneration,
-                                          D = d;
-                                        if (!(typeof v == "number" && !(v % 1) && !isNaN(v)))
+                                        let f = t.slotGeneration,
+                                          E = d;
+                                        if (!(typeof f == "number" && !(f % 1) && !isNaN(f)))
                                           return (
                                             (gr.errors = [
                                               {
@@ -35885,8 +35885,8 @@ var To = gp((Ia) => {
                                             ]),
                                             !1
                                           );
-                                        if (d === D && typeof v == "number") {
-                                          if (v > 9007199254740991 || isNaN(v))
+                                        if (d === E && typeof f == "number") {
+                                          if (f > 9007199254740991 || isNaN(f))
                                             return (
                                               (gr.errors = [
                                                 {
@@ -35901,7 +35901,7 @@ var To = gp((Ia) => {
                                               ]),
                                               !1
                                             );
-                                          if (v < 1 || isNaN(v))
+                                          if (f < 1 || isNaN(f))
                                             return (
                                               (gr.errors = [
                                                 {
@@ -35914,11 +35914,11 @@ var To = gp((Ia) => {
                                               !1
                                             );
                                         }
-                                        var u = D === d;
+                                        var u = E === d;
                                       } else var u = !0;
                                       if (u) {
                                         if (t.credential !== void 0) {
-                                          let v = d;
+                                          let f = d;
                                           ft(t.credential, {
                                             instancePath: i + "/credential",
                                             parentData: t,
@@ -35928,11 +35928,11 @@ var To = gp((Ia) => {
                                           }) ||
                                             ((c = c === null ? ft.errors : c.concat(ft.errors)),
                                             (d = c.length));
-                                          var u = v === d;
+                                          var u = f === d;
                                         } else var u = !0;
                                         if (u) {
                                           if (t.agentId !== void 0) {
-                                            let v = d;
+                                            let f = d;
                                             Ie(t.agentId, {
                                               instancePath: i + "/agentId",
                                               parentData: t,
@@ -35942,11 +35942,11 @@ var To = gp((Ia) => {
                                             }) ||
                                               ((c = c === null ? Ie.errors : c.concat(Ie.errors)),
                                               (d = c.length));
-                                            var u = v === d;
+                                            var u = f === d;
                                           } else var u = !0;
                                           if (u) {
                                             if (t.authorityFingerprint !== void 0) {
-                                              let v = d;
+                                              let f = d;
                                               Lr(t.authorityFingerprint, {
                                                 instancePath: i + "/authorityFingerprint",
                                                 parentData: t,
@@ -35956,13 +35956,13 @@ var To = gp((Ia) => {
                                               }) ||
                                                 ((c = c === null ? Lr.errors : c.concat(Lr.errors)),
                                                 (d = c.length));
-                                              var u = v === d;
+                                              var u = f === d;
                                             } else var u = !0;
                                             if (u)
                                               if (t.status !== void 0) {
-                                                let v = t.status,
-                                                  D = d;
-                                                if (!(v === "active" || v === "removed"))
+                                                let f = t.status,
+                                                  E = d;
+                                                if (!(f === "active" || f === "removed"))
                                                   return (
                                                     (gr.errors = [
                                                       {
@@ -35976,7 +35976,7 @@ var To = gp((Ia) => {
                                                     ]),
                                                     !1
                                                   );
-                                                var u = D === d;
+                                                var u = E === d;
                                               } else var u = !0;
                                           }
                                         }
@@ -36035,7 +36035,7 @@ var To = gp((Ia) => {
   }
   Oi.evaluated = { props: !0, dynamicProps: !1, dynamicItems: !1 };
   Ia.CenterOwnerControl = Li;
-  var $o = {
+  var Vo = {
       type: "object",
       properties: {
         contractVersion: { const: "folioview.agent-workspace.v2.0" },
@@ -36099,7 +36099,7 @@ var To = gp((Ia) => {
       ],
       additionalProperties: !1,
     },
-    Co = new RegExp("^[A-Za-z0-9_-]{43}$", "u");
+    qo = new RegExp("^[A-Za-z0-9_-]{43}$", "u");
   function Ur(
     t,
     {
@@ -36139,7 +36139,7 @@ var To = gp((Ia) => {
             ]),
             !1
           );
-        if (!Co.test(t))
+        if (!qo.test(t))
           return (
             (Ur.errors = [
               {
@@ -36258,14 +36258,14 @@ var To = gp((Ia) => {
       b = At.evaluated;
     if ((b.dynamicProps && (b.props = void 0), b.dynamicItems && (b.items = void 0), d === 0))
       if (t && typeof t == "object" && !Array.isArray(t)) {
-        let x;
+        let D;
         if (
-          (t.slotId === void 0 && (x = "slotId")) ||
-          (t.provider === void 0 && (x = "provider")) ||
-          (t.slotGeneration === void 0 && (x = "slotGeneration")) ||
-          (t.credential === void 0 && (x = "credential")) ||
-          (t.agentId === void 0 && (x = "agentId")) ||
-          (t.authorityFingerprint === void 0 && (x = "authorityFingerprint"))
+          (t.slotId === void 0 && (D = "slotId")) ||
+          (t.provider === void 0 && (D = "provider")) ||
+          (t.slotGeneration === void 0 && (D = "slotGeneration")) ||
+          (t.credential === void 0 && (D = "credential")) ||
+          (t.agentId === void 0 && (D = "agentId")) ||
+          (t.authorityFingerprint === void 0 && (D = "authorityFingerprint"))
         )
           return (
             (At.errors = [
@@ -36273,21 +36273,21 @@ var To = gp((Ia) => {
                 instancePath: i,
                 schemaPath: "#/required",
                 keyword: "required",
-                params: { missingProperty: x },
+                params: { missingProperty: D },
               },
             ]),
             !1
           );
         {
           let V = d;
-          for (let v in t)
+          for (let f in t)
             if (!(
-              v === "slotId" ||
-              v === "provider" ||
-              v === "slotGeneration" ||
-              v === "credential" ||
-              v === "agentId" ||
-              v === "authorityFingerprint"
+              f === "slotId" ||
+              f === "provider" ||
+              f === "slotGeneration" ||
+              f === "credential" ||
+              f === "agentId" ||
+              f === "authorityFingerprint"
             )) {
               return (
                 (At.errors = [
@@ -36295,7 +36295,7 @@ var To = gp((Ia) => {
                     instancePath: i,
                     schemaPath: "#/additionalProperties",
                     keyword: "additionalProperties",
-                    params: { additionalProperty: v },
+                    params: { additionalProperty: f },
                   },
                 ]),
                 !1
@@ -36304,7 +36304,7 @@ var To = gp((Ia) => {
             }
           if (V === d) {
             if (t.slotId !== void 0) {
-              let v = d;
+              let f = d;
               Ie(t.slotId, {
                 instancePath: i + "/slotId",
                 parentData: t,
@@ -36312,13 +36312,13 @@ var To = gp((Ia) => {
                 rootData: l,
                 dynamicAnchors: m,
               }) || ((c = c === null ? Ie.errors : c.concat(Ie.errors)), (d = c.length));
-              var u = v === d;
+              var u = f === d;
             } else var u = !0;
             if (u) {
               if (t.provider !== void 0) {
-                let v = t.provider,
-                  D = d;
-                if (!(v === "muse" || v === "chatgpt"))
+                let f = t.provider,
+                  E = d;
+                if (!(f === "muse" || f === "chatgpt"))
                   return (
                     (At.errors = [
                       {
@@ -36330,13 +36330,13 @@ var To = gp((Ia) => {
                     ]),
                     !1
                   );
-                var u = D === d;
+                var u = E === d;
               } else var u = !0;
               if (u) {
                 if (t.slotGeneration !== void 0) {
-                  let v = t.slotGeneration,
-                    D = d;
-                  if (!(typeof v == "number" && !(v % 1) && !isNaN(v)))
+                  let f = t.slotGeneration,
+                    E = d;
+                  if (!(typeof f == "number" && !(f % 1) && !isNaN(f)))
                     return (
                       (At.errors = [
                         {
@@ -36348,8 +36348,8 @@ var To = gp((Ia) => {
                       ]),
                       !1
                     );
-                  if (d === D && typeof v == "number") {
-                    if (v > 9007199254740991 || isNaN(v))
+                  if (d === E && typeof f == "number") {
+                    if (f > 9007199254740991 || isNaN(f))
                       return (
                         (At.errors = [
                           {
@@ -36361,7 +36361,7 @@ var To = gp((Ia) => {
                         ]),
                         !1
                       );
-                    if (v < 1 || isNaN(v))
+                    if (f < 1 || isNaN(f))
                       return (
                         (At.errors = [
                           {
@@ -36374,11 +36374,11 @@ var To = gp((Ia) => {
                         !1
                       );
                   }
-                  var u = D === d;
+                  var u = E === d;
                 } else var u = !0;
                 if (u) {
                   if (t.credential !== void 0) {
-                    let v = d;
+                    let f = d;
                     ft(t.credential, {
                       instancePath: i + "/credential",
                       parentData: t,
@@ -36386,11 +36386,11 @@ var To = gp((Ia) => {
                       rootData: l,
                       dynamicAnchors: m,
                     }) || ((c = c === null ? ft.errors : c.concat(ft.errors)), (d = c.length));
-                    var u = v === d;
+                    var u = f === d;
                   } else var u = !0;
                   if (u) {
                     if (t.agentId !== void 0) {
-                      let v = d;
+                      let f = d;
                       Ie(t.agentId, {
                         instancePath: i + "/agentId",
                         parentData: t,
@@ -36398,11 +36398,11 @@ var To = gp((Ia) => {
                         rootData: l,
                         dynamicAnchors: m,
                       }) || ((c = c === null ? Ie.errors : c.concat(Ie.errors)), (d = c.length));
-                      var u = v === d;
+                      var u = f === d;
                     } else var u = !0;
                     if (u)
                       if (t.authorityFingerprint !== void 0) {
-                        let v = d;
+                        let f = d;
                         Lr(t.authorityFingerprint, {
                           instancePath: i + "/authorityFingerprint",
                           parentData: t,
@@ -36410,7 +36410,7 @@ var To = gp((Ia) => {
                           rootData: l,
                           dynamicAnchors: m,
                         }) || ((c = c === null ? Lr.errors : c.concat(Lr.errors)), (d = c.length));
-                        var u = v === d;
+                        var u = f === d;
                       } else var u = !0;
                   }
                 }
@@ -36444,10 +36444,10 @@ var To = gp((Ia) => {
       b = Zr.evaluated;
     if ((b.dynamicProps && (b.props = void 0), b.dynamicItems && (b.items = void 0), d === 0))
       if (t && typeof t == "object" && !Array.isArray(t)) {
-        let v;
+        let f;
         if (
-          (t.expiresAt === void 0 && (v = "expiresAt")) ||
-          (t.assignments === void 0 && (v = "assignments"))
+          (t.expiresAt === void 0 && (f = "expiresAt")) ||
+          (t.assignments === void 0 && (f = "assignments"))
         )
           return (
             (Zr.errors = [
@@ -36455,13 +36455,13 @@ var To = gp((Ia) => {
                 instancePath: i,
                 schemaPath: "#/required",
                 keyword: "required",
-                params: { missingProperty: v },
+                params: { missingProperty: f },
               },
             ]),
             !1
           );
         {
-          let D = d;
+          let E = d;
           for (let F in t)
             if (!(F === "expiresAt" || F === "assignments")) {
               return (
@@ -36477,7 +36477,7 @@ var To = gp((Ia) => {
               );
               break;
             }
-          if (D === d) {
+          if (E === d) {
             if (t.expiresAt !== void 0) {
               let F = t.expiresAt,
                 H = d;
@@ -36552,7 +36552,7 @@ var To = gp((Ia) => {
                         !1
                       );
                     {
-                      var x = !0;
+                      var D = !0;
                       let C = F.length;
                       for (let O = 0; O < C; O++) {
                         let B = F[O],
@@ -36671,10 +36671,10 @@ var To = gp((Ia) => {
                               ]),
                               !1
                             );
-                        var x = de === d;
-                        if (!x) break;
+                        var D = de === d;
+                        if (!D) break;
                       }
-                      if (x) {
+                      if (D) {
                         let O = F.length,
                           B;
                         if (O > 1) {
@@ -36777,7 +36777,7 @@ var To = gp((Ia) => {
         {
           let oe = d;
           for (let C in t)
-            if (!Ci.call($o.properties, C)) {
+            if (!Ci.call(Vo.properties, C)) {
               return (
                 (rr.errors = [
                   {
@@ -36897,7 +36897,7 @@ var To = gp((Ia) => {
                                   instancePath: i + "/action",
                                   schemaPath: "#/properties/action/enum",
                                   keyword: "enum",
-                                  params: { allowedValues: $o.properties.action.enum },
+                                  params: { allowedValues: Vo.properties.action.enum },
                                 },
                               ]),
                               !1
@@ -37185,8 +37185,8 @@ var To = gp((Ia) => {
                                                 (c === null ? (c = [fe]) : c.push(fe), d++);
                                               }
                                             }
-                                            var x = ce === d;
-                                            de = de || x;
+                                            var D = ce === d;
+                                            de = de || D;
                                             let Pe = d;
                                             if (C !== null) {
                                               let fe = {
@@ -37198,8 +37198,8 @@ var To = gp((Ia) => {
                                               };
                                               (c === null ? (c = [fe]) : c.push(fe), d++);
                                             }
-                                            var x = Pe === d;
-                                            if (((de = de || x), de))
+                                            var D = Pe === d;
+                                            if (((de = de || D), de))
                                               ((d = B),
                                                 c !== null && (B ? (c.length = B) : (c = null)));
                                             else {
@@ -37285,8 +37285,8 @@ var To = gp((Ia) => {
                                                   ((c =
                                                     c === null ? yr.errors : c.concat(yr.errors)),
                                                   (d = c.length));
-                                                var v = ce === d;
-                                                de = de || v;
+                                                var f = ce === d;
+                                                de = de || f;
                                                 let Pe = d;
                                                 if (C !== null) {
                                                   let fe = {
@@ -37298,8 +37298,8 @@ var To = gp((Ia) => {
                                                   };
                                                   (c === null ? (c = [fe]) : c.push(fe), d++);
                                                 }
-                                                var v = Pe === d;
-                                                if (((de = de || v), de))
+                                                var f = Pe === d;
+                                                if (((de = de || f), de))
                                                   ((d = B),
                                                     c !== null &&
                                                       (B ? (c.length = B) : (c = null)));
@@ -37336,8 +37336,8 @@ var To = gp((Ia) => {
                                                     ((c =
                                                       c === null ? At.errors : c.concat(At.errors)),
                                                     (d = c.length));
-                                                  var D = ce === d;
-                                                  de = de || D;
+                                                  var E = ce === d;
+                                                  de = de || E;
                                                   let Pe = d;
                                                   if (C !== null) {
                                                     let fe = {
@@ -37349,8 +37349,8 @@ var To = gp((Ia) => {
                                                     };
                                                     (c === null ? (c = [fe]) : c.push(fe), d++);
                                                   }
-                                                  var D = Pe === d;
-                                                  if (((de = de || D), de))
+                                                  var E = Pe === d;
+                                                  if (((de = de || E), de))
                                                     ((d = B),
                                                       c !== null &&
                                                         (B ? (c.length = B) : (c = null)));
@@ -37600,7 +37600,7 @@ var To = gp((Ia) => {
   }
   Li.evaluated = { props: !0, dynamicProps: !1, dynamicItems: !1 };
   Ia.CenterAgentRequestPayload = qi;
-  var Oo = {
+  var $o = {
       type: "object",
       properties: {
         contractVersion: { const: "folioview.agent-workspace.v2.0" },
@@ -37676,30 +37676,30 @@ var To = gp((Ia) => {
       b = Pr.evaluated;
     if ((b.dynamicProps && (b.props = void 0), b.dynamicItems && (b.items = void 0), d === 0))
       if (t && typeof t == "object" && !Array.isArray(t)) {
-        let x;
+        let D;
         if (
-          (t.contractVersion === void 0 && (x = "contractVersion")) ||
-          (t.profile === void 0 && (x = "profile")) ||
-          (t.artifactType === void 0 && (x = "artifactType")) ||
-          (t.purpose === void 0 && (x = "purpose")) ||
-          (t.ownerSubject === void 0 && (x = "ownerSubject")) ||
-          (t.vaultId === void 0 && (x = "vaultId")) ||
-          (t.connectionId === void 0 && (x = "connectionId")) ||
-          (t.agentId === void 0 && (x = "agentId")) ||
-          (t.clientId === void 0 && (x = "clientId")) ||
-          (t.rootKeyId === void 0 && (x = "rootKeyId")) ||
-          (t.agentSigningKeyId === void 0 && (x = "agentSigningKeyId")) ||
-          (t.agentEncryptionKeyId === void 0 && (x = "agentEncryptionKeyId")) ||
-          (t.identityEpoch === void 0 && (x = "identityEpoch")) ||
-          (t.bindingFingerprint === void 0 && (x = "bindingFingerprint")) ||
-          (t.audience === void 0 && (x = "audience")) ||
-          (t.method === void 0 && (x = "method")) ||
-          (t.path === void 0 && (x = "path")) ||
-          (t.bodyDigest === void 0 && (x = "bodyDigest")) ||
-          (t.requestId === void 0 && (x = "requestId")) ||
-          (t.nonce === void 0 && (x = "nonce")) ||
-          (t.issuedAt === void 0 && (x = "issuedAt")) ||
-          (t.expiresAt === void 0 && (x = "expiresAt"))
+          (t.contractVersion === void 0 && (D = "contractVersion")) ||
+          (t.profile === void 0 && (D = "profile")) ||
+          (t.artifactType === void 0 && (D = "artifactType")) ||
+          (t.purpose === void 0 && (D = "purpose")) ||
+          (t.ownerSubject === void 0 && (D = "ownerSubject")) ||
+          (t.vaultId === void 0 && (D = "vaultId")) ||
+          (t.connectionId === void 0 && (D = "connectionId")) ||
+          (t.agentId === void 0 && (D = "agentId")) ||
+          (t.clientId === void 0 && (D = "clientId")) ||
+          (t.rootKeyId === void 0 && (D = "rootKeyId")) ||
+          (t.agentSigningKeyId === void 0 && (D = "agentSigningKeyId")) ||
+          (t.agentEncryptionKeyId === void 0 && (D = "agentEncryptionKeyId")) ||
+          (t.identityEpoch === void 0 && (D = "identityEpoch")) ||
+          (t.bindingFingerprint === void 0 && (D = "bindingFingerprint")) ||
+          (t.audience === void 0 && (D = "audience")) ||
+          (t.method === void 0 && (D = "method")) ||
+          (t.path === void 0 && (D = "path")) ||
+          (t.bodyDigest === void 0 && (D = "bodyDigest")) ||
+          (t.requestId === void 0 && (D = "requestId")) ||
+          (t.nonce === void 0 && (D = "nonce")) ||
+          (t.issuedAt === void 0 && (D = "issuedAt")) ||
+          (t.expiresAt === void 0 && (D = "expiresAt"))
         )
           return (
             (Pr.errors = [
@@ -37707,22 +37707,22 @@ var To = gp((Ia) => {
                 instancePath: i,
                 schemaPath: "#/required",
                 keyword: "required",
-                params: { missingProperty: x },
+                params: { missingProperty: D },
               },
             ]),
             !1
           );
         {
           let V = d;
-          for (let v in t)
-            if (!Ci.call(Oo.properties, v)) {
+          for (let f in t)
+            if (!Ci.call($o.properties, f)) {
               return (
                 (Pr.errors = [
                   {
                     instancePath: i,
                     schemaPath: "#/additionalProperties",
                     keyword: "additionalProperties",
-                    params: { additionalProperty: v },
+                    params: { additionalProperty: f },
                   },
                 ]),
                 !1
@@ -37731,7 +37731,7 @@ var To = gp((Ia) => {
             }
           if (V === d) {
             if (t.contractVersion !== void 0) {
-              let v = d;
+              let f = d;
               if (t.contractVersion !== "folioview.agent-workspace.v2.0")
                 return (
                   (Pr.errors = [
@@ -37744,11 +37744,11 @@ var To = gp((Ia) => {
                   ]),
                   !1
                 );
-              var u = v === d;
+              var u = f === d;
             } else var u = !0;
             if (u) {
               if (t.profile !== void 0) {
-                let v = d;
+                let f = d;
                 if (t.profile !== "folioview.task-center.v1")
                   return (
                     (Pr.errors = [
@@ -37761,11 +37761,11 @@ var To = gp((Ia) => {
                     ]),
                     !1
                   );
-                var u = v === d;
+                var u = f === d;
               } else var u = !0;
               if (u) {
                 if (t.artifactType !== void 0) {
-                  let v = d;
+                  let f = d;
                   if (t.artifactType !== "task_center_agent_request")
                     return (
                       (Pr.errors = [
@@ -37778,11 +37778,11 @@ var To = gp((Ia) => {
                       ]),
                       !1
                     );
-                  var u = v === d;
+                  var u = f === d;
                 } else var u = !0;
                 if (u) {
                   if (t.purpose !== void 0) {
-                    let v = d;
+                    let f = d;
                     if (t.purpose !== "authenticated_request")
                       return (
                         (Pr.errors = [
@@ -37795,11 +37795,11 @@ var To = gp((Ia) => {
                         ]),
                         !1
                       );
-                    var u = v === d;
+                    var u = f === d;
                   } else var u = !0;
                   if (u) {
                     if (t.ownerSubject !== void 0) {
-                      let v = d;
+                      let f = d;
                       Ie(t.ownerSubject, {
                         instancePath: i + "/ownerSubject",
                         parentData: t,
@@ -37807,11 +37807,11 @@ var To = gp((Ia) => {
                         rootData: l,
                         dynamicAnchors: m,
                       }) || ((c = c === null ? Ie.errors : c.concat(Ie.errors)), (d = c.length));
-                      var u = v === d;
+                      var u = f === d;
                     } else var u = !0;
                     if (u) {
                       if (t.vaultId !== void 0) {
-                        let v = d;
+                        let f = d;
                         Ie(t.vaultId, {
                           instancePath: i + "/vaultId",
                           parentData: t,
@@ -37819,11 +37819,11 @@ var To = gp((Ia) => {
                           rootData: l,
                           dynamicAnchors: m,
                         }) || ((c = c === null ? Ie.errors : c.concat(Ie.errors)), (d = c.length));
-                        var u = v === d;
+                        var u = f === d;
                       } else var u = !0;
                       if (u) {
                         if (t.connectionId !== void 0) {
-                          let v = d;
+                          let f = d;
                           Ie(t.connectionId, {
                             instancePath: i + "/connectionId",
                             parentData: t,
@@ -37832,11 +37832,11 @@ var To = gp((Ia) => {
                             dynamicAnchors: m,
                           }) ||
                             ((c = c === null ? Ie.errors : c.concat(Ie.errors)), (d = c.length));
-                          var u = v === d;
+                          var u = f === d;
                         } else var u = !0;
                         if (u) {
                           if (t.agentId !== void 0) {
-                            let v = d;
+                            let f = d;
                             Ie(t.agentId, {
                               instancePath: i + "/agentId",
                               parentData: t,
@@ -37845,11 +37845,11 @@ var To = gp((Ia) => {
                               dynamicAnchors: m,
                             }) ||
                               ((c = c === null ? Ie.errors : c.concat(Ie.errors)), (d = c.length));
-                            var u = v === d;
+                            var u = f === d;
                           } else var u = !0;
                           if (u) {
                             if (t.clientId !== void 0) {
-                              let v = d;
+                              let f = d;
                               Ie(t.clientId, {
                                 instancePath: i + "/clientId",
                                 parentData: t,
@@ -37859,11 +37859,11 @@ var To = gp((Ia) => {
                               }) ||
                                 ((c = c === null ? Ie.errors : c.concat(Ie.errors)),
                                 (d = c.length));
-                              var u = v === d;
+                              var u = f === d;
                             } else var u = !0;
                             if (u) {
                               if (t.rootKeyId !== void 0) {
-                                let v = d;
+                                let f = d;
                                 Ur(t.rootKeyId, {
                                   instancePath: i + "/rootKeyId",
                                   parentData: t,
@@ -37873,11 +37873,11 @@ var To = gp((Ia) => {
                                 }) ||
                                   ((c = c === null ? Ur.errors : c.concat(Ur.errors)),
                                   (d = c.length));
-                                var u = v === d;
+                                var u = f === d;
                               } else var u = !0;
                               if (u) {
                                 if (t.agentSigningKeyId !== void 0) {
-                                  let v = d;
+                                  let f = d;
                                   Ur(t.agentSigningKeyId, {
                                     instancePath: i + "/agentSigningKeyId",
                                     parentData: t,
@@ -37887,11 +37887,11 @@ var To = gp((Ia) => {
                                   }) ||
                                     ((c = c === null ? Ur.errors : c.concat(Ur.errors)),
                                     (d = c.length));
-                                  var u = v === d;
+                                  var u = f === d;
                                 } else var u = !0;
                                 if (u) {
                                   if (t.agentEncryptionKeyId !== void 0) {
-                                    let v = d;
+                                    let f = d;
                                     Ur(t.agentEncryptionKeyId, {
                                       instancePath: i + "/agentEncryptionKeyId",
                                       parentData: t,
@@ -37901,13 +37901,13 @@ var To = gp((Ia) => {
                                     }) ||
                                       ((c = c === null ? Ur.errors : c.concat(Ur.errors)),
                                       (d = c.length));
-                                    var u = v === d;
+                                    var u = f === d;
                                   } else var u = !0;
                                   if (u) {
                                     if (t.identityEpoch !== void 0) {
-                                      let v = t.identityEpoch,
-                                        D = d;
-                                      if (!(typeof v == "number" && !(v % 1) && !isNaN(v)))
+                                      let f = t.identityEpoch,
+                                        E = d;
+                                      if (!(typeof f == "number" && !(f % 1) && !isNaN(f)))
                                         return (
                                           (Pr.errors = [
                                             {
@@ -37919,8 +37919,8 @@ var To = gp((Ia) => {
                                           ]),
                                           !1
                                         );
-                                      if (d === D && typeof v == "number") {
-                                        if (v > 9007199254740991 || isNaN(v))
+                                      if (d === E && typeof f == "number") {
+                                        if (f > 9007199254740991 || isNaN(f))
                                           return (
                                             (Pr.errors = [
                                               {
@@ -37935,7 +37935,7 @@ var To = gp((Ia) => {
                                             ]),
                                             !1
                                           );
-                                        if (v < 1 || isNaN(v))
+                                        if (f < 1 || isNaN(f))
                                           return (
                                             (Pr.errors = [
                                               {
@@ -37948,11 +37948,11 @@ var To = gp((Ia) => {
                                             !1
                                           );
                                       }
-                                      var u = D === d;
+                                      var u = E === d;
                                     } else var u = !0;
                                     if (u) {
                                       if (t.bindingFingerprint !== void 0) {
-                                        let v = d;
+                                        let f = d;
                                         Lr(t.bindingFingerprint, {
                                           instancePath: i + "/bindingFingerprint",
                                           parentData: t,
@@ -37962,15 +37962,15 @@ var To = gp((Ia) => {
                                         }) ||
                                           ((c = c === null ? Lr.errors : c.concat(Lr.errors)),
                                           (d = c.length));
-                                        var u = v === d;
+                                        var u = f === d;
                                       } else var u = !0;
                                       if (u) {
                                         if (t.audience !== void 0) {
-                                          let v = t.audience,
-                                            D = d;
-                                          if (d === D && d === D)
-                                            if (typeof v == "string") {
-                                              if (wt(v) > 2048)
+                                          let f = t.audience,
+                                            E = d;
+                                          if (d === E && d === E)
+                                            if (typeof f == "string") {
+                                              if (wt(f) > 2048)
                                                 return (
                                                   (Pr.errors = [
                                                     {
@@ -37982,7 +37982,7 @@ var To = gp((Ia) => {
                                                   ]),
                                                   !1
                                                 );
-                                              if (!Vd.test(v))
+                                              if (!Vd.test(f))
                                                 return (
                                                   (Pr.errors = [
                                                     {
@@ -38006,13 +38006,13 @@ var To = gp((Ia) => {
                                                 ]),
                                                 !1
                                               );
-                                          var u = D === d;
+                                          var u = E === d;
                                         } else var u = !0;
                                         if (u) {
                                           if (t.method !== void 0) {
-                                            let v = t.method,
-                                              D = d;
-                                            if (!(v === "GET" || v === "POST"))
+                                            let f = t.method,
+                                              E = d;
+                                            if (!(f === "GET" || f === "POST"))
                                               return (
                                                 (Pr.errors = [
                                                   {
@@ -38020,21 +38020,21 @@ var To = gp((Ia) => {
                                                     schemaPath: "#/properties/method/enum",
                                                     keyword: "enum",
                                                     params: {
-                                                      allowedValues: Oo.properties.method.enum,
+                                                      allowedValues: $o.properties.method.enum,
                                                     },
                                                   },
                                                 ]),
                                                 !1
                                               );
-                                            var u = D === d;
+                                            var u = E === d;
                                           } else var u = !0;
                                           if (u) {
                                             if (t.path !== void 0) {
-                                              let v = t.path,
-                                                D = d;
-                                              if (d === D)
-                                                if (typeof v == "string") {
-                                                  if (!$d.test(v))
+                                              let f = t.path,
+                                                E = d;
+                                              if (d === E)
+                                                if (typeof f == "string") {
+                                                  if (!$d.test(f))
                                                     return (
                                                       (Pr.errors = [
                                                         {
@@ -38061,11 +38061,11 @@ var To = gp((Ia) => {
                                                     ]),
                                                     !1
                                                   );
-                                              var u = D === d;
+                                              var u = E === d;
                                             } else var u = !0;
                                             if (u) {
                                               if (t.bodyDigest !== void 0) {
-                                                let v = d;
+                                                let f = d;
                                                 Lr(t.bodyDigest, {
                                                   instancePath: i + "/bodyDigest",
                                                   parentData: t,
@@ -38076,11 +38076,11 @@ var To = gp((Ia) => {
                                                   ((c =
                                                     c === null ? Lr.errors : c.concat(Lr.errors)),
                                                   (d = c.length));
-                                                var u = v === d;
+                                                var u = f === d;
                                               } else var u = !0;
                                               if (u) {
                                                 if (t.requestId !== void 0) {
-                                                  let v = d;
+                                                  let f = d;
                                                   Dt(t.requestId, {
                                                     instancePath: i + "/requestId",
                                                     parentData: t,
@@ -38091,15 +38091,15 @@ var To = gp((Ia) => {
                                                     ((c =
                                                       c === null ? Dt.errors : c.concat(Dt.errors)),
                                                     (d = c.length));
-                                                  var u = v === d;
+                                                  var u = f === d;
                                                 } else var u = !0;
                                                 if (u) {
                                                   if (t.nonce !== void 0) {
-                                                    let v = t.nonce,
-                                                      D = d;
-                                                    if (d === D)
-                                                      if (typeof v == "string") {
-                                                        if (wt(v) > 43)
+                                                    let f = t.nonce,
+                                                      E = d;
+                                                    if (d === E)
+                                                      if (typeof f == "string") {
+                                                        if (wt(f) > 43)
                                                           return (
                                                             (Pr.errors = [
                                                               {
@@ -38112,7 +38112,7 @@ var To = gp((Ia) => {
                                                             ]),
                                                             !1
                                                           );
-                                                        if (!Co.test(v))
+                                                        if (!qo.test(f))
                                                           return (
                                                             (Pr.errors = [
                                                               {
@@ -38139,16 +38139,16 @@ var To = gp((Ia) => {
                                                           ]),
                                                           !1
                                                         );
-                                                    var u = D === d;
+                                                    var u = E === d;
                                                   } else var u = !0;
                                                   if (u) {
                                                     if (t.issuedAt !== void 0) {
-                                                      let v = t.issuedAt,
-                                                        D = d;
+                                                      let f = t.issuedAt,
+                                                        E = d;
                                                       if (!(
-                                                        typeof v == "number" &&
-                                                        !(v % 1) &&
-                                                        !isNaN(v)
+                                                        typeof f == "number" &&
+                                                        !(f % 1) &&
+                                                        !isNaN(f)
                                                       ))
                                                         return (
                                                           (Pr.errors = [
@@ -38162,8 +38162,8 @@ var To = gp((Ia) => {
                                                           ]),
                                                           !1
                                                         );
-                                                      if (d === D && typeof v == "number") {
-                                                        if (v > 9007199254740991 || isNaN(v))
+                                                      if (d === E && typeof f == "number") {
+                                                        if (f > 9007199254740991 || isNaN(f))
                                                           return (
                                                             (Pr.errors = [
                                                               {
@@ -38179,7 +38179,7 @@ var To = gp((Ia) => {
                                                             ]),
                                                             !1
                                                           );
-                                                        if (v < 0 || isNaN(v))
+                                                        if (f < 0 || isNaN(f))
                                                           return (
                                                             (Pr.errors = [
                                                               {
@@ -38196,16 +38196,16 @@ var To = gp((Ia) => {
                                                             !1
                                                           );
                                                       }
-                                                      var u = D === d;
+                                                      var u = E === d;
                                                     } else var u = !0;
                                                     if (u)
                                                       if (t.expiresAt !== void 0) {
-                                                        let v = t.expiresAt,
-                                                          D = d;
+                                                        let f = t.expiresAt,
+                                                          E = d;
                                                         if (!(
-                                                          typeof v == "number" &&
-                                                          !(v % 1) &&
-                                                          !isNaN(v)
+                                                          typeof f == "number" &&
+                                                          !(f % 1) &&
+                                                          !isNaN(f)
                                                         ))
                                                           return (
                                                             (Pr.errors = [
@@ -38219,8 +38219,8 @@ var To = gp((Ia) => {
                                                             ]),
                                                             !1
                                                           );
-                                                        if (d === D && typeof v == "number") {
-                                                          if (v > 9007199254740991 || isNaN(v))
+                                                        if (d === E && typeof f == "number") {
+                                                          if (f > 9007199254740991 || isNaN(f))
                                                             return (
                                                               (Pr.errors = [
                                                                 {
@@ -38236,7 +38236,7 @@ var To = gp((Ia) => {
                                                               ]),
                                                               !1
                                                             );
-                                                          if (v < 1 || isNaN(v))
+                                                          if (f < 1 || isNaN(f))
                                                             return (
                                                               (Pr.errors = [
                                                                 {
@@ -38253,7 +38253,7 @@ var To = gp((Ia) => {
                                                               !1
                                                             );
                                                         }
-                                                        var u = D === d;
+                                                        var u = E === d;
                                                       } else var u = !0;
                                                   }
                                                 }
@@ -38321,13 +38321,13 @@ Ut();
 Ut();
 Ut();
 Ut();
-var Ua = kp(To(), 1);
+var Ua = kp(Co(), 1);
 da();
-var Ro = "folioview.task-center.v1",
-  Fo = ["taskVersion", "executionEpoch", "ruleVersion", "lifecycleEpoch"];
+var To = "folioview.task-center.v1",
+  Ro = ["taskVersion", "executionEpoch", "ruleVersion", "lifecycleEpoch"];
 function Od(t, i) {
   return Object.fromEntries([
-    ...Fo.map((o) => [o, t[o]]),
+    ...Ro.map((o) => [o, t[o]]),
     ...["assignmentId", "assignmentVersion", "slotGeneration"].map((o) => [o, i[o]]),
   ]);
 }
@@ -38348,7 +38348,7 @@ async function Qn(t, i, o = "legacy_unknown") {
       ]))
   );
 }
-async function Ho(t, { registry: i, identity: o, lease: p, provider: l, task: m }) {
+async function Fo(t, { registry: i, identity: o, lease: p, provider: l, task: m }) {
   let c = t.definition,
     d = t.assignment;
   for (let [O, B] of [
@@ -38356,13 +38356,13 @@ async function Ho(t, { registry: i, identity: o, lease: p, provider: l, task: m 
     ["CenterAssignment", d],
   ])
     Ua.default[O](B) || _("invalid_task_center");
-  (t.profile !== Ro ||
+  (t.profile !== To ||
     t.contractVersion !== dt ||
     c.status !== "active" ||
     d.status !== "active" ||
     c.definitionVersion !== c.ruleVersion + c.lifecycleEpoch - 1) &&
     _("insufficient_scope");
-  for (let O of ["ownerSubject", "vaultId", "taskId", ...Fo])
+  for (let O of ["ownerSubject", "vaultId", "taskId", ...Ro])
     d[O] !== c[O] && _("recipient_binding_mismatch");
   for (let O of ["ownerSubject", "vaultId", "connectionId", "clientId"])
     (O in d ? d[O] : d.credential[O]) !== o[O] && _("recipient_binding_mismatch");
@@ -38390,33 +38390,33 @@ async function Ho(t, { registry: i, identity: o, lease: p, provider: l, task: m 
     let de = await Xn(O, { registry: i, identity: o, definition: c, action: B });
     u.push(de);
   }
-  let [x, V] = u,
-    v = Object.fromEntries(
+  let [D, V] = u,
+    f = Object.fromEntries(
       ["slotId", "provider", "slotGeneration", "credential", "agentId", "authorityFingerprint"].map(
         (O) => [O, d[O]],
       ),
     );
-  (x.expectedDefinitionVersion + 1 > c.definitionVersion ||
-    !ke(x.schedule, c.schedule) ||
+  (D.expectedDefinitionVersion + 1 > c.definitionVersion ||
+    !ke(D.schedule, c.schedule) ||
     V.expectedDefinitionVersion !== c.definitionVersion ||
     V.expectedAssignmentVersion + 1 !== d.assignmentVersion ||
     V.assignmentId !== d.assignmentId ||
-    !ke(V.assignment, v) ||
-    x.assignment !== null ||
-    x.assignmentId !== null ||
-    x.expectedAssignmentVersion !== null ||
+    !ke(V.assignment, f) ||
+    D.assignment !== null ||
+    D.assignmentId !== null ||
+    D.expectedAssignmentVersion !== null ||
     V.schedule !== null ||
-    x.intent !== null ||
+    D.intent !== null ||
     V.intent !== null) &&
     _("recipient_binding_mismatch");
-  let D = t.lifecycleControls ?? [];
-  (!Array.isArray(D) || D.length > 50 || D.length + 1 !== c.lifecycleEpoch) &&
+  let E = t.lifecycleControls ?? [];
+  (!Array.isArray(E) || E.length > 50 || E.length + 1 !== c.lifecycleEpoch) &&
     _("invalid_task_center");
   let F = "active",
     H = null,
     oe = 0,
     C = new Set();
-  for (let O of D) {
+  for (let O of E) {
     let B = await Xn(O, { registry: i, identity: o, definition: c, historical: !0 });
     ((B.expectedDefinitionVersion <= oe ||
       B.expectedDefinitionVersion >= c.definitionVersion ||
@@ -38434,7 +38434,7 @@ async function Ho(t, { registry: i, identity: o, lease: p, provider: l, task: m 
       ) && _("invalid_task_center"));
   }
   return (
-    (F !== c.status || Math.max(x.expectedDefinitionVersion + 1, oe + 1) !== c.definitionVersion) &&
+    (F !== c.status || Math.max(D.expectedDefinitionVersion + 1, oe + 1) !== c.definitionVersion) &&
       _("version_conflict"),
     t
   );
@@ -38461,7 +38461,7 @@ async function Xn(t, { registry: i, identity: o, definition: p, action: l, histo
     (m ? c[u] > p[u] : c[u] !== p[u]) && _("recipient_binding_mismatch");
   return c;
 }
-async function Jo(t, { registry: i, identity: o, state: p, requestId: l, now: m }) {
+async function Ho(t, { registry: i, identity: o, state: p, requestId: l, now: m }) {
   let c = await Xn(t, {
       registry: i,
       identity: o,
@@ -38496,7 +38496,7 @@ async function Jo(t, { registry: i, identity: o, state: p, requestId: l, now: m 
     c
   );
 }
-async function zo(t, i) {
+async function Jo(t, i) {
   if (t.schedule === null) return null;
   let o = t.schedule;
   (Ua.default.CenterSchedule(o) || _("invalid_schedule"),
@@ -38535,17 +38535,17 @@ async function zo(t, i) {
     let b = Date.parse(d + "T" + o.localTime + ":00Z") / 1e3,
       u = new Date(d + "T00:00:00Z").getUTCDay() || 7;
     if (o.frequency === "weekly" && !o.days.includes(u)) continue;
-    let x = new Set();
-    for (let v = -48; v <= 48; v += 6) {
-      let D = b + v * 3600,
-        F = l(D),
-        H = Date.parse(`${m(F)}T${F.hour}:${F.minute}:00Z`) / 1e3 - D,
+    let D = new Set();
+    for (let f = -48; f <= 48; f += 6) {
+      let E = b + f * 3600,
+        F = l(E),
+        H = Date.parse(`${m(F)}T${F.hour}:${F.minute}:00Z`) / 1e3 - E,
         oe = b - H,
         C = l(oe);
-      m(C) === d && `${C.hour}:${C.minute}` === o.localTime && x.add(oe);
+      m(C) === d && `${C.hour}:${C.minute}` === o.localTime && D.add(oe);
     }
-    if (!x.size) continue;
-    let V = Math.min(...x);
+    if (!D.size) continue;
+    let V = Math.min(...D);
     if (!(V < o.effectiveFrom || i < V || i > V + o.graceMinutes * 60 + 59))
       return {
         baseTriggerId:
@@ -38556,12 +38556,12 @@ async function zo(t, i) {
   }
   return null;
 }
-async function Wo({ identity: t, audience: i, path: o, request: p, now: l, privateKey: m }) {
+async function zo({ identity: t, audience: i, path: o, request: p, now: l, privateKey: m }) {
   let c = crypto.getRandomValues(new Uint8Array(32)),
     d = Buffer.from(c).toString("base64url"),
     b = {
       contractVersion: dt,
-      profile: Ro,
+      profile: To,
       artifactType: "task_center_agent_request",
       purpose: "authenticated_request",
       ...Object.fromEntries(ht.map((u) => [u, t[u]])),
@@ -38581,7 +38581,7 @@ async function Wo({ identity: t, audience: i, path: o, request: p, now: l, priva
 }
 da();
 var Ld = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-async function Zo(t, i, o, p) {
+async function Wo(t, i, o, p) {
   if ((Ct(p, 0), o === null)) return null;
   (!o ||
     !["daily", "weekdays", "weekly"].includes(o.cadence) ||
@@ -38614,8 +38614,8 @@ async function Zo(t, i, o, p) {
       b = Object.fromEntries(
         l
           .formatToParts(new Date(d * 6e4))
-          .filter((D) => D.type !== "literal")
-          .map((D) => [D.type, D.value]),
+          .filter((E) => E.type !== "literal")
+          .map((E) => [E.type, E.value]),
       );
     if (b.hour + ":" + b.minute !== o.localTime) continue;
     let u = Ld[b.weekday];
@@ -38624,11 +38624,11 @@ async function Zo(t, i, o, p) {
       (o.cadence === "weekly" && u !== o.weekday)
     )
       continue;
-    let x = `${b.year}-${b.month}-${b.day}`,
+    let D = `${b.year}-${b.month}-${b.day}`,
       V = {
         cadence: o.cadence,
         timeZone: o.timeZone,
-        localDate: x,
+        localDate: D,
         localTime: o.localTime,
         ...(o.cadence === "weekly" ? { weekday: o.weekday } : {}),
       };
@@ -38641,13 +38641,9 @@ async function Zo(t, i, o, p) {
   return null;
 }
 da();
-function es(t, i, o) {
-  (!t.allowPartial && i.coverage.state !== "complete" && _("input_policy_partial"),
-    !t.allowUnknownAsOf && i.sourceAsOf === null && _("input_policy_asof"));
-  let p = o - Date.parse(i.fetchedAt) / 1e3;
-  ((!Number.isFinite(p) || p < -2 || p > t.maxFetchedAgeSeconds) && _("input_policy_fetched_age"),
-    (i.freshness === "stale" || (i.freshness === "unknown" && !t.allowUnknownAsOf)) &&
-      _("input_policy_freshness"));
+function Zo(t, i) {
+  let o = i - Date.parse(t.fetchedAt) / 1e3;
+  (!Number.isFinite(o) || o < -2) && _("invalid_input_timestamp");
 }
 var Uo = "folioview.persistent-native-plan.v1",
   Mo = "folioview.runtime-plan-pending.v1",
@@ -38693,7 +38689,7 @@ var Uo = "folioview.persistent-native-plan.v1",
         i.includes("//") ||
         i.includes("?") ||
         i.includes("#") ||
-        i.split("/").some((x) => x === "." || x === "..")) &&
+        i.split("/").some((D) => D === "." || D === "..")) &&
         _("invalid_path");
       let l;
       try {
@@ -38715,13 +38711,13 @@ var Uo = "folioview.persistent-native-plan.v1",
       }
       if (!l.ok) {
         if ((l.status === 404 && _("not_found"), l.status === 403 && i.includes("/task-center/"))) {
-          let x;
+          let D;
           try {
-            x = await l.json();
+            D = await l.json();
           } catch {
             _("runtime_authorization_required");
           }
-          x?.detail?.code === "insufficient_scope" && _("insufficient_scope");
+          D?.detail?.code === "insufficient_scope" && _("insufficient_scope");
         }
         ((l.status === 401 || l.status === 403) && _("runtime_authorization_required"),
           l.status === 409 && _("version_conflict"),
@@ -38734,13 +38730,13 @@ var Uo = "folioview.persistent-native-plan.v1",
       let c = 0,
         d = [];
       for (;;) {
-        let { done: x, value: V } = await m.read();
-        if (x) break;
+        let { done: D, value: V } = await m.read();
+        if (D) break;
         ((c += V.length), c > p && (await m.cancel(), _("payload_too_large")), d.push(V));
       }
       let b = new Uint8Array(c),
         u = 0;
-      for (let x of d) (b.set(x, u), (u += x.length));
+      for (let D of d) (b.set(D, u), (u += D.length));
       return Tr(b);
     }
     async #P() {
@@ -38780,7 +38776,7 @@ var Uo = "folioview.persistent-native-plan.v1",
         m = async () =>
           this.#E(l, {
             contractVersion: dt,
-            proof: await (i.startsWith("task-center/") ? Wo : Un)({
+            proof: await (i.startsWith("task-center/") ? zo : Un)({
               identity: this.#a,
               audience: this.#i,
               path: l,
@@ -38864,7 +38860,7 @@ var Uo = "folioview.persistent-native-plan.v1",
         rootEpoch: 1,
       }).load(i.registryHistory.slice(0, c), m.issuedAt, p);
       await d.binding(i.binding, this.#a, this.#r, m.issuedAt);
-      let b = await xo(this.#n.approval, {
+      let b = await Do(this.#n.approval, {
         registry: d,
         identity: this.#a,
         currentLease: this.#n.previousLease,
@@ -38874,19 +38870,19 @@ var Uo = "folioview.persistent-native-plan.v1",
       });
       ke(b, this.#n.lease) || _("recipient_binding_mismatch");
       let u = [];
-      for (let v of i.consentOperations)
-        u.push(await this.#s("consent-receipts", { operationId: v }));
-      let x = await this.#o("consent-pin", (v) => ({ result: v })),
-        V = await Zn({ consent: i.consent, receipts: u, identity: this.#a, registry: l, pin: x });
+      for (let f of i.consentOperations)
+        u.push(await this.#s("consent-receipts", { operationId: f }));
+      let D = await this.#o("consent-pin", (f) => ({ result: f })),
+        V = await Zn({ consent: i.consent, receipts: u, identity: this.#a, registry: l, pin: D });
       if (V) {
-        let v = { version: V.version, digest: await We(V) };
+        let f = { version: V.version, digest: await We(V) };
         await this.#o(
           "consent-pin",
-          (D) => (
-            D &&
-              (D.version > v.version || (D.version === v.version && D.digest !== v.digest)) &&
+          (E) => (
+            E &&
+              (E.version > f.version || (E.version === f.version && E.digest !== f.digest)) &&
               _("consent_rollback"),
-            { write: v, result: v }
+            { write: f, result: f }
           ),
         );
       }
@@ -39156,7 +39152,7 @@ var Uo = "folioview.persistent-native-plan.v1",
         this.now() - u.reportedAt < 86400
       )
         return { state: "unchanged", receipt: u };
-      let x = {
+      let D = {
           taskId: i,
           taskPublicationFingerprint: b,
           operationId: "plan_" + (await We([this.#a.bindingFingerprint, i, d.version, b, o, l])),
@@ -39170,15 +39166,15 @@ var Uo = "folioview.persistent-native-plan.v1",
           {
             profile: Mo,
             ...Object.fromEntries(ht.map((F) => [F, this.#a[F]])),
-            requestDigest: await We(x),
+            requestDigest: await We(D),
           },
           this.#c.signingPrivateKey,
           this.#a.agentSigningKeyId,
           "fv-control+jws",
         ),
-        v = { request: x, proof: V },
-        D = await this.#o(m, (F) => ({ write: F ?? v, result: F ?? v }));
-      return (ke(D, v) || _("pending_plan_observation"), this.retryPlanReport({ taskId: i }));
+        f = { request: D, proof: V },
+        E = await this.#o(m, (F) => ({ write: F ?? f, result: F ?? f }));
+      return (ke(E, f) || _("pending_plan_observation"), this.retryPlanReport({ taskId: i }));
     }
     async retryPlanReport({ taskId: i }) {
       (Wr(i), await this.synchronize());
@@ -39226,7 +39222,7 @@ var Uo = "folioview.persistent-native-plan.v1",
       let i = await this.tasks(),
         o = [];
       for (let p of i) {
-        let l = await Zo(this.#r, p.taskId, p.deliveryExpectation, this.now());
+        let l = await Wo(this.#r, p.taskId, p.deliveryExpectation, this.now());
         l && o.push({ taskId: p.taskId, taskVersion: p.taskVersion, ...l });
       }
       return o;
@@ -39256,7 +39252,7 @@ var Uo = "folioview.persistent-native-plan.v1",
       (Wr(i), await this.synchronize());
       let o = await this.#y(i),
         p = await this.#s("task-center/context", { taskId: i });
-      await Ho(p, {
+      await Fo(p, {
         registry: this.#d,
         identity: this.#a,
         lease: this.#n.lease,
@@ -39296,7 +39292,7 @@ var Uo = "folioview.persistent-native-plan.v1",
           if (c.code === "not_found") continue;
           throw c;
         }
-        let m = await zo(l.definition, this.now());
+        let m = await Jo(l.definition, this.now());
         m && o.push({ taskId: p.taskId, binding: l.binding, ...m });
       }
       return o;
@@ -39304,7 +39300,7 @@ var Uo = "folioview.persistent-native-plan.v1",
     async beginAssigned({ taskId: i, baseTriggerId: o }) {
       (Wr(i), Je("OperationIdentifier", o));
       let p = "task-center-begin:" + i + ":" + o,
-        l = await this.#o(p, (x) => ({ result: x })),
+        l = await this.#o(p, (D) => ({ result: D })),
         m = await this.taskCenterState({ taskId: i }),
         c = await Qn(m.assignment, o),
         d = "begin_" + (await We([this.#r.ownerSubject, this.#r.vaultId, i, c])),
@@ -39315,9 +39311,9 @@ var Uo = "folioview.persistent-native-plan.v1",
           binding: m.binding,
           taskPublicationFingerprint: m.authority.fingerprint,
         };
-      l = await this.#o(p, (x) => {
-        x && (!ke(x.request, b) || x.triggerId !== c) && _("version_conflict");
-        let V = x ?? { request: b, triggerId: c };
+      l = await this.#o(p, (D) => {
+        D && (!ke(D.request, b) || D.triggerId !== c) && _("version_conflict");
+        let V = D ?? { request: b, triggerId: c };
         return { write: V, result: V };
       });
       let u = await this.#s("task-center/prepare", l.request);
@@ -39353,30 +39349,30 @@ var Uo = "folioview.persistent-native-plan.v1",
         d = "manual-begin:" + i + ":" + o,
         b = await this.#o(
           d,
-          (v) => (
-            v && (!ke(v.request, c) || v.triggerId !== l) && _("version_conflict"),
-            { write: v ?? { request: c, triggerId: l }, result: v ?? { request: c, triggerId: l } }
+          (f) => (
+            f && (!ke(f.request, c) || f.triggerId !== l) && _("version_conflict"),
+            { write: f ?? { request: c, triggerId: l }, result: f ?? { request: c, triggerId: l } }
           ),
         ),
         u = await this.#s("task-center/prepare", b.request);
       (u.triggerId !== b.triggerId || !ke(u.request, b.request) || u.triggerKind !== "manual") &&
         _("invalid_manifest");
-      let x = this.now();
+      let D = this.now();
       if (u.runId !== null) {
         Wr(u.runId);
-        let v = await this.#f(u.runId);
-        ((v.manifest.taskId !== i ||
-          v.manifest.triggerId !== b.triggerId ||
-          v.manifest.stableOperationId !== m) &&
+        let f = await this.#f(u.runId);
+        ((f.manifest.taskId !== i ||
+          f.manifest.triggerId !== b.triggerId ||
+          f.manifest.stableOperationId !== m) &&
           _("invalid_manifest"),
-          (x = v.manifest.createdAt));
+          (D = f.manifest.createdAt));
       }
-      await Jo(u.manualControl, {
+      await Ho(u.manualControl, {
         registry: this.#d,
         identity: this.#a,
         state: p,
         requestId: o,
-        now: x,
+        now: D,
       });
       let V = await this.begin({ taskId: i, triggerId: b.triggerId });
       return (u.runId !== null && V.runId !== u.runId && _("invalid_manifest"), V);
@@ -39404,15 +39400,15 @@ var Uo = "folioview.persistent-native-plan.v1",
           reportedAt: this.now(),
         },
         u = await this.#o(l, (V) => ({ write: V ?? { request: b }, result: V ?? { request: b } })),
-        x = await this.#s("task-center/plans/report", u.request);
+        D = await this.#s("task-center/plans/report", u.request);
       return (
-        (!ke(x.request, u.request) ||
-          !ke(x.binding, d.binding) ||
-          x.version !== u.request.expectedVersion + 1 ||
-          x.nativeScheduleAttested !== !1) &&
+        (!ke(D.request, u.request) ||
+          !ke(D.binding, d.binding) ||
+          D.version !== u.request.expectedVersion + 1 ||
+          D.nativeScheduleAttested !== !1) &&
           _("invalid_plan"),
         await this.#o(l, (V) => (ke(V, u) || _("version_conflict"), { write: null, result: null })),
-        { version: x.version, status: o, authority: "agent_statement", nativeScheduleAttested: !1 }
+        { version: D.version, status: o, authority: "agent_statement", nativeScheduleAttested: !1 }
       );
     }
     async begin({ taskId: i, triggerId: o }) {
@@ -39494,7 +39490,7 @@ var Uo = "folioview.persistent-native-plan.v1",
         c,
       );
       return (
-        es(i.task.task.inputPolicy, d, this.now()),
+        Zo(d, this.now()),
         { runId: p, publicationId: o, ref: l.ref, sourceRevision: l.sourceRevision, resource: d }
       );
     }
@@ -39507,36 +39503,34 @@ var Uo = "folioview.persistent-native-plan.v1",
         c.manifest.resultPolicy !== "owner_inbox" && _("insufficient_scope");
         try {
           za(o, c.task.task.outputSpec);
-        } catch (D) {
+        } catch (f) {
           throw (
             [
               "invalid_schema",
               "private_schema_invalid",
               "private_output_mismatch",
               "duplicate_value",
-            ].includes(D?.code) && _("invalid_report"),
-            D
+            ].includes(f?.code) && _("invalid_report"),
+            f
           );
         }
-        let d = [];
-        for (let D of c.manifest.inputs) d.push(await this.#A(c, D.publicationId));
-        for (let { resource: D } of d) es(c.task.task.inputPolicy, D, this.now());
-        let b = this.#d,
-          u = [];
-        for (let D of b.current.keys.values())
-          if (["device_enc", "recovery_enc"].includes(D.role))
+        for (let f of c.manifest.inputs) await this.#A(c, f.publicationId);
+        let d = this.#d,
+          b = [];
+        for (let f of d.current.keys.values())
+          if (["device_enc", "recovery_enc"].includes(f.role))
             try {
-              (b.cert(D.keyId, D.role, null, this.now()), u.push({ keyId: D.keyId, role: D.role }));
+              (d.cert(f.keyId, f.role, null, this.now()), b.push({ keyId: f.keyId, role: f.role }));
             } catch {}
-        (u.sort((D, F) => (D.keyId < F.keyId ? -1 : 1)),
-          u.some((D) => D.role === "recovery_enc") || _("key_authorization_required"));
-        let x = {
+        (b.sort((f, E) => (f.keyId < E.keyId ? -1 : 1)),
+          b.some((f) => f.role === "recovery_enc") || _("key_authorization_required"));
+        let u = {
             contractVersion: dt,
             profile: qt,
-            ...Object.fromEntries(ht.map((D) => [D, this.#a[D]])),
+            ...Object.fromEntries(ht.map((f) => [f, this.#a[f]])),
             ...Object.fromEntries(
               ["taskId", "taskVersion", "executionEpoch", "authorityId", "authorityVersion"].map(
-                (D) => [D, c.manifest[D]],
+                (f) => [f, c.manifest[f]],
               ),
             ),
             objectId: "presult_" + (await We([this.#r.ownerSubject, this.#r.vaultId, i])),
@@ -39546,16 +39540,16 @@ var Uo = "folioview.persistent-native-plan.v1",
             expectedRevision: 0,
             runId: i,
             manifestFingerprint: c.fingerprint,
-            registrySequence: b.sequence,
-            checkpointDigest: b.current.digest,
-            keyEpoch: b.current.keyEpoch,
+            registrySequence: d.sequence,
+            checkpointDigest: d.current.digest,
+            keyEpoch: d.current.keyEpoch,
             stableOperationId: p,
             issuedAt: this.now(),
-            recipients: u,
+            recipients: b,
           },
-          V = Object.fromEntries(u.map((D) => [D.keyId, b.current.keys.get(D.keyId).publicJwk])),
-          v = await Si(o, x, V, this.#c.signingPrivateKey);
-        l = await this.#t.originalCiphertext(this.#r, p, v);
+          D = Object.fromEntries(b.map((f) => [f.keyId, d.current.keys.get(f.keyId).publicJwk])),
+          V = await Si(o, u, D, this.#c.signingPrivateKey);
+        l = await this.#t.originalCiphertext(this.#r, p, V);
       }
       let m = await this.#s("runs/submit", { runId: i, operationId: p, envelope: l });
       return this.#D(m, l, i);
@@ -39595,8 +39589,8 @@ var Uo = "folioview.persistent-native-plan.v1",
     }
   };
 da();
-import { constants as rs } from "node:fs";
-import { mkdir as qd, open as Cd, lstat as ts, unlink as Bo } from "node:fs/promises";
+import { constants as es } from "node:fs";
+import { mkdir as qd, open as Cd, lstat as rs, unlink as Bo } from "node:fs/promises";
 import { resolve as Td, isAbsolute as Rd } from "node:path";
 import { randomBytes as Fd } from "node:crypto";
 import { DatabaseSync as Hd } from "node:sqlite";
@@ -39613,7 +39607,7 @@ async function Go(t) {
   return (
     Rd(t) || _("private_storage_unavailable"),
     await qd(t, { recursive: !0, mode: 448 }),
-    Ri(await ts(t), !0),
+    Ri(await rs(t), !0),
     Td(t)
   );
 }
@@ -39637,18 +39631,18 @@ async function Aa(t, i) {
       ])));
     let b = Fd(32),
       u = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, c, b),
-      x = await crypto.subtle.importKey("jwk", l, { name: "ECDSA", namedCurve: "P-256" }, !1, [
+      D = await crypto.subtle.importKey("jwk", l, { name: "ECDSA", namedCurve: "P-256" }, !1, [
         "verify",
       ]);
-    (await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, x, u, b)) ||
+    (await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, D, u, b)) ||
       _("reauthorization_required");
     let V = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, !1, [
         "deriveBits",
       ]),
-      v = await crypto.subtle.importKey("jwk", m, { name: "ECDH", namedCurve: "P-256" }, !1, []),
-      D = await crypto.subtle.deriveBits({ name: "ECDH", public: V.publicKey }, d, 256),
-      F = await crypto.subtle.deriveBits({ name: "ECDH", public: v }, V.privateKey, 256);
-    ke([...new Uint8Array(D)], [...new Uint8Array(F)]) || _("reauthorization_required");
+      f = await crypto.subtle.importKey("jwk", m, { name: "ECDH", namedCurve: "P-256" }, !1, []),
+      E = await crypto.subtle.deriveBits({ name: "ECDH", public: V.publicKey }, d, 256),
+      F = await crypto.subtle.deriveBits({ name: "ECDH", public: f }, V.privateKey, 256);
+    ke([...new Uint8Array(E)], [...new Uint8Array(F)]) || _("reauthorization_required");
   } catch {
     _("reauthorization_required");
   }
@@ -39661,7 +39655,7 @@ async function Aa(t, i) {
     identity: t.activation?.identity ?? null,
   };
 }
-var as = class {
+var ts = class {
   constructor({ directory: i, origin: o, actor: p, provider: l }) {
     (vr(p, ["ownerSubject", "vaultId", "connectionId", "clientId"]),
       ["muse", "chatgpt"].includes(l) || _("recipient_binding_mismatch"));
@@ -39682,7 +39676,7 @@ var as = class {
       m,
       c;
     try {
-      m = await Cd(l, rs.O_RDWR | rs.O_NOFOLLOW | (o ? rs.O_CREAT : 0), 384);
+      m = await Cd(l, es.O_RDWR | es.O_NOFOLLOW | (o ? es.O_CREAT : 0), 384);
       let d = await m.stat();
       (Ri(d),
         d.size > 20 * 1024 * 1024 && _("private_storage_unavailable"),
@@ -39731,7 +39725,7 @@ var as = class {
         } catch {
           _("credential_store_corrupt");
         }
-      let x = u ?? {
+      let D = u ?? {
           version: 1,
           origin: this.origin,
           actor: this.actor,
@@ -39741,15 +39735,15 @@ var as = class {
           records: {},
           timeFloor: 0,
         },
-        V = await i(x);
+        V = await i(D);
       if (V.write) {
-        let v = Be(x);
-        (v.length > Jd && _("private_storage_unavailable"),
+        let f = Be(D);
+        (f.length > Jd && _("private_storage_unavailable"),
           c
             .prepare(
               "INSERT INTO state(id,value) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value",
             )
-            .run(new TextDecoder().decode(v)));
+            .run(new TextDecoder().decode(f)));
       }
       return (c.exec("COMMIT"), V.result);
     } catch (d) {
@@ -39767,11 +39761,11 @@ var as = class {
   }
   async resetCorruptForAuthorization() {
     let i = (await this.folder()) + "/credentials.sqlite",
-      o = await ts(i);
+      o = await rs(i);
     (Ri(o), await Bo(i));
     for (let p of ["-journal", "-wal", "-shm"])
       try {
-        let l = await ts(i + p);
+        let l = await rs(i + p);
         (Ri(l), await Bo(i + p));
       } catch (l) {
         if (l.code !== "ENOENT") throw l;
@@ -39832,7 +39826,7 @@ var as = class {
     );
   }
   async originalCiphertext(i, o, p) {
-    let { inspect: l } = await Promise.resolve().then(() => (da(), Ko));
+    let { inspect: l } = await Promise.resolve().then(() => (da(), jo));
     l(p);
     let m = "outbox:" + (await We([i, o]));
     return this.transact(m, (c) => ({ write: c ?? p, result: c ?? p }));
@@ -39960,24 +39954,24 @@ async function Gd(t, i, { clock: o = () => Date.now() / 1e3 } = {}) {
   } catch (u) {
     if (u.code !== "credential_store_corrupt") throw u;
     (await t.resetCorruptForAuthorization(),
-      (c = await t.update((x) => ({ result: x.pending }), { create: !0 })));
+      (c = await t.update((D) => ({ result: D.pending }), { create: !0 })));
   }
   let d = c;
   if (!d || d.context.setupIntentId !== p.setupIntentId) {
     let u = await Bd(t),
-      x = await Aa(u, { issuer: t.origin, ...t.actor }),
+      D = await Aa(u, { issuer: t.origin, ...t.actor }),
       V = Fi(Yo(32)),
-      v = await at(x.signingPublicJwk),
-      D = {
+      f = await at(D.signingPublicJwk),
+      E = {
         contractVersion: "folioview.agent-workspace.v2.0",
         profile: "folioview.agent-key-offer.v1",
         artifactType: "agent_key_offer",
         ...Object.fromEntries(Object.entries(p).filter(([H]) => H !== "profile")),
-        agentId: "agent_" + v,
-        signingPublicJwk: x.signingPublicJwk,
-        encryptionPublicJwk: x.encryptionPublicJwk,
+        agentId: "agent_" + f,
+        signingPublicJwk: D.signingPublicJwk,
+        encryptionPublicJwk: D.encryptionPublicJwk,
       },
-      F = await Tt(D, x.signingPrivateKey, v, "fv-control+jws");
+      F = await Tt(E, D.signingPrivateKey, f, "fv-control+jws");
     d = { profile: u, secret: V, context: p, offer: await Ud(V, "offer", p, F) };
   }
   let b = await t.update(
@@ -40011,7 +40005,7 @@ async function Gd(t, i, { clock: o = () => Date.now() / 1e3 } = {}) {
     { setupIntentId: p.setupIntentId, offer: b.offer, authorizationUrl: m.href }
   );
 }
-var is = class {
+var as = class {
   constructor(i, o) {
     ((this.record = i), (this.records = {}), (this.clock = o));
   }
@@ -40044,7 +40038,7 @@ async function Yd(
   (vr(i, ["setupIntentId", "state", "activation"]),
     (i.state !== "approved" || !i.activation) && _("authorization_pending"));
   let l = await We(i),
-    m = await t.update((v) => ({ result: structuredClone(v) }));
+    m = await t.update((f) => ({ result: structuredClone(f) }));
   if (!m.pending)
     return (
       m.active?.activationPacketDigest !== l && _("reauthorization_required"),
@@ -40090,19 +40084,19 @@ async function Yd(
     _("recipient_binding_mismatch"),
     ca(d.lease, { identity: d.identity, audience: t.origin, now: Math.floor(p()) }));
   let u = { ...c.profile, activation: d, activationPacketDigest: l },
-    x = new is(u, p),
-    V = await new ba({ origin: t.origin, storage: x, fetch: o, clock: p }).initialize();
+    D = new as(u, p),
+    V = await new ba({ origin: t.origin, storage: D, fetch: o, clock: p }).initialize();
   return (
     await t.update(
-      (v) => (
-        (!ke(v.pending, c) || !ke(v.active, m.active)) && _("version_conflict"),
-        (v.active = u),
-        (v.pending = null),
-        (v.records = x.records),
+      (f) => (
+        (!ke(f.pending, c) || !ke(f.active, m.active)) && _("version_conflict"),
+        (f.active = u),
+        (f.pending = null),
+        (f.records = D.records),
         { write: !0 }
       ),
     ),
     V
   );
 }
-export { ba as AgentClient, as as HostStorage, Yd as activate, Gd as prepare };
+export { ba as AgentClient, ts as HostStorage, Yd as activate, Gd as prepare };

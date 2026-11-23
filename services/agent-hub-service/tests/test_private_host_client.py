@@ -132,7 +132,14 @@ class PrivateHostClientTests(unittest.TestCase):
 
         def task():
             value = task_content()
-            value["inputPolicy"]["allowUnknownAsOf"] = True
+            if facts_variant == "old_snapshot":
+                value["inputPolicy"] = {
+                    "allowPartial": False,
+                    "allowUnknownAsOf": False,
+                    "maxFetchedAgeSeconds": 60,
+                }
+            else:
+                value["inputPolicy"]["allowUnknownAsOf"] = True
             return value
 
         def resource(*args, **kwargs):
@@ -228,9 +235,10 @@ class PrivateHostClientTests(unittest.TestCase):
 
     def facts_carrier(self, c, variant):
         # Independent synthetic Owner construction. The server never receives plaintext.
+        fetched = "1970-01-01T00:00:01Z" if variant == "old_snapshot" else "1970-01-01T00:16:40Z"
         content = json.loads(
             json.dumps(facts(c["objectId"]))
-            .replace("2026-11-13T22:00:00Z", "1970-01-01T00:16:40Z")
+            .replace("2026-11-13T22:00:00Z", fetched)
             .replace("2026-11-13", "1970-01-01")
         )
         wrapper = {
@@ -241,13 +249,13 @@ class PrivateHostClientTests(unittest.TestCase):
             "revision": c["revision"],
             "payload": content,
         }
+        if variant == "old_snapshot":
+            content["freshness"] = "stale"
         validate_holdings_private(wrapper, context=c, persistent=True)
         if variant == "bad_provenance":
             content["data"]["accounts"][0]["positions"][0]["provenance"]["unitCost"]["origin"] = (
                 "unknown"
             )
-        if variant == "stale":
-            content["freshness"] = "stale"
         message = jwe.JWE(
             canonical_json(wrapper),
             protected=canonical_json(CONTENT_JWE_HEADER).decode(),
@@ -309,19 +317,31 @@ class PrivateHostClientTests(unittest.TestCase):
             ok=False,
         )
         self.assertEqual(denied["error"], "invalid_valuation")
+        report = PersistentContentFixture.private_content(
+            self.f, PersistentContentFixture.content_context(self.f, "result_revision")
+        )["payload"]
+        rejected = self.peer.call("submit", {"runId": run["runId"], "report": report}, ok=False)
+        self.assertEqual(rejected["error"], "invalid_valuation")
         self.assertEqual(self.ciphertexts, [])
 
-    def test_new_facts_cannot_bypass_input_policy_by_submitting_without_reading(self):
-        self.execution(facts_variant="stale")
+    def test_old_snapshot_is_available_to_an_existing_task_with_strict_legacy_rules(self):
+        self.execution(facts_variant="old_snapshot")
         self.peer.call("activate", self.response())
         self.peer.call("initialize")
         run = self.peer.call("begin", {"taskId": TASK, "triggerId": "synthetic_facts_stale_0001"})
         report = PersistentContentFixture.private_content(
             self.f, PersistentContentFixture.content_context(self.f, "result_revision")
         )["payload"]
-        denied = self.peer.call("submit", {"runId": run["runId"], "report": report}, ok=False)
-        self.assertEqual(denied["error"], "input_policy_freshness")
-        self.assertEqual(self.ciphertexts, [])
+        item = self.peer.call(
+            "input", {"runId": run["runId"], "publicationId": run["inputs"][0]["publicationId"]}
+        )
+        self.assertEqual(item["resource"]["coverage"]["state"], "unknown")
+        self.assertIsNone(item["resource"]["sourceAsOf"])
+        self.assertEqual(item["resource"]["fetchedAt"], "1970-01-01T00:00:01Z")
+        self.assertEqual(item["resource"]["freshness"], "stale")
+        self.assertEqual(
+            self.peer.call("submit", {"runId": run["runId"], "report": report})["state"], "saved"
+        )
 
     def response(self, activation=None, *, phase="activation"):
         value = self.activation if activation is None else activation

@@ -116,7 +116,7 @@ class BrandedNativeOriginTests(unittest.TestCase):
             self.assertEqual(self.client.get(PROTECTED).status_code, 200)
 
     def test_latest_client_and_previous_pin_download_through_verified_edge(self):
-        for version in ("1.3.1", VERSION):
+        for version in ("1.3.1", "1.3.2", VERSION):
             for asset in FILES:
                 path = f"/agent/v3/client/{version}/{asset}"
                 with self.subTest(path=path):
@@ -125,7 +125,7 @@ class BrandedNativeOriginTests(unittest.TestCase):
                     direct = self.client.get(path)
                     self.assertEqual(direct.status_code, 200)
                     self.assertEqual(branded.content, direct.content)
-        unknown = "/agent/v3/client/1.3.3/client.mjs"
+        unknown = "/agent/v3/client/1.3.4/client.mjs"
         self.assertEqual(
             self.client.get(unknown, headers=self.proof("GET", unknown)).status_code, 404
         )

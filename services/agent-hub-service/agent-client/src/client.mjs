@@ -38,7 +38,7 @@ import {
   verifyManualControl,
 } from "./task-center.mjs";
 import { dueSlot } from "./schedule.mjs";
-import { checkInputPolicy } from "./policy.mjs";
+import { checkInputTimestamp } from "./policy.mjs";
 const PLAN = "folioview.persistent-native-plan.v1",
   PLAN_INTENT = "folioview.runtime-plan-pending.v1";
 const PLAN_STATUS = ["enabled", "paused", "removed", "unconfirmed"];
@@ -1009,7 +1009,7 @@ export class AgentClient {
       this.#profile.encryptionPrivateKey,
       c,
     );
-    checkInputPolicy(r.task.task.inputPolicy, resource, this.now());
+    checkInputTimestamp(resource, this.now());
     return {
       runId,
       publicationId,
@@ -1043,11 +1043,7 @@ export class AgentClient {
       }
       // First publication verifies every frozen input even if the caller skipped
       // readInput. Unknown-outcome retries above retain the original ciphertext.
-      const resources = [];
-      for (const item of r.manifest.inputs)
-        resources.push(await this.#input(r, item.publicationId));
-      for (const { resource } of resources)
-        checkInputPolicy(r.task.task.inputPolicy, resource, this.now());
+      for (const item of r.manifest.inputs) await this.#input(r, item.publicationId);
       const registry = this.#registry,
         recipients = [];
       for (const cert of registry.current.keys.values())

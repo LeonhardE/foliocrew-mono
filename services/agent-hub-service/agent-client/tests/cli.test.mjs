@@ -2,22 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { clientFailure } from "../src/cli.mjs";
 
-test("input policy failures ask for task/data review without replacing authorization", () => {
-  const invalidFacts = clientFailure({ code: "invalid_valuation", message: "PRIVATE_SENTINEL" });
-  assert.equal(invalidFacts.error, "input_format_rejected");
-  assert.match(invalidFacts.message, /reauthorization is not required/);
-  assert.equal(JSON.stringify(invalidFacts).includes("PRIVATE_SENTINEL"), false);
-  for (const code of [
-    "input_policy_partial",
-    "input_policy_asof",
-    "input_policy_fetched_age",
-    "input_policy_freshness",
-  ]) {
-    const result = clientFailure({ code });
+test("invalid inputs ask for data review without replacing authorization", () => {
+  for (const code of ["invalid_valuation", "invalid_input_timestamp"]) {
+    const result = clientFailure({ code, message: "PRIVATE_SENTINEL" });
     assert.equal(result.ok, false);
-    assert.equal(result.error, "input_policy_rejected");
-    assert.match(result.message, /task rules or update its shared data/);
-    assert.match(result.message, /reauthorization is not required/);
+    assert.equal(result.error, "input_format_rejected");
+    assert.match(result.message, /[Rr]eauthorization is not required/);
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE_SENTINEL/);
   }
 });
 

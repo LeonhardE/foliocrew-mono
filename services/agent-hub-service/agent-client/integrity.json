@@ -1,5 +1,5 @@
 {
-  "clientVersion": "1.3.2",
+  "clientVersion": "1.3.3",
   "nodeMinimum": "24.12.0",
   "contractVersion": "folioview.agent-workspace.v2.0",
   "profile": "folioview.agent-credential.v1",
@@ -13,15 +13,15 @@
     "schemaSha256": "d7844500991a4ad3362b160bc21d83424531034b202aa5f09a5a97aba4804163"
   },
   "files": {
-    "package.json": "4e36dc2073cdcff992678b104c2fd883039905606799b133d4a82f3d713e931e",
-    "package-lock.json": "5946ab4a8575015f683bf981889e2ea6f6ff67e37e0485aa7e9a8ab54c1718ea",
-    "build.mjs": "86fd91140afc5aa68d72b88ae58176a1eef86e75d07980bc06971ca9f8947805",
+    "package.json": "c377f8d396b6bbfa58feafb40737ca200ba12e4124fdb159a00166ce525074b8",
+    "package-lock.json": "9afbffb53241c92d071d5a730914f8c2ee67206e81da15c6c68293634d31e35d",
+    "build.mjs": "c7fbffd5724f505655ee85294ae7f12717818e5198cefd25f1633d9bfd3ced77",
     "shared-contract.integrity.json": "13a238ac7b19f7ccdc71955e80bfb0c6f4f1007e87f1f67033355f2a06fcd96c",
     "valuation-contract.integrity.json": "7abc6036253b2e5b28bd75831fd91ebf6c57d829958fc3259cb050091c4e60dd",
     "THIRD_PARTY_NOTICES.md": "16b1768276d7eed2a7ce1142f5766c211da784615fa004a36853f2658e18dd4d",
-    "src/cli.mjs": "54609d45173695895c2cf435de48eea9667b64950e69ea5db946de688d26d595",
+    "src/cli.mjs": "789685b3776c56f2c434cec2fadc73a6a1c0618bf608527de50b558dd193df2c",
     "src/index.mjs": "c0462d668038863410f86b1da43fc19fbc17d7619ef0ae0da5c64c29809fc343",
-    "src/client.mjs": "711afe4237adeda235e5c5db1618bace47e4faa0255ec833364a4cd774c149b3",
+    "src/client.mjs": "d1c2e90d0dd7f7e03ee35d739b0dbd23458bdff472366571739ae7dde97fa13b",
     "src/files.mjs": "d1c55e3316c5064a51cedbea73d8f47113e2f38afd227edb057169d0850bdbb7",
     "src/pairing.mjs": "b5fed749e00a1db336eef1aabb11964dcdd37aa07588d304e48f002f5679fefd",
     "src/crypto.mjs": "1246203b275b4838071131f93edb353665b890409fa68755d2f5bcfbdf1d9079",
@@ -29,10 +29,10 @@
     "src/consents.mjs": "58dcc8cb9561fe3c15cbec16d497b9b8234db394bfdd900482827c87dd7a23ad",
     "src/authority.mjs": "0d7768a62e087497c19aaa358788761cbb5f258f6b64078a207bd26aae074861",
     "src/schedule.mjs": "c9fcc6c59026de54dcb846d071532316f52ba75bc4cb9e94ff0b6e334caae42e",
-    "src/policy.mjs": "9425478e061142accddbb32502eb4eb17817bf32843ec87693913a12d8e0ba2b",
+    "src/policy.mjs": "c35b64efb46eb3052e165d2d933735526c7b049f00ec7ba09615a19da6fcb978",
     "src/task-center.mjs": "1ad341b987a50e1b3e84964174973d2f5891a967f6af70579ffa2c15d7032a00",
     "src/task-center-validators.cjs": "c10058242abfc3b284df4f9d2184a1dd03e87a928ba06d57cfc703029eb4eb45",
-    "dist/index.mjs": "130754d0364a50ef0cd30380e0838490273c3bd9075be955140e78c6d5545299",
-    "dist/cli.mjs": "b38aba4e7ef02cee667d237afc5d0c13e37308600ba60a3052f9f0a49311c7e1"
+    "dist/index.mjs": "fef0f9c65e5e033a307fb38d61837397d5cc4159cd0b3b034c77de23cdb14b66",
+    "dist/cli.mjs": "fe6595afac9e1ff5aaf3128cfb7cae66f521e41bac980c5581e6b23cb5e99309"
   }
 }
