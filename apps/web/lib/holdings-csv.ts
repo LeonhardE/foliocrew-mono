@@ -3,6 +3,8 @@ import {
   legacyFacts,
   boundedFacts,
   divideCost,
+  roundHalfEven,
+  BROKER_DECIMAL_MAX_LENGTH,
   importedMarket,
   provenance,
   type HoldingsFacts,
@@ -222,13 +224,20 @@ function parseRecords(text: string): CsvRecord[] {
   return records;
 }
 
-function decimal(value: string, row: number, required = true): string | null {
+function decimal(
+  value: string,
+  row: number,
+  { required = true, allowExtraPrecision = false } = {},
+): string | null {
   const raw = value.trim();
   if (unknownNumber.test(raw)) {
     if (required) fail("invalid_number", row);
     return null;
   }
-  if (raw.length > 80 || !/^-?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?$/.test(raw)) {
+  if (
+    raw.length > BROKER_DECIMAL_MAX_LENGTH ||
+    !/^-?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?$/.test(raw)
+  ) {
     fail("invalid_number", row);
   }
   const cleaned = raw.replaceAll(",", "");
@@ -237,7 +246,8 @@ function decimal(value: string, row: number, required = true): string | null {
   const [wholeRaw, fractionRaw = ""] = unsigned.split(".");
   const whole = wholeRaw.replace(/^0+(?=\d)/, "");
   const fraction = fractionRaw.replace(/0+$/, "");
-  if (whole.length > 20 || fraction.length > 12) fail("number_out_of_range", row);
+  if (whole.length > 20 || (!allowExtraPrecision && fraction.length > 12))
+    fail("number_out_of_range", row);
   const zero = whole === "0" && !fraction;
   return `${negative && !zero ? "-" : ""}${whole}${fraction ? `.${fraction}` : ""}`;
 }
@@ -249,11 +259,11 @@ function scaled(value: string): bigint {
   return negative ? -result : result;
 }
 
-function displayScaled(value: bigint): string {
+function displayScaled(value: bigint, row: number | null = null): string {
   const negative = value < BigInt(0);
   const unsigned = negative ? -value : value;
   const whole = String(unsigned / scale);
-  if (whole.length > 20) fail("total_out_of_range");
+  if (whole.length > 20) fail(row === null ? "total_out_of_range" : "number_out_of_range", row);
   const fraction = String(unsigned % scale)
     .padStart(12, "0")
     .replace(/0+$/, "");
@@ -550,9 +560,9 @@ export async function parseHoldingsCsv(input: {
       continue;
     }
     const quantity = decimal(cell("Quantity"), record.row)!;
-    const marketValue = decimal(cell("Market Value"), record.row, false);
+    const marketValue = decimal(cell("Market Value"), record.row, { required: false });
     if (kind === "CURRENCY") {
-      const price = decimal(cell("Market Price"), record.row, false);
+      const price = decimal(cell("Market Price"), record.row, { required: false });
       if (
         symbol !== positionCurrency ||
         price !== "1" ||
@@ -609,14 +619,25 @@ export async function parseHoldingsCsv(input: {
     let fact: Position | null = null;
     if (source.captureCosts) {
       const money = (amount: string, code: string, expected: HoldingCurrency, signed = false) => {
-        const value = decimal(amount, record.row, false);
+        const value = decimal(amount, record.row, { required: false, allowExtraPrecision: true });
         if (value === null) return null;
         if (code !== expected) {
           warning(source.warnings, "book_cost_currency_mismatch", record.row);
           return null;
         }
         if (!signed && value.startsWith("-")) fail("invalid_number", record.row);
-        return { currency: expected, amount: value };
+        const [whole, fraction = ""] = value.split(".");
+        if (fraction.length <= 12)
+          return { saved: { currency: expected, amount: value }, exact: value };
+        const units = roundHalfEven(
+          BigInt(whole + fraction),
+          BigInt(10) ** BigInt(fraction.length - 12),
+        );
+        warning(source.warnings, "reported_amount_rounded", record.row);
+        return {
+          saved: { currency: expected, amount: displayScaled(units, record.row) },
+          exact: value,
+        };
       };
       const cadCost = money(cell("Book Value (CAD)"), cell("Book Value Currency (CAD)"), "CAD");
       const nativeCost = money(
@@ -625,7 +646,7 @@ export async function parseHoldingsCsv(input: {
         positionCurrency,
       );
       const bookCost = nativeCost ?? (positionCurrency === "CAD" ? cadCost : null);
-      const unit = bookCost ? divideCost(bookCost.amount, quantity) : null;
+      const unit = bookCost ? divideCost(bookCost.exact, quantity) : null;
       const at = source.importedAt,
         date = source.reportDate;
       const imported = provenance("import", at, date),
@@ -642,17 +663,20 @@ export async function parseHoldingsCsv(input: {
         },
         quantity,
         unitCost: unit === null ? null : { currency: positionCurrency, amount: unit },
-        bookCost,
-        bookCostCad: cadCost,
+        bookCost: bookCost?.saved ?? null,
+        bookCostCad: cadCost?.saved ?? null,
         reportedValues: {
-          unitPrice: money(cell("Market Price"), cell("Market Price Currency"), positionCurrency),
+          unitPrice:
+            money(cell("Market Price"), cell("Market Price Currency"), positionCurrency)?.saved ??
+            null,
           marketValue: position.marketValue,
-          unrealizedReturn: money(
-            cell("Market Unrealized Returns"),
-            cell("Market Unrealized Returns Currency"),
-            positionCurrency,
-            true,
-          ),
+          unrealizedReturn:
+            money(
+              cell("Market Unrealized Returns"),
+              cell("Market Unrealized Returns Currency"),
+              positionCurrency,
+              true,
+            )?.saved ?? null,
         },
         provenance: {
           instrument: imported,

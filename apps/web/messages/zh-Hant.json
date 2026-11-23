@@ -457,6 +457,7 @@
       "symbol_unknown": "部分持倉缺少證券代碼。",
       "market_value_unknown": "市值或其幣種未提供，未替換成零。",
       "market_value_currency_differs": "部分報告市值與資產本身幣種不同，合計按市值幣種計算。",
+      "reported_amount_rounded": "券商報價、帳面成本或未實現損益已捨入至小數第 12 位。",
       "book_cost_currency_mismatch": "有成本欄位的幣種不匹配，已保留為未知。"
     },
     "retrying": "正在重試原加密上傳…",
