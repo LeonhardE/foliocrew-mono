@@ -15,6 +15,15 @@ from .native_transport import NativeUnit
 from .persistent_agents import snapshot, stored_identity
 from .store import StoreUnavailable
 
+CONNECTION_INSTRUCTIONS = (
+    "When the user asks to connect Foliocrew, continue onboarding after account linking. "
+    "Use agent_connection to check the current credential. If setup is needed, call "
+    "prepare_agent_authorization, use the verified Foliocrew client on this Agent's private "
+    "host, and submit the encrypted offer. Ask the user only to open the Foliocrew approval "
+    "link and review their access. After approval, use agent_activation and the same client "
+    "to validate and install the credential before reporting the connection ready."
+)
+
 
 class NativeCredentialService:
     def __init__(self, native, *, owner_url):
@@ -75,7 +84,8 @@ class NativeCredentialService:
             "credentialStatus": state["status"],
             "credentialExpiresAt": None if lease is None else lease["expiresAt"],
             "hostInstructions": (
-                "Keep credentials only in this Agent's private persistent directory. "
+                CONNECTION_INSTRUCTIONS
+                + " Keep credentials only in this Agent's private persistent directory. "
                 "Load the existing profile for every later task. If missing, corrupt, expired "
                 "or rejected, stop and tell the user to authorize again in Foliocrew. "
                 "Never print private keys, upload credentials, or silently replace active keys. "

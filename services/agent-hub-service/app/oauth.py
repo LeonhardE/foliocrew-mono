@@ -224,6 +224,11 @@ class _Server(AuthorizationServer):
 
 class _CodeGrant(AuthorizationCodeGrant):
     TOKEN_ENDPOINT_AUTH_METHODS: ClassVar[list[str]] = ["none", "client_secret_basic"]
+    log_rejections = False
+
+    def _reject_code(self, reason):
+        if self.log_rejections:
+            logging.getLogger(__name__).warning("Native OAuth code rejected: %s", reason)
 
     def save_authorization_code(self, code, request):
         data, server = request.payload.data, self.server
@@ -247,17 +252,19 @@ class _CodeGrant(AuthorizationCodeGrant):
     def query_authorization_code(self, code, client):
         server = self.server
         row = _row(server.unit, "hub_oauth_codes", digest(code))
-        if not row or row["client_id"] != client.client_id:
-            return None
+        if not row:
+            return self._reject_code("code_unavailable")
+        if row["client_id"] != client.client_id:
+            return self._reject_code("client_mismatch")
         if row["used"]:
             server.service._revoke_family(server.unit, row["context"]["familyId"])
-            return None
-        if row["expiresAt"] <= server.service.now() or row["resource"] != self.request.form.get(
-            "resource"
-        ):
-            return None
+            return self._reject_code("already_used")
+        if row["expiresAt"] <= server.service.now():
+            return self._reject_code("expired")
+        if row["resource"] != self.request.form.get("resource"):
+            return self._reject_code("resource_mismatch")
         if not server.service._context_active(server.unit, row["context"]):
-            return None
+            return self._reject_code("approval_not_current")
         return _Code({**row, "codeHash": digest(code)})
 
     def delete_authorization_code(self, record):

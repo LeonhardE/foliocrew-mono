@@ -54,6 +54,10 @@ class AccountAssetsTests(unittest.TestCase):
                 response = self.client.get(path)
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.headers["Cache-Control"], "no-store")
+            consent = self.client.get("/agent/v3/account/consent.html").text
+            self.assertIn("连接 Agent 与 Foliocrew", consent)
+            self.assertIn('id="return-to-agent" hidden', consent)
+            self.assertNotIn("FolioView", consent)
             config = self.client.get("/agent/v3/account/config").json()
             self.assertEqual(
                 set(config),
