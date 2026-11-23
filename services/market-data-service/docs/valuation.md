@@ -136,6 +136,16 @@ more work after it expires; existing bounded SDK calls/transactions already in f
 later. This is not a hard end-to-end latency guarantee. No background queue, per-row browser
 request, perpetual retry, prefetch or new worker/service is created.
 
+An explicit user action can call `POST /api/valuation/quotes/manual` for up to four
+instruments per request. This path verifies a same-project Firebase ID token for a Google
+account admitted to the workspace. It checks Yahoo Finance for each supported instrument
+even when the automatic minute or daily budget is spent or a regular close is cached.
+Concurrent lookups for the same quote share an existing refresh lease, and a public quote
+checked in the last 30 seconds is reused. The worker deadline and storage guard still apply.
+The response exposes `provider` when Yahoo reports a rate limit, `busy` when work is already
+in progress, and `unavailable` when a lookup fails. Existing observations keep their source
+time when no new price is available.
+
 Consumers should reuse a loaded batch. After a cache-only read, visit each requested group once, with one quote refresh request in flight. Incomplete results remain partial; no continuous polling is required.
 Storage admission failures propagate as429 before more paid work. Provider failures retain prior
 usable data and only one provider cooldown is written; unavailable cleanup can leave leases to

@@ -11,9 +11,11 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
+from jwcrypto import jwk, jws
 
 from app.cost_controls import CostControls, MarketLimited
 from app.main import app
+from app.manual_quote_access import FIREBASE_KEYS
 from app.market_cache import CacheUnavailable, FirestoreMarketCache, SQLiteMarketCache
 from app.market_data import MarketService, get_market_service
 from app.stock_metrics import METRICS_LOCK
@@ -24,6 +26,7 @@ from app.valuation_quotes import (
     get_quote_service,
     provider_symbol,
 )
+from folioview_shared.delegated_keys import KeyCache
 from folioview_shared.valuation import ValuationError, validate_quote_batch
 
 NOW = datetime(2026, 11, 13, 19, 0, tzinfo=UTC).timestamp()
@@ -401,6 +404,90 @@ class QuoteHttpTests(unittest.TestCase):
                 cached = client.post("/api/valuation/quotes?cached=true", json=request)
                 self.assertNotIn("X-Foliocrew-Quote-Limit", cached.headers)
                 self.assertEqual(provider.fetch.call_count, 1)
+
+    def test_signed_in_manual_refresh_ignores_automatic_limits_and_reuses_recent_work(self):
+        project = "folio-quotes-test"
+        key = jwk.JWK.generate(kty="RSA", size=2048)
+        public = key.export_public(as_dict=True)
+        public.update(kid="test-signing-key", alg="RS256", use="sig")
+        keys = KeyCache(
+            FIREBASE_KEYS,
+            transport=lambda *_args, **_kwargs: json.dumps({"keys": [public]}).encode(),
+        )
+        now = int(time.time())
+
+        def auth(**changes):
+            token = jws.JWS(
+                json.dumps(
+                    {
+                        "aud": project,
+                        "iss": f"https://securetoken.google.com/{project}",
+                        "sub": "test-workspace-member",
+                        "auth_time": now - 120,
+                        "iat": now - 60,
+                        "exp": now + 3540,
+                        "firebase": {"sign_in_provider": "google.com"},
+                        "foliocrew_workspace": "admitted-v1",
+                        **changes,
+                    }
+                ).encode()
+            )
+            token.add_signature(
+                key, protected=json.dumps({"alg": "RS256", "kid": public["kid"], "typ": "JWT"})
+            )
+            return {"Authorization": f"Bearer {token.serialize(compact=True)}"}
+
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            patch.dict(os.environ, {"FIREBASE_PROJECT_ID": project}),
+            patch("app.manual_quote_access.firebase_keys", return_value=keys),
+            TestClient(app) as client,
+        ):
+            quote_now = [NOW]
+            cache = SQLiteMarketCache(str(Path(folder) / "cache.sqlite3"))
+            cache.daily_limit = 2
+            provider = MagicMock()
+            provider.fetch.return_value = {"AAPL": META}
+            service = QuoteService(MarketService(cache, clock=lambda: quote_now[0]), provider)
+            app.dependency_overrides[get_quote_service] = lambda: service
+            request = {"instruments": [US]}
+            route = "/api/valuation/quotes/manual"
+            self.assertEqual(service.quotes(request)["items"][0]["price"], "123.45")
+            quote_now[0] += 901
+            provider.fetch.return_value = {"AAPL": {**META, "regularMarketPrice": 124}}
+            for headers, expected in [
+                ({}, 401),
+                (auth(iss="https://example.com"), 401),
+                (auth(foliocrew_workspace=None), 403),
+            ]:
+                self.assertEqual(
+                    client.post(route, json=request, headers=headers).status_code, expected
+                )
+            self.assertEqual(provider.fetch.call_count, 1)
+            automatic = client.post("/api/valuation/quotes", json=request)
+            self.assertEqual(automatic.headers["X-Foliocrew-Quote-Limit"], "daily")
+            self.assertEqual(automatic.json()["items"][0]["price"], "123.45")
+            self.assertEqual(
+                client.post(route, json={"instruments": [US] * 5}, headers=auth()).status_code, 400
+            )
+
+            for _ in range(2):
+                result = client.post(route, json=request, headers=auth())
+                self.assertEqual(result.status_code, 200)
+                self.assertNotIn("X-Foliocrew-Quote-Limit", result.headers)
+                self.assertEqual(result.json()["items"][0]["price"], "124")
+            self.assertEqual(provider.fetch.call_count, 2)
+
+            quote_now[0] += 31
+            provider.fetch.return_value = {"AAPL": {"error": "rate_limited"}}
+            for _ in range(2):
+                result = client.post(route, json=request, headers=auth())
+                self.assertEqual(result.headers["X-Foliocrew-Quote-Limit"], "provider")
+                self.assertEqual(result.json()["items"][0]["price"], "124")
+            self.assertEqual(provider.fetch.call_count, 3)
+            with cache.connection() as db:
+                state = json.loads(db.execute("SELECT value FROM market_state").fetchone()[0])
+            self.assertEqual((state["count"], state["window_count"]), (2, 2))
 
     def test_actual_batch_route_and_validation_precede_storage_without_echoing_private_values(self):
         market = MagicMock()
