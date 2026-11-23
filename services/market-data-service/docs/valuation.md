@@ -85,7 +85,7 @@ A caller cannot choose a provider URL or submit portfolio quantities, accounts o
 identities are collapsed in first-occurrence order. Currency is checked against the provider;
 it is never inferred from the country or converted by this API.
 
-The narrow adapter supports XNYS, XNAS, ARCX and XASE plus XTSE, XTSX, CNSX and NEOE. Canadian
+The narrow adapter supports XNYS, XNAS, ARCX, BATS and XASE plus XTSE, XTSX, CNSX and NEOE. Cboe BZX (BATS) uses the verified Yahoo exchange code BTS. Canadian
 suffixes follow the pinned yfinance1.7.0 MIC table; exchange codes follow its exchange groups.
 Native class punctuation maps to the vendor dash form. Vendor-suffixed symbols are not silently
 accepted as native Canadian identities. Actual provider symbol, exchange, EQUITY/ETF type and
@@ -129,8 +129,7 @@ more work after it expires; existing bounded SDK calls/transactions already in f
 later. This is not a hard end-to-end latency guarantee. No background queue, per-row browser
 request, perpetual retry, prefetch or new worker/service is created.
 
-Consumers should reuse a loaded batch and may request one bounded refresh after cache-only
-first paint. Incomplete results must remain partial; they do not justify continuous polling.
+Consumers should reuse a loaded batch. After a cache-only read, visit each requested group once, with one quote refresh request in flight. Incomplete results remain partial; no continuous polling is required.
 Storage admission failures propagate as429 before more paid work. Provider failures retain prior
 usable data and only one provider cooldown is written; unavailable cleanup can leave leases to
 expire. A failed cache write does not invalidate an already verified public quote, but stops
