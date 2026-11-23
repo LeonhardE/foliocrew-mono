@@ -78,6 +78,10 @@ class BrandedNativeOriginTests(unittest.TestCase):
             response = self.client.get(PROTECTED, headers=headers)
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json()["resource"], origin + MCP)
+            self.assertEqual(response.json()["resource_name"], "Foliocrew")
+            self.assertEqual(
+                response.json()["authorization_servers"], [origin + "/oauth/persistent"]
+            )
             challenge = self.client.post(
                 MCP, headers=self.proof("POST", MCP) if origin == BRAND_ORIGIN else {}
             )

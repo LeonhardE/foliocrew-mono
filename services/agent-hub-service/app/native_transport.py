@@ -274,6 +274,7 @@ class NativeTransportService(OwnerConnectionService):
     def protected_metadata(self):
         return {
             "resource": self.config.resource,
+            "resource_name": "Foliocrew",
             "authorization_servers": [self.config.issuer],
             "scopes_supported": [SCOPE],
             "bearer_methods_supported": ["header"],
