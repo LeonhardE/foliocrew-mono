@@ -12,7 +12,14 @@ from google.auth.credentials import AnonymousCredentials
 from google.cloud.firestore_v1 import Client, types
 
 from app.cost_controls import CostControls
-from app.market_cache import CacheUnavailable, Entry, FirestoreMarketCache, SQLiteMarketCache
+from app.market_cache import (
+    DAILY_LIMIT_REACHED,
+    REFRESH_PENDING,
+    CacheUnavailable,
+    Entry,
+    FirestoreMarketCache,
+    SQLiteMarketCache,
+)
 from app.market_data import MarketService
 from app.valuation_quotes import TTL, QuoteService, cache_key, checked_quote
 
@@ -170,6 +177,23 @@ class QuoteCacheClockTests(unittest.TestCase):
                 response = restarted.quotes({"instruments": [US, OTHER]})
                 self.assertTrue(all(item["price"] == "123.45" for item in response["items"]))
                 self.assertEqual(provider.calls, [["AAPL"], ["MSFT"]])
+
+    def test_manual_claim_preserves_budget_and_shares_the_provider_lease(self):
+        for name, reopen, rpc in self.stores():
+            with self.subTest(store=name):
+                cache = reopen()
+                cache.daily_limit = 2
+                key, other = cache_key(US), cache_key(OTHER)
+                self.assertIsNone(cache.claim(key, NOW, cost=2))
+                self.assertEqual(cache.claim(other, NOW, cost=2), DAILY_LIMIT_REACHED)
+                if rpc:
+                    state_path = cache.collection.document("shared_upstream_budget")._document_path
+                    before = rpc.documents[state_path]
+                self.assertIsNone(cache.claim(other, NOW, cost=2, manual=True))
+                self.assertEqual(reopen().claim(other, NOW + 1, manual=True), REFRESH_PENDING)
+                if rpc:
+                    self.assertEqual(rpc.documents[state_path], before)
+                self.assertEqual(cache.claim(other, NOW + 50, cost=2), DAILY_LIMIT_REACHED)
 
     def test_integer_and_existing_fractional_entries_keep_exact_expiry_bounds(self):
         for updated in [NOW, NOW + 0.25]:

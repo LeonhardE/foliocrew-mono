@@ -24,10 +24,15 @@ from folioview_shared.valuation import (
 )
 
 from .cost_controls import MarketCostRoute
+from .manual_quote_access import require_manual_quote_user
 from .market_cache import (
     DAILY_LIMIT_REACHED,
+    MANUAL_QUOTE_REUSE_SECONDS,
     MINUTE_LIMIT_REACHED,
     QUOTE_CACHE_PREFIX,
+    RECENT_CACHE,
+    REFRESH_PENDING,
+    YAHOO_COOLDOWN,
     CacheUnavailable,
 )
 from .market_data import MarketService, get_market_service
@@ -295,7 +300,9 @@ class QuoteService:
         except (ValueError, TypeError, AttributeError, KeyError, ValuationError):
             return None
 
-    def quotes(self, request, *, cached_only=False, refresh_limits: set[str] | None = None):
+    def quotes(
+        self, request, *, cached_only=False, manual=False, refresh_limits: set[str] | None = None
+    ):
         instruments = quote_request(request)["instruments"]
         now, deadline = self.market.clock(), self.monotonic() + WORK_SECONDS
         results = {
@@ -305,7 +312,13 @@ class QuoteService:
         }
         supported = [i for i in instruments if provider_symbol(i)]
         cache = self.market.cache
+
+        def report_manual_issue(issue: str) -> None:
+            if manual and refresh_limits is not None:
+                refresh_limits.add(issue)
+
         if self.market.source != "yfinance" or cache is None:
+            report_manual_issue("unavailable")
             return validate_quote_batch(
                 batch([results.get(identity(i), empty(i, now)) for i in instruments], now),
                 requested=instruments,
@@ -315,6 +328,7 @@ class QuoteService:
         except CacheUnavailable:
             entries = {}
             cached_only = True
+            report_manual_issue("unavailable")
         pending = []
         for item in supported:
             key = cache_key(item)
@@ -323,25 +337,53 @@ class QuoteService:
             fresh = previous and (
                 previous["status"] == "available" or now < entries[key].value["_refreshAfter"]
             )
-            if not fresh:
+            if manual or not fresh:
                 pending.append(item)
         acquired = False
         try:
             if not cached_only and pending and self.monotonic() < deadline:
-                acquired = METRICS_LOCK.acquire(blocking=False)
+                acquired = (
+                    METRICS_LOCK.acquire(timeout=max(0, min(2, deadline - self.monotonic())))
+                    if manual
+                    else METRICS_LOCK.acquire(blocking=False)
+                )
+                if not acquired:
+                    report_manual_issue("busy")
             if acquired:
                 admitted = []
                 for item in pending[:MAX_REFRESH]:
                     if self.monotonic() >= deadline:
+                        report_manual_issue("busy")
                         break
-                    reason = cache.claim(cache_key(item), self.market.clock(), cost=2)
+                    reason = (
+                        cache.claim(cache_key(item), self.market.clock(), cost=2, manual=True)
+                        if manual
+                        else cache.claim(cache_key(item), self.market.clock(), cost=2)
+                    )
                     if reason:
+                        if manual and reason == RECENT_CACHE:
+                            entry = entries.get(cache_key(item))
+                            if (
+                                not entry
+                                or self.market.clock() - entry.updated_at
+                                >= MANUAL_QUOTE_REUSE_SECONDS
+                            ):
+                                cache.invalidate(cache_key(item))
+                                latest = self.cached(cache.get(cache_key(item)), item, now)
+                                if latest:
+                                    results[identity(item)] = latest
+                            continue
                         if reason == DAILY_LIMIT_REACHED:
                             code, limit = "budget_exhausted", "daily"
                         elif reason == MINUTE_LIMIT_REACHED:
                             code, limit = "rate_limited", "minute"
+                        elif manual and reason == YAHOO_COOLDOWN:
+                            code, limit = "upstream_unavailable", "provider"
                         else:
                             code, limit = "upstream_unavailable", None
+                            report_manual_issue(
+                                "busy" if reason == REFRESH_PENDING else "unavailable"
+                            )
                         if results[identity(item)]["price"] is None:
                             results[identity(item)]["reason"] = code
                         if limit and refresh_limits is not None:
@@ -372,17 +414,24 @@ class QuoteService:
                             continue
                         if current["price"] is not None or prior["price"] is None:
                             results[identity(item)] = current
+                        rate_limited = current["reason"] == "rate_limited"
+                        if rate_limited:
+                            report_manual_issue("provider")
+                        elif current["reason"] == "upstream_unavailable":
+                            report_manual_issue("unavailable")
                         if not writable or self.monotonic() >= deadline:
                             continue
                         try:
                             if current["reason"] in {"rate_limited", "upstream_unavailable"}:
-                                if not cooled:
+                                cool_provider = not cooled and (not manual or rate_limited)
+                                if cool_provider or (manual and rate_limited):
                                     cache.fail(
                                         cache_key(item),
                                         at,
-                                        rate_limited=current["reason"] == "rate_limited",
+                                        rate_limited=rate_limited,
+                                        cool_provider=cool_provider,
                                     )
-                                    cooled = True
+                                    cooled = cooled or cool_provider
                             else:
                                 cache.put(
                                     cache_key(item),
@@ -395,8 +444,10 @@ class QuoteService:
                                 )
                         except CacheUnavailable:
                             writable = False
+                elif admitted:
+                    report_manual_issue("busy")
         except CacheUnavailable:
-            pass
+            report_manual_issue("unavailable")
         finally:
             if acquired:
                 METRICS_LOCK.release()
@@ -414,6 +465,20 @@ async def read_quotes_request(request: Request):
     return await public_request(request, quote_request, 8192, "stock quote")
 
 
+async def quote_response(service, value, response, *, cached=False, manual=False):
+    response.headers["Cache-Control"] = "no-store"
+    limits: set[str] = set()
+    batch = await run_in_threadpool(
+        service.quotes, value, cached_only=cached, manual=manual, refresh_limits=limits
+    )
+    for limit in ("daily", "minute", "provider", "busy", "unavailable"):
+        if limit in limits:
+            response.headers[QUOTE_LIMIT_HEADER] = limit
+            response.headers["Access-Control-Expose-Headers"] = QUOTE_LIMIT_HEADER
+            break
+    return batch
+
+
 @router.post("/api/valuation/quotes")
 async def batch_quotes(
     value: Annotated[dict, Depends(read_quotes_request)],
@@ -421,12 +486,23 @@ async def batch_quotes(
     service: Annotated[QuoteService, Depends(get_quote_service)],
     cached: Annotated[bool, Query()] = False,
 ):
-    response.headers["Cache-Control"] = "no-store"
-    limits: set[str] = set()
-    batch = await run_in_threadpool(
-        service.quotes, value, cached_only=cached, refresh_limits=limits
-    )
-    if limits:
-        response.headers[QUOTE_LIMIT_HEADER] = "daily" if "daily" in limits else "minute"
-        response.headers["Access-Control-Expose-Headers"] = QUOTE_LIMIT_HEADER
-    return batch
+    return await quote_response(service, value, response, cached=cached)
+
+
+async def read_manual_quotes_request(request: Request):
+    def manual_batch(value):
+        result = quote_request(value)
+        if len(value["instruments"]) > MAX_REFRESH:
+            raise ValuationError("too many instruments")
+        return result
+
+    return await public_request(request, manual_batch, 1024, "stock quote")
+
+
+@router.post("/api/valuation/quotes/manual", dependencies=[Depends(require_manual_quote_user)])
+async def manual_quotes(
+    value: Annotated[dict, Depends(read_manual_quotes_request)],
+    response: Response,
+    service: Annotated[QuoteService, Depends(get_quote_service)],
+):
+    return await quote_response(service, value, response, manual=True)
