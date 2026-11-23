@@ -4,7 +4,7 @@ import {
   type ResourceDisplayAccess,
   type ResourceDisplayContext,
 } from "@/lib/resource-display";
-import { untilSignal } from "@/lib/workspace-cache";
+import { hasFreshWorkspaceDisplay, untilSignal } from "@/lib/workspace-cache";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
@@ -127,6 +127,7 @@ export function useResourceLibrary({
     resumeCatalogueOnNavigation,
     resourceDisplay,
   };
+  const tabReturn = useRef(false);
   const jobs = useRef(new Map<string, AbortController>());
   const serials = useRef({ catalogue: 0, watchlist: 0, follows: 0 });
   const writing = useRef<object | null>(null);
@@ -151,8 +152,9 @@ export function useResourceLibrary({
   if (previousPublication.current.scope !== scope)
     previousPublication.current = { scope, value: null };
   const bound = bindHoldingsPublication(holdingsPublication, owner, workspaceScope);
-  if (!bound) publication.current = null;
-  else if (
+  if (!bound) {
+    if (documentVisible || publication.current?.scope !== scope) publication.current = null;
+  } else if (
     publication.current?.scope !== scope ||
     !sameHoldingsPublication(publication.current.value, bound)
   ) {
@@ -356,7 +358,10 @@ export function useResourceLibrary({
         live.current.scope !== scope ||
         !live.current.active ||
         !live.current.foreground ||
-        (!force && isFresh(source) && !stateRef.current[source].stale) ||
+        (!force &&
+          !stateRef.current[source].stale &&
+          (isFresh(source) ||
+            (tabReturn.current && hasFreshWorkspaceDisplay(verifiedAt(source), Date.now())))) ||
         (source === "follows" && writing.current) ||
         (source === "catalogue" &&
           (!configured ||
@@ -561,7 +566,11 @@ export function useResourceLibrary({
   );
 
   useEffect(() => {
-    const visibility = () => setDocumentVisible(document.visibilityState !== "hidden");
+    const visibility = () => {
+      const visible = document.visibilityState !== "hidden";
+      tabReturn.current = visible && live.current.active;
+      setDocumentVisible(visible);
+    };
     const connectivity = () => {
       const connected = browserOnline();
       if (!connected) freshness.current.at = {};
@@ -579,7 +588,9 @@ export function useResourceLibrary({
   useEffect(() => {
     const uncertainWrite = Boolean(writing.current);
     writing.current = null;
+    if (!active) tabReturn.current = false;
     if (freshness.current.scope !== scope) {
+      tabReturn.current = false;
       freshness.current = { scope, at: {} };
       catalogueRead.current = null;
       catalogueSnapshot.current = null;

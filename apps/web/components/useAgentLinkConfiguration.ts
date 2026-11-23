@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { untilSignal } from "@/lib/workspace-cache";
+import { hasFreshWorkspaceDisplay, untilSignal } from "@/lib/workspace-cache";
 import {
   AGENT_LINK_CONFIGURATION_PATH,
   readAgentLinkConfiguration,
@@ -19,18 +19,28 @@ export function useAgentLinkConfiguration(active: boolean) {
     () => typeof document === "undefined" || document.visibilityState !== "hidden",
   );
   const fresh = useRef(0);
+  const tabReturn = useRef(false);
   const live = useRef({ active, visible });
   live.current = { active, visible };
   useEffect(() => {
-    const change = () => setVisible(document.visibilityState !== "hidden");
+    const change = () => {
+      const visible = document.visibilityState !== "hidden";
+      tabReturn.current = visible && live.current.active;
+      setVisible(visible);
+    };
     document.addEventListener("visibilitychange", change);
     return () => document.removeEventListener("visibilitychange", change);
   }, []);
   useEffect(() => {
+    if (!active) tabReturn.current = false;
     if (
       !active ||
       !visible ||
-      (fresh.current > 0 && Date.now() - fresh.current >= 0 && Date.now() - fresh.current < 60000)
+      (tabReturn.current
+        ? hasFreshWorkspaceDisplay(fresh.current, Date.now())
+        : fresh.current > 0 &&
+          Date.now() - fresh.current >= 0 &&
+          Date.now() - fresh.current < 60_000)
     )
       return;
     const controller = new AbortController();

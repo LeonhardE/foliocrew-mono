@@ -162,7 +162,6 @@ function harness({
   sharedUnlock = false,
   sharedResume = false,
   userVault = false,
-  agentViewActive = false,
   now = Date.now,
   viewMode = "sync_required",
   sessionOverrides,
@@ -1264,7 +1263,7 @@ function harness({
     do {
       dirty = false;
       index = 0;
-      model = useHoldingsWorkspace(agentViewActive);
+      model = useHoldingsWorkspace();
       if (flush)
         for (const { slot, effect, dependencies } of effects.splice(0)) {
           cells[slot]?.cleanup?.();
@@ -3350,7 +3349,7 @@ test("same-version holdings selection shows the correct cached source before a d
   h.visibility(false);
   model = h.render();
   assert.equal(model.content, null);
-  assert.equal(model.displayCache.holdings.size, 0);
+  assert.equal(model.displayCache.holdings.size, 2);
   h.unmount();
 });
 
@@ -3636,12 +3635,11 @@ async function pumpResourceView(view, active = true, turns = 6) {
   }
 }
 
-test("a fresh Agent tab return does not reload the vault or prompt for a Passkey", async () => {
+test("a fresh workspace tab return does not reload the vault or prompt for a Passkey", async () => {
   let now = Date.now();
   const h = harness({
     sharedUnlock: true,
     sharedResume: true,
-    agentViewActive: true,
     now: () => now,
   });
   await ready(h);
@@ -3661,8 +3659,9 @@ test("a fresh Agent tab return does not reload the vault or prompt for a Passkey
   h.unmount();
 });
 
-test("visibility return automatically restores the selected saved snapshot after authority-only resume", async () => {
-  const h = harness({ sharedUnlock: true, sharedResume: true });
+test("a fresh Resources tab restores the selected saved snapshot without any reads", async () => {
+  let now = Date.now();
+  const h = harness({ sharedUnlock: true, sharedResume: true, now: () => now });
   await ready(h);
   const view = sharedResourceView(h);
   await pumpResourceView(view);
@@ -3678,8 +3677,10 @@ test("visibility return automatically restores the selected saved snapshot after
   h.visibility(false);
   await pumpResourceView(view);
   assert.equal(h.render().content, null, "hidden plaintext cleanup remains intact");
-  assert.equal(h.render().displayCache.holdings.size, 0);
+  assert.equal(h.render().displayCache.holdings.size, 1);
   assert.equal(snapshotReads(), before, "hidden Resources must not start a Portfolio read");
+  const requestsBeforeReturn = h.requests.length;
+  now += 29 * 60 * 1000;
   h.visibility(true);
   await pumpResourceView(view);
   assert.equal(h.render().selectedSourceId, selected);
@@ -3688,11 +3689,8 @@ test("visibility return automatically restores the selected saved snapshot after
     saved,
     "focus restores data without pressing Refresh",
   );
-  assert.equal(
-    snapshotReads(),
-    before + 1,
-    "one actual encrypted snapshot read per visibility generation",
-  );
+  assert.equal(snapshotReads(), before, "fresh return does not reread the encrypted snapshot");
+  assert.equal(h.requests.length, requestsBeforeReturn, "no vault or Portfolio read");
   const complete = h.requests.length;
   await pumpResourceView(view);
   assert.equal(h.requests.length, complete, "settled renders do not loop or reload catalogue");
@@ -3700,11 +3698,7 @@ test("visibility return automatically restores the selected saved snapshot after
     h.visibility(true);
     await pumpResourceView(view);
   }
-  assert.equal(
-    snapshotReads(),
-    before + 1,
-    "a visible-event storm cannot reread the same generation",
-  );
+  assert.equal(snapshotReads(), before, "a visible-event storm cannot reread the same generation");
   assert.equal(h.counts().passkeyCalls, 0);
   view.close();
   h.unmount();
@@ -3734,7 +3728,8 @@ test("visibility-hidden unresolved source waits for visible active Resources bef
 });
 
 test("a formerly empty source reads a new head written while hidden without a duplicate initial empty read", async () => {
-  const h = harness();
+  let now = Date.now();
+  const h = harness({ now: () => now });
   await unlocked(h);
   assert.equal(h.render().sourceMetadata.snapshotId, null);
   const view = sharedResourceView(h),
@@ -3744,6 +3739,7 @@ test("a formerly empty source reads a new head written while hidden without a du
   h.visibility(false);
   h.forceHead(1); // Another device stores the first snapshot while this document is hidden.
   await pumpResourceView(view);
+  now += 30 * 60 * 1000;
   h.visibility(true);
   await pumpResourceView(view);
   assert.equal(h.render().sourceMetadata.snapshotId, "snapshot_remote_newer");
@@ -3756,13 +3752,15 @@ test("a formerly empty source reads a new head written while hidden without a du
 });
 
 test("failed visibility restoration stays an error until explicit retry instead of becoming empty or looping", async () => {
-  const h = harness();
+  let now = Date.now();
+  const h = harness({ now: () => now });
   await unlocked(h);
   await h.render().importFile(file);
   await h.render().save();
   const view = sharedResourceView(h);
   h.visibility(false);
   h.failRead(503);
+  now += 30 * 60 * 1000;
   h.visibility(true);
   await pumpResourceView(view);
   assert.equal(h.render().error, "service_unavailable");
@@ -3815,11 +3813,7 @@ test("visibility recovery neither submits an unsaved preview nor bypasses a pend
   preview.visibility(false);
   preview.visibility(true);
   await pumpResourceView(previewView);
-  assert.equal(
-    preview.render().preview,
-    null,
-    "existing hidden-page plaintext cleanup still discards unsaved preview",
-  );
+  assert.ok(preview.render().preview, "a fresh return restores the unsaved preview");
   assert.equal(preview.commits.length, 0);
   assert.equal(preview.counts().seals, 0);
   previewView.close();
@@ -3849,7 +3843,8 @@ test("visibility recovery neither submits an unsaved preview nor bypasses a pend
 
 test("late restored snapshot cannot cross explicit lock logout or another owner", async () => {
   for (const change of ["lock", "logout", "owner"]) {
-    const h = harness();
+    let now = Date.now();
+    const h = harness({ now: () => now });
     await unlocked(h);
     await h.render().importFile(file);
     await h.render().save();
@@ -3857,6 +3852,7 @@ test("late restored snapshot cannot cross explicit lock logout or another owner"
       held = deferred();
     h.visibility(false);
     h.holdBody(held);
+    now += 30 * 60 * 1000;
     h.visibility(true);
     await pumpResourceView(view);
     assert.ok(h.bodyReads() > 0);

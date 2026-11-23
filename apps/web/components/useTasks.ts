@@ -12,7 +12,7 @@ import type {
 } from "@/lib/encrypted-types";
 import type { readTaskDetail, TaskDetailRead } from "@/lib/task-detail-read";
 import { TaskOverviewRead } from "@/lib/task-overview";
-import { DisplayLru, untilSignal } from "@/lib/workspace-cache";
+import { DisplayLru, hasFreshWorkspaceDisplay, untilSignal } from "@/lib/workspace-cache";
 import { defaultTask, reviewTask, type TaskPreview } from "@/lib/task-forms";
 import {
   bindingsKey,
@@ -229,6 +229,9 @@ export function useTasks(
   });
   const [nameRetry, setNameRetry] = useState(0);
   const freshReads = useRef<Partial<Record<ReadRegion, { scope: string; at: number }>>>({});
+  const tabReturn = useRef(false);
+  const freshRead = (at: number) =>
+    tabReturn.current ? hasFreshWorkspaceDisplay(at, Date.now()) : Date.now() - at < 30_000;
   const jobs = useRef(new Set<AbortController>()),
     generation = useRef(0),
     selection = useRef(0),
@@ -494,7 +497,7 @@ export function useTasks(
         return;
       const readScope = `${owner}:${scope ?? "locked"}`;
       const fresh = freshReads.current[region];
-      if (!force && fresh?.scope === readScope && Date.now() - fresh.at < 30000) return;
+      if (!force && fresh?.scope === readScope && freshRead(fresh.at)) return;
       // A new metadata read owns name backfill until its validated receipt commits.
       if (region === "tasks") delete freshReads.current.tasks;
       const serial = ++readSerial.current[region];
@@ -1593,7 +1596,34 @@ export function useTasks(
   }, [api, editable, fail, operation, persistDraft, updatePrivate]);
 
   useEffect(() => {
-    const changed = () => setVisible(document.visibilityState !== "hidden");
+    const changed = () => {
+      const visible = document.visibilityState !== "hidden";
+      live.current.visible = visible;
+      tabReturn.current = visible && live.current.active;
+      setVisible(visible);
+      if (visible) {
+        const at = freshReads.current.tasks?.at;
+        if (tabReturn.current && at && !hasFreshWorkspaceDisplay(at, Date.now())) {
+          names.current.clear();
+          details.current.clear();
+          nameFailures.current.clear();
+          namePending.current.clear();
+          inlinePackets.current.clear();
+        }
+        return;
+      }
+      reviewed.current = null;
+      for (const job of jobs.current) job.abort();
+      setState((previous) => ({
+        ...previous,
+        opening: null,
+        busy: false,
+        loading: false,
+        catalogueLoading: false,
+        confirmation: null,
+        confirmationReasons: [],
+      }));
+    };
     document.addEventListener("visibilitychange", changed);
     return () => document.removeEventListener("visibilitychange", changed);
   }, []);
@@ -1611,6 +1641,7 @@ export function useTasks(
     namePending.current.clear();
     inlinePackets.current.clear();
     freshReads.current = {};
+    tabReturn.current = false;
     editor.current = null;
     reviewed.current = null;
     writeJob.current = null;
@@ -1618,7 +1649,7 @@ export function useTasks(
     setState((previous) => ({
       ...(previous.owner === owner ? previous : initial),
       owner,
-      privateScope: visible ? scope : null,
+      privateScope: scope,
       opening: null,
       selected: null,
       form: null,
@@ -1640,7 +1671,6 @@ export function useTasks(
       catalogueError: "",
       notice: "",
     }));
-    if (scope && active && visible) void operation(true, summaries).catch(fail);
     return () => {
       ++generation.current;
       clearSelectedDetail();
@@ -1648,9 +1678,10 @@ export function useTasks(
       editor.current = null;
       reviewed.current = null;
     };
-  }, [owner, scope, visible, operation, summaries, fail]);
+  }, [owner, scope]);
   useEffect(() => {
     if (!active) {
+      tabReturn.current = false;
       clearSelectedDetail();
       details.current.clear();
       for (const job of jobs.current) if (!navigationDrafts.current.has(job)) job.abort();
@@ -1936,7 +1967,7 @@ export function useTasks(
     listReady: Boolean(
       privateVisible &&
       freshReads.current.tasks?.scope === `${owner}:${scope ?? "locked"}` &&
-      Date.now() - freshReads.current.tasks.at < 30000 &&
+      freshRead(freshReads.current.tasks.at) &&
       !output.loading &&
       !output.listError,
     ),

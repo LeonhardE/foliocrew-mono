@@ -211,8 +211,9 @@ and grants access separately. Source changes preserve historical task
 and Run evidence.
 
 Reads enforce actual streamed response limits and deadlines, and never cache private rows in
-browser storage. Reentry from Market, tab visibility restoration, creator saves and holdings
-snapshot changes refresh the relevant source metadata. Account changes/logout mask rows during
+browser storage. A returning tab reuses completed display reads for 30 minutes in the
+same login and unlock session. A creator save or holdings snapshot change refreshes relevant
+source metadata immediately. Account changes/logout mask rows during
 render, abort old fetch/body reads, clear editor drafts and reject stale callbacks. A conflict,
 malformed response or uncertain write requires explicit successful reload before another save;
 there is no automatic write retry and the local draft remains available for review.
@@ -239,8 +240,9 @@ result; if absent, it clears only the sealed local retry, explicitly warning tha
 request may still complete. It does not cancel a server operation; the next rename uses fresh
 current-state CAS. A fresh current read follows recovery so
 an older original receipt cannot relabel a newer name. Display names live only in memory, scoped
-to Owner/vault/Root/unlock generation/visibility, bounded to ten sources; 30-second display reuse
-avoids reloading names on every navigation. Leaving the resource page cancels its automatic
+to Owner/vault/Root/unlock generation and masked while hidden, bounded to ten sources.
+The shared 30-minute tab-return window reuses completed names. In-app navigation still
+uses the existing short read cache. Leaving the resource page cancels its automatic
 capability/listing read lane and stops subsequent Worker or local-packet reads. Late results cannot
 publish or extend freshness; returning reuses only a completed, fresh same-scope read. Vault-version
 or source-epoch changes invalidate that read. Explicit rename/recovery and their original pending
@@ -361,9 +363,9 @@ column retained. The valuation module loads only after the saved private view is
 the resource page aborts pending price requests while retaining the view and scoped memory.
 
 Revisits reuse bounded owner/unlock/source-version memory and valid temporary currency selections.
-Price reads are revalidated after60 seconds, with explicit refresh available immediately.
-Lock, hidden-document clearing, logout and owner/vault/generation changes
-drop these display sets. They grant no write authority and never reshare Agent inputs. This is a
+Price reads are revalidated after 60 seconds, with explicit refresh available immediately.
+A brief tab return retains the completed display. Lock, logout and Owner/vault/generation
+changes drop these display sets. They grant no write authority and never reshare Agent inputs. This is a
 code/cache policy, not proof of a production latency target; cold/warm/provider timing requires
 the separately authorized acceptance window.
 
@@ -500,7 +502,8 @@ Stale keys refuse replay. A verified original acknowledgement is followed by a v
 head before success is displayed; later failed refresh retains the retry packet and draft.
 
 Lock, logout, hidden pages and owner/generation changes mask private editor state and invalidate
-late work. No task plaintext, private key, PRF output or bearer token is written to URLs, localStorage
+late work. Returning to the same unlocked tab restores the editor and clears any in-progress
+confirmation. No task plaintext, private key, PRF output or bearer token is written to URLs, localStorage
 or logs. The published-client trust limits described above still apply: an operator able to
 replace the client could change the code delivered to a user.
 
@@ -584,7 +587,8 @@ native dispatch. No production migration or online acceptance is performed.
 
 Reopening a recently viewed task can reuse its verified current detail for 30 seconds. The
 eight-entry, 4 MiB page-memory cache requires matching task metadata, vault version and unlock
-scope. It clears on explicit metadata refresh, mutation, route exit, visibility loss or lock.
+scope. Explicit metadata refresh, mutation, route exit and lock clear the detail cache.
+A brief tab return preserves the current selection and editor.
 On first open, the current overview can supply the original encrypted packet after a fresh vault
 check. The worker still verifies it and its original receipt time bounds reuse. Historical detail
 requests read the requested version. Saves still verify the current vault, task head and resource
@@ -657,7 +661,7 @@ the old observer; a superseding read cannot mark an unconfirmed published head f
 without the bound snapshot context retain their existing version invalidation.
 
 The channel-follows list is requested when its category is selected, using the same bounded read,
-30-second freshness, explicit retry and revision-based writes. The default holdings category does
+shared 30-minute tab-return window, explicit retry and revision-based writes. The default holdings category does
 not wait for that unused list. Until requested, channels remain unknown rather than an empty list;
 selecting the category shows its real loading, failure or saved rows. Leaving this category cancels an unfinished channel read and preserves explicit follow-list writes.
 
@@ -667,9 +671,10 @@ that skips the failed Portfolio read. A failed retry remains a failure; the lock
 recovery path is unchanged.
 
 A visible writable shared-unlock resume can restore source selection before source metadata or
-content has been read. Resources also clears the selected head metadata along with plaintext when
-the document becomes hidden: an old empty head is not evidence that the source is still empty after
-returning. For an unread selected source or a saved head whose content is missing, Resources performs
+content has been read. Resources masks the head metadata, decrypted content and import preview
+while hidden. Returning within 30 minutes of a verified read restores that display for the
+same selected source and unlock generation. A scope change, expired return or interrupted operation
+requires fresh authority. For an unread selected source or a saved head whose content is missing, Resources performs
 one `readStored` per Owner/vault/display-cache generation and canonical selected source, through the
 existing fresh-vault and Portfolio authority path. Complete writable unlock is required; previews,
 new-source flows, unfinished mutations or uploads, busy state and errors keep their original guards.
@@ -712,8 +717,8 @@ and version checks apply to the corresponding sections. An explicitly unavailabl
 its original endpoint. Opening a historical version and submitting a command retain their own reads.
 
 The single overview cache is local to the task-page hooks and keyed by Owner login, vault,
-unlock generation and vault version. Its 30-second freshness uses the original receipt time,
-including route/visibility return. Scope changes and hidden pending work fence late results;
+unlock generation and vault version. Its short receipt lifetime uses the original receipt time.
+The rendered list and selected page retain their own 30-minute display window on tab return. Scope changes and hidden pending work fence late results;
 replaying a receipt never extends its lifetime. Explicit list and report refreshes, More, selected
 details and writes keep their original routes and invalidate display reuse without prewarming.
 A soft invalidation removes the reusable receipt and prevents the old attempt from refilling the

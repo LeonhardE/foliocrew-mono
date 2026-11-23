@@ -616,6 +616,26 @@ test("an offline event retains rows and blocks mutations; reconnection verifies 
   }
 });
 
+test("a fresh return to Resources keeps completed catalogue and channel rows", async () => {
+  const h = harness();
+  try {
+    const original = await h.ready();
+    const reads = h.calls.length;
+    assert.ok(original.catalogue.data);
+    assert.ok(original.follows.data);
+    h.visibility(false);
+    h.render();
+    h.advance(29 * 60 * 1000);
+    h.visibility(true);
+    const resumed = await h.ready();
+    assert.deepEqual(resumed.catalogue.data, original.catalogue.data);
+    assert.deepEqual(resumed.follows.data, original.follows.data);
+    assert.equal(h.calls.length, reads);
+  } finally {
+    h.unmount();
+  }
+});
+
 test("opening while offline reports unavailability, then defers recovery until the page is visible", async () => {
   const h = harness({ online: false, externalWatchlist: true, followsNeeded: false });
   try {

@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
-import { AGENT_VIEW_RESUME_MS } from "@/lib/agent-connections";
 import {
   HOLDINGS_CSV_MAX_BYTES,
   HoldingsCsvError,
@@ -27,7 +26,12 @@ import {
   parseHoldingsView,
   type HoldingsView,
 } from "@/lib/holdings-view";
-import { WorkspaceDisplayCache, boundedJson, untilSignal } from "@/lib/workspace-cache";
+import {
+  WorkspaceDisplayCache,
+  boundedJson,
+  hasFreshWorkspaceDisplay,
+  untilSignal,
+} from "@/lib/workspace-cache";
 import {
   resourceDisplaySnapshot,
   verifiedDisplayVault,
@@ -494,7 +498,7 @@ function importDraft(
   };
 }
 
-export function useHoldingsWorkspace(agentViewActive = false) {
+export function useHoldingsWorkspace() {
   const auth = useAuth();
   const owner = auth.status === "authenticated" && auth.profile ? auth.sessionKey : null;
   const uid = owner ? auth.profile!.uid : null;
@@ -526,6 +530,12 @@ export function useHoldingsWorkspace(agentViewActive = false) {
   } | null>(null);
   const vaultGeneration = useRef(0);
   const vaultCheckedAt = useRef<number | null>(null);
+  const pausedDisplay = useRef<{
+    generation: number;
+    vault: State["vault"];
+    sourceId: State["selectedSourceId"];
+    view: Pick<State, "content" | "sourceMetadata" | "preview" | "importPreview">;
+  } | null>(null);
   const resumedDisplayVault = useRef<{
     vault: Vault;
     serial: number;
@@ -558,6 +568,7 @@ export function useHoldingsWorkspace(agentViewActive = false) {
   const terminate = useCallback(() => {
     ++vaultGeneration.current;
     vaultCheckedAt.current = null;
+    pausedDisplay.current = null;
     resumedDisplayVault.current = null;
     displayCache.current.bind(null);
     session.current?.instance.lock();
@@ -3023,9 +3034,30 @@ export function useHoldingsWorkspace(agentViewActive = false) {
   sharedHandlers.current = { lock, reload };
   useEffect(() => {
     if (typeof document === "undefined") return;
+    let hidden = document.visibilityState === "hidden";
+    const currentSession = () =>
+      Boolean(owner && session.current?.owner === owner && stateRef.current.phase === "unlocked");
     const change = () => {
-      if (document.visibilityState === "hidden") {
-        displayCache.current.clear();
+      const nextHidden = document.visibilityState === "hidden";
+      if (hidden === nextHidden) return;
+      hidden = nextHidden;
+      if (hidden) {
+        const sameSession =
+          currentSession() && hasFreshWorkspaceDisplay(vaultCheckedAt.current, Date.now());
+        if (sameSession && !current.current) {
+          const { vault, selectedSourceId, content, sourceMetadata, preview, importPreview } =
+            stateRef.current;
+          pausedDisplay.current = {
+            generation: vaultGeneration.current,
+            vault,
+            sourceId: selectedSourceId,
+            view: { content, sourceMetadata, preview, importPreview },
+          };
+        } else {
+          pausedDisplay.current = null;
+          vaultCheckedAt.current = null;
+          displayCache.current.clear();
+        }
         resumedDisplayVault.current = null;
         ++selectionSerial.current;
         ++serial.current;
@@ -3040,22 +3072,36 @@ export function useHoldingsWorkspace(agentViewActive = false) {
           sourceReview: null,
           busy: null,
         }));
-      } else if (stateRef.current.phase === "unlocked" && ownerRef.current === owner) {
-        const checked = vaultCheckedAt.current;
-        const age = checked === null ? Infinity : Date.now() - checked;
+      } else {
+        const saved = pausedDisplay.current;
+        pausedDisplay.current = null;
+        if (!currentSession() || ownerRef.current !== owner) return;
         if (
-          agentViewActive &&
-          session.current?.owner === owner &&
-          age >= 0 &&
-          age < AGENT_VIEW_RESUME_MS
-        )
+          saved &&
+          saved.generation === vaultGeneration.current &&
+          saved.vault === stateRef.current.vault &&
+          saved.sourceId === stateRef.current.selectedSourceId &&
+          hasFreshWorkspaceDisplay(vaultCheckedAt.current, Date.now())
+        ) {
+          setState((previous) =>
+            ownerRef.current === owner &&
+            previous.owner === owner &&
+            previous.phase === "unlocked" &&
+            previous.vault === saved.vault &&
+            previous.selectedSourceId === saved.sourceId &&
+            saved.generation === vaultGeneration.current
+              ? { ...previous, ...saved.view }
+              : previous,
+          );
           return;
+        }
+        displayCache.current.clear();
         void sharedHandlers.current.reload();
       }
     };
     document.addEventListener("visibilitychange", change);
     return () => document.removeEventListener("visibilitychange", change);
-  }, [owner, agentViewActive]);
+  }, [owner]);
   useEffect(() => {
     if (!uid || !owner || !configured) return;
     return EncryptedVaultSession.watchUnlock?.(

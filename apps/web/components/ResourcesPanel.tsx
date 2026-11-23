@@ -955,8 +955,8 @@ function ResourcesView({
       recovered.current.sources.has(sourceKey)
     )
       return;
-    // Shared unlock restores authority, not Portfolio content cleared on visibility loss.
-    // Recover once per display generation through the unchanged fresh-authority path.
+    // An unread or expired snapshot still needs a fresh authority and Portfolio read.
+    // A warm tab return restores the selected snapshot before this effect can recover it.
     recovered.current.sources.add(sourceKey);
     void model.readStored();
   }, [active, model, recoveryScope, sourceKey]);

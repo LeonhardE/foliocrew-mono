@@ -1,4 +1,5 @@
 import type { PreferenceReadMode } from "./account-preference-reads";
+import { hasFreshWorkspaceDisplay } from "./workspace-cache";
 import {
   CURRENCY_PREFERENCES_PATH,
   effectivePortfolioCurrency,
@@ -79,10 +80,13 @@ export class CurrencyPreferenceStore {
     this.#emit({ error: null });
     this.#run();
   }
-  refresh(force = false) {
+  refresh(force = false, tabReturn = false) {
     if (!this.#active || this.#running || this.#intent || this.#state.error) return;
     const age = Date.now() - this.#readAt;
-    if (!force && this.#state.snapshot && age >= 0 && age < 60_000) return;
+    const fresh = tabReturn
+      ? hasFreshWorkspaceDisplay(this.#readAt, Date.now())
+      : age >= 0 && age < 60_000;
+    if (!force && this.#state.snapshot && fresh) return;
     this.#needsRead = true;
     this.#readMode = "fresh";
     this.#run();

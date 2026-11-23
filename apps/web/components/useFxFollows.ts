@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "./AuthProvider";
+import { hasFreshWorkspaceDisplay } from "@/lib/workspace-cache";
 import { useCurrencyPreferences } from "./CurrencyPreferencesProvider";
 import { FxFollowStore, type FxFollowState } from "@/lib/fx-follows-store";
 import { defaultContext, effectivePairs, type Pair } from "@/lib/fx-follows";
@@ -33,17 +34,20 @@ export function useFxFollows(active: boolean) {
   }, [owner, auth.requestPrivate]);
   const current = owner && state?.owner === owner ? state : null;
   useEffect(() => {
-    const refresh = () => {
+    const refresh = (tabReturn = false) => {
       if (!active || !owner || live.current !== owner || store.current?.owner !== owner) return;
-      const state = store.current.state,
-        age = Date.now() - state.readAt;
-      if ((!state.snapshot || age < 0 || age >= 60_000) && !state.error) store.current.load();
-      currency.refresh?.(false);
+      const state = store.current.state;
+      const age = Date.now() - state.readAt;
+      const fresh = tabReturn
+        ? hasFreshWorkspaceDisplay(state.readAt, Date.now())
+        : age >= 0 && age < 60_000;
+      if ((!state.snapshot || !fresh) && !state.error) store.current.load();
+      if (!tabReturn) currency.refresh?.(false);
     };
     refresh();
     if (typeof document === "undefined") return;
     const visible = () => {
-      if (document.visibilityState === "visible") refresh();
+      if (document.visibilityState === "visible") refresh(true);
     };
     document.addEventListener("visibilitychange", visible);
     return () => document.removeEventListener("visibilitychange", visible);
