@@ -40,6 +40,7 @@ MARKETS = {
     "XNYS": ("", {"NYQ", "NYSE"}),
     "XNAS": ("", {"NMS", "NGM", "NCM", "NAS", "NASDAQ"}),
     "ARCX": ("", {"PCX"}),
+    "BATS": ("", {"BTS"}),
     "XASE": ("", {"ASE"}),
     "XTSE": (".TO", {"TOR"}),
     "XTSX": (".V", {"VAN"}),

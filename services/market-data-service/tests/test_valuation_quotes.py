@@ -118,6 +118,15 @@ class QuoteProviderTests(unittest.TestCase):
         self.assertIsNone(provider_symbol({**US, "market": "ZZZZ"}))
         self.assertIsNone(provider_symbol({**US, "symbol": "^GSPC"}))
 
+    def test_cboe_bzx_quotes_require_the_verified_bts_exchange(self):
+        item = {"symbol": "DRAM", "market": "BATS", "currency": "USD"}
+        meta = {**META, "symbol": "DRAM", "exchangeName": "BTS", "instrumentType": "ETF"}
+        self.assertEqual(provider_symbol(item), "DRAM")
+        self.assertEqual(checked_quote(item, meta, NOW)["price"], "123.45")
+        self.assertEqual(
+            checked_quote(item, {**meta, "exchangeName": "NMS"}, NOW)["reason"], "not_found"
+        )
+
     def test_actual_currency_exchange_time_and_positive_bounded_native_price_are_required(self):
         result = checked_quote(CA, CA_META, NOW)
         self.assertEqual(result["price"], "123.45")
