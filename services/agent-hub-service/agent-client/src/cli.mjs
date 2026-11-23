@@ -11,22 +11,10 @@ export function clientFailure(error) {
     return failure("agent_busy", "Retry after the current Agent operation finishes.");
   if (code === "authorization_pending")
     return failure("authorization_pending", "Wait for the user to authorize in FolioView.");
-  if (code === "invalid_valuation")
+  if (code === "invalid_valuation" || code === "invalid_input_timestamp")
     return failure(
       "input_format_rejected",
-      "Stop this task. Its shared holdings data could not be verified. Ask the user to review and update the shared data in FolioView; reauthorization is not required for this error.",
-    );
-  if (
-    [
-      "input_policy_partial",
-      "input_policy_asof",
-      "input_policy_fetched_age",
-      "input_policy_freshness",
-    ].includes(code)
-  )
-    return failure(
-      "input_policy_rejected",
-      "Stop this task. Its inputs do not meet the approved data rules. Ask the user to review the task rules or update its shared data in FolioView; reauthorization is not required for this error.",
+      "Stop this task. Its shared data could not be verified. Ask the user to review and update the shared data in Foliocrew. Reauthorization is not required for this error.",
     );
   if (code === "insufficient_scope")
     return failure(

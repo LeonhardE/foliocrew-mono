@@ -20,12 +20,21 @@ class PrivateClientAssetTests(unittest.TestCase):
         app.include_router(assets.router)
         with TestClient(app) as client:
             with patch.object(assets, "agent_owned_enabled", return_value=False):
-                for version in ("1.0.0", "1.0.1", "1.1.0", "1.2.0", "1.3.0", "1.3.1", "1.3.2"):
+                for version in (
+                    "1.0.0",
+                    "1.0.1",
+                    "1.1.0",
+                    "1.2.0",
+                    "1.3.0",
+                    "1.3.1",
+                    "1.3.2",
+                    "1.3.3",
+                ):
                     self.assertEqual(
                         client.get(f"/agent/v3/client/{version}/client.mjs").status_code, 503
                     )
             with patch.object(assets, "agent_owned_enabled", return_value=True):
-                response = client.get("/agent/v3/client/1.3.2/client.mjs")
+                response = client.get("/agent/v3/client/1.3.3/client.mjs")
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.headers["Cache-Control"], "no-store")
                 self.assertEqual(response.headers["Referrer-Policy"], "no-referrer")
@@ -33,7 +42,16 @@ class PrivateClientAssetTests(unittest.TestCase):
                     assets.client_metadata()["sha256"], hashlib.sha256(response.content).hexdigest()
                 )
                 self.assertIn(assets.client_metadata()["sha256"], response.headers["ETag"])
-                for version in ("1.0.0", "1.0.1", "1.1.0", "1.2.0", "1.3.0", "1.3.1", "1.3.2"):
+                for version in (
+                    "1.0.0",
+                    "1.0.1",
+                    "1.1.0",
+                    "1.2.0",
+                    "1.3.0",
+                    "1.3.1",
+                    "1.3.2",
+                    "1.3.3",
+                ):
                     for path in ("src/files.mjs", "index.mjs", "credentials.sqlite", "../../.env"):
                         self.assertEqual(
                             client.get(f"/agent/v3/client/{version}/" + path).status_code, 404
@@ -112,7 +130,7 @@ class PrivateClientAssetTests(unittest.TestCase):
             self.assertEqual(hashlib.sha256(response.content).hexdigest(), original)
             self.assertEqual(assets.client_metadata("1.2.0")["sha256"], original)
             self.assertNotEqual(assets.client_metadata()["sha256"], original)
-            self.assertEqual(assets.client_metadata()["version"], "1.3.2")
+            self.assertEqual(assets.client_metadata()["version"], "1.3.3")
 
     def test_130_source_distribution_and_manifest_remain_at_their_original_pins(self):
         root = assets.ROOT / "releases" / "1.3.0"
@@ -159,7 +177,21 @@ class PrivateClientAssetTests(unittest.TestCase):
             "697478fe74675a8bb6cfca4f0916a899dcd3eb860a5d4c33b7ef697163ba342c",
         )
 
-    def test_132_retains_asset_budget_and_node_requirement(self):
+    def test_132_original_manifest_and_download_remain_at_their_pins(self):
+        root = assets.ROOT / "releases" / "1.3.2"
+        manifest_bytes = (root / "integrity.json").read_bytes()
+        self.assertEqual(
+            hashlib.sha256(manifest_bytes).hexdigest(),
+            "4c26120e175bc6624b6f037dab6a9dafa42bc8e594c8e08e9815290140fc0b06",
+        )
+        for file, expected in json.loads(manifest_bytes)["files"].items():
+            self.assertEqual(hashlib.sha256((root / file).read_bytes()).hexdigest(), expected, file)
+        self.assertEqual(
+            assets.client_metadata("1.3.2")["sha256"],
+            "b38aba4e7ef02cee667d237afc5d0c13e37308600ba60a3052f9f0a49311c7e1",
+        )
+
+    def test_current_asset_budget_and_node_requirement(self):
         self.assertEqual(assets.FILES["client.mjs"][2], 2 * 1024 * 1024)
         self.assertLessEqual((assets.ROOT / "dist/cli.mjs").stat().st_size, 2 * 1024 * 1024)
         self.assertEqual(assets.client_metadata()["nodeMinimum"], "24.12.0")

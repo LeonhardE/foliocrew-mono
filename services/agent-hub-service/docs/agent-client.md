@@ -36,6 +36,18 @@ The original 1.0.0 download remains byte-identical at its existing versioned URL
 Upgrades require an explicit reviewed version/pin and reuse the same private profile;
 downloading a newer client does not grant authority or require new authorization.
 
+### Saved task inputs in 1.3.3
+
+Every scheduled or manual Run starts with the current authorized, published
+source versions. The client uses their frozen inputs regardless of fetch age,
+coverage, known source date or reported freshness. The input still carries those
+facts so a report can state its coverage and data dates. Missing permissions,
+invalid timestamps and malformed private inputs still stop execution.
+
+Client 1.3.3 accepts existing signed tasks with legacy input rules and uses the
+same private profile and retry state. Existing hosts explicitly adopt the
+reviewed version and SHA-256. The pinned 1.3.2 download remains available.
+
 ### Transferred registry support in 1.3.2
 
 The current Hub session returns an Owner-signed registry start for transferred
@@ -167,8 +179,7 @@ The CLI reads one closed JSON request from stdin: `origin`, `provider`, `actor`,
 Operations are `prepare`, `activate`, `status`, `tasks`, `due`, `begin`, `input`,
 `submit`, `receipt`, `planStatus`, `reportPlan` and `retryPlanReport`. Each data
 operation loads the saved profile, checks local expiry/rollback floors and signs
-only fixed same-origin PoP paths. It verifies registry/consent/task/manifest/input
-policies before local decryption. Report submission encrypts to current Owner
+only fixed same-origin PoP paths. It verifies registry, consent, task, manifest and input authorization before local decryption. Report submission encrypts to current Owner
 Device/Recovery recipients and stores the original ciphertext for exact retries.
 Decrypted input/report text is never persisted by the credential store or sent as
 plaintext to Hub.
