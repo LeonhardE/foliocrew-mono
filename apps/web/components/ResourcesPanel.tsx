@@ -958,7 +958,7 @@ function ResourcesView({
     // An unread or expired snapshot still needs a fresh authority and Portfolio read.
     // A warm tab return restores the selected snapshot before this effect can recover it.
     recovered.current.sources.add(sourceKey);
-    void model.readStored();
+    void model.readStored(true);
   }, [active, model, recoveryScope, sourceKey]);
   const workspaceScope = JSON.stringify([
     model.owner,

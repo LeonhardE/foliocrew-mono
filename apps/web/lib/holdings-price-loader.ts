@@ -20,6 +20,15 @@ import {
 export type PriceProgress = { phase: "cache" | "refresh"; done: number; total: number };
 type Fetch = (input: string, init: RequestInit) => Promise<Response>;
 const timestamp = (value: string | null) => (value ? Date.parse(value) : 0);
+// Keep this in step with the quote producer's positive-cache lifetime.
+const QUOTE_CACHE_MS = 15 * 60 * 1000;
+function needsQuoteRefresh(quote: QuoteItem, now: number) {
+  if (quote.status === "missing") return true;
+  if (quote.status !== "stale") return false;
+  const age = now - timestamp(quote.fetchedAt);
+  // The latest close may be marked stale by observation age while its cache is fresh.
+  return !quote.price || !(age >= 0 && age < QUOTE_CACHE_MS);
+}
 function retainQuote(before: QuoteItem | undefined, next: QuoteItem): QuoteItem {
   if (!before?.price) return next;
   if (
@@ -172,8 +181,9 @@ export async function loadHoldingsPrices(args: {
   if (!fresh || args.refresh || !fxReady) {
     // The producer admits four quote misses at a time under a per-instance lock.
     // Walk the finite instrument list once, with no overlapping quote refreshes.
+    const plannedAt = now();
     const pending = (fresh && !args.refresh ? [] : prices.quotes.flatMap((b) => b.items))
-      .filter((i) => i.status === "missing" || i.status === "stale")
+      .filter((i) => needsQuoteRefresh(i, plannedAt))
       .sort((a, b) => Number(Boolean(a.price)) - Number(Boolean(b.price)));
     const quoteGroups = chunks(
       pending.map((i) => i.instrument),

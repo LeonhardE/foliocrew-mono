@@ -6170,14 +6170,18 @@ export class VaultCore {
     this.requireOrdinarySession();
     if (!this.vault || !this.root || !this.wrapping) throw new VaultError("locked");
     if (write && !this.device) throw new VaultError("device_registration_required");
+    const vault = this.vault;
     return new DisplayNameOwner({
       ownerSubject: await this.owner,
-      vault: this.vault,
+      vault,
       deviceSigningKey: this.device?.sig,
       deviceSigningKeyId: this.device?.sigId,
       recoveryPublic: this.recoveryJwk,
       now: this.now,
       reader: (ids) => this.reader(ids),
+      userRegistry: vault.userAuthority
+        ? (bundles, at) => this.persistentUserRegistry(vault, bundles, at)
+        : undefined,
     });
   }
   async openDisplayNames(args: Json) {

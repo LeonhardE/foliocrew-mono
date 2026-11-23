@@ -1792,7 +1792,7 @@
     "coverage": "已计价 {known} / {total} 项",
     "displayCurrency": "显示币种",
     "reset": "使用默认币种",
-    "visualize": "可视化",
+    "visualize": "查看持仓占比",
     "refresh": "更新报价",
     "loadingCurrency": "正在读取显示币种",
     "currencyError": "暂时无法读取默认币种。",
