@@ -55,7 +55,7 @@ class AccountAssetsTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.headers["Cache-Control"], "no-store")
             consent = self.client.get("/agent/v3/account/consent.html").text
-            self.assertIn("连接 Agent 与 Foliocrew", consent)
+            self.assertIn("Connect your Agent to Foliocrew", consent)
             self.assertIn('id="return-to-agent" hidden', consent)
             self.assertNotIn("FolioView", consent)
             config = self.client.get("/agent/v3/account/config").json()
@@ -84,7 +84,11 @@ class AccountAssetsTests(unittest.TestCase):
             self.assertEqual(hashlib.sha256((root / name).read_bytes()).hexdigest(), digest)
         node = os.getenv("FOLIOVIEW_NODE_BIN") or shutil.which("node")
         self.assertIsNotNone(node)
-        for name in ["account_link_boundaries.mjs", "private_client_policy_boundaries.mjs"]:
+        for name in [
+            "account_link_boundaries.mjs",
+            "account_consent_languages.mjs",
+            "private_client_policy_boundaries.mjs",
+        ]:
             result = subprocess.run(
                 [node, str(Path(__file__).with_name(name))],
                 capture_output=True,

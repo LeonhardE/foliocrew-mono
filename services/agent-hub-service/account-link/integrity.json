@@ -3,9 +3,9 @@
   "files": {
     "src/account-bridge.mjs": "b7bbaad10629577f8eed35f7e17b5ab6cac0db9e2d600bc066108e38e5fa4c1d",
     "dist/account-bridge.mjs": "b7bbaad10629577f8eed35f7e17b5ab6cac0db9e2d600bc066108e38e5fa4c1d",
-    "src/account-consent-page.mjs": "4a0c812df5c38605870499b650d0dbecc8ef860f6ec74a2e8e49e1d4ba36e53a",
-    "dist/account-consent-page.mjs": "4a0c812df5c38605870499b650d0dbecc8ef860f6ec74a2e8e49e1d4ba36e53a",
-    "static/consent.html": "d464b9018000dfd883b23f36df3b1b010d25929d9d11666b92f302afeb853d2a",
+    "src/account-consent-page.mjs": "6200b7bfd1b700191a8efd92d90197610287e1dc964455764a54a4b63be60232",
+    "dist/account-consent-page.mjs": "6200b7bfd1b700191a8efd92d90197610287e1dc964455764a54a4b63be60232",
+    "static/consent.html": "82f72276c58b5cc353c53397d74c55ad03c7fd98d6e41295db67a5a3d44c387e",
     "static/account.css": "3f1367481f1fe2535833733dbb72dfaf52f99dae27cf2cc50c7a1947c3410d2f",
     "build.mjs": "614cc8b91663ceb20de28b03d4fd7604dfe1aa000aa11aeeae468dc25ba84c6c"
   }
