@@ -69,12 +69,13 @@ async function pool<T>(values: T[], run: (value: T) => Promise<void>, signal: Ab
   );
 }
 
-/** One bounded pass, no polling. Producer budget/refresh limits are unchanged. */
+/** One bounded pass without polling. */
 export async function loadHoldingsPrices(args: {
   facts: HoldingsFacts;
   currency: Currency;
   previous?: PriceSet;
   refresh: boolean;
+  manualQuotes?: (instruments: Instrument[], signal: AbortSignal) => Promise<Response>;
   origin: string;
   signal: AbortSignal;
   fetch: Fetch;
@@ -82,6 +83,7 @@ export async function loadHoldingsPrices(args: {
   now?: () => number;
 }): Promise<{ prices: PriceSet; error: boolean; updatedQuotes: number | null }> {
   const request = args.fetch,
+    manual = args.refresh ? args.manualQuotes : undefined,
     now = args.now ?? Date.now,
     at = new Date(now()).toISOString(),
     all = instruments(args.facts),
@@ -101,6 +103,7 @@ export async function loadHoldingsPrices(args: {
     json: unknown,
     validator: (value: unknown) => T,
     onHeaders?: (headers: Headers) => void,
+    send?: (signal: AbortSignal) => Promise<Response>,
   ): Promise<T> => {
     const controller = new AbortController(),
       abort = () => controller.abort();
@@ -117,14 +120,16 @@ export async function loadHoldingsPrices(args: {
       return await Promise.race([
         cancelled,
         (async () => {
-          const response = await request(args.origin + path, {
-            method: "POST",
-            credentials: "omit",
-            cache: "no-store",
-            signal: controller.signal,
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(json),
-          });
+          const response = await (send
+            ? send(controller.signal)
+            : request(args.origin + path, {
+                method: "POST",
+                credentials: "omit",
+                cache: "no-store",
+                signal: controller.signal,
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(json),
+              }));
           if (response.status === 429) {
             void response.body?.cancel().catch(() => {});
             throw Error("refresh_limited");
@@ -149,7 +154,7 @@ export async function loadHoldingsPrices(args: {
     prices.fx.items.some((i) => i.base === p.base && i.quote === p.quote),
   );
   const cachedJobs: Array<() => Promise<void>> = [];
-  if (!fresh || args.refresh)
+  if (manual ? !args.previous : !fresh || args.refresh)
     for (const group of groups)
       cachedJobs.push(async () => {
         replaceQuotes(
@@ -159,7 +164,7 @@ export async function loadHoldingsPrices(args: {
           ),
         );
       });
-  if (wantedFx.length && (!fresh || args.refresh || !fxReady))
+  if (wantedFx.length && (!fresh || (args.refresh && !manual) || !fxReady))
     cachedJobs.push(async () => {
       prices.fx = await call("/api/valuation/fx?cached=true", { pairs: wantedFx }, (v) =>
         fxBatch(v, wantedFx),
@@ -189,7 +194,7 @@ export async function loadHoldingsPrices(args: {
     // Walk the finite instrument list once, with no overlapping quote refreshes.
     const plannedAt = now();
     const pending = (fresh && !args.refresh ? [] : prices.quotes.flatMap((b) => b.items))
-      .filter((i) => needsQuoteRefresh(i, plannedAt))
+      .filter((i) => (manual ? i.status !== "unsupported" : needsQuoteRefresh(i, plannedAt)))
       .sort((a, b) => Number(Boolean(a.price)) - Number(Boolean(b.price)));
     const quoteGroups = chunks(
       pending.map((i) => i.instrument),
@@ -215,12 +220,20 @@ export async function loadHoldingsPrices(args: {
             (v) => quoteBatch(v, group),
             (headers) => {
               const limit = headers.get("X-Foliocrew-Quote-Limit");
-              if (limit === "daily" || limit === "minute") prices.quoteLimit = limit;
+              if (
+                limit === "daily" ||
+                limit === "minute" ||
+                limit === "provider" ||
+                limit === "busy"
+              )
+                prices.quoteLimit = limit;
+              else if (limit === "unavailable" && !prices.quoteLimit) prices.quoteLimit = limit;
             },
+            manual ? (signal) => manual(group, signal) : undefined,
           );
           replaceQuotes(prices, batch);
           if (batch.items.some((i) => i.reason === "budget_exhausted")) prices.quoteLimit = "daily";
-          if (prices.quoteLimit) break;
+          if (["daily", "minute", "provider"].some((limit) => limit === prices.quoteLimit)) break;
         } catch (failure) {
           if (args.signal.aborted) break;
           error = true;
@@ -245,7 +258,7 @@ export async function loadHoldingsPrices(args: {
     await Promise.all([loadQuotes(), loadFx()]);
   }
   if (args.signal.aborted) throw Error("cancelled");
-  if (error) {
+  if (error && !manual) {
     prices.quotes = prices.quotes.map((b) => ({
       ...b,
       items: b.items.map((i) => (i.price ? { ...i, status: "stale" as const } : i)),
@@ -261,7 +274,7 @@ export async function loadHoldingsPrices(args: {
   prices.readAt = now();
   const failed = error || Boolean(prices.quoteLimit);
   let updatedQuotes: number | null = null;
-  if (args.refresh && !failed) {
+  if (args.refresh && (manual || !failed)) {
     const previousQuotes = new Map(
       args.previous?.quotes.flatMap((batch) =>
         batch.items.map((quote) => [instrumentKey(quote.instrument), quote] as const),
@@ -276,6 +289,7 @@ export async function loadHoldingsPrices(args: {
           !previous || quote.price !== previous.price || quote.sourceAsOf !== previous.sourceAsOf
         );
       }).length;
+    if (failed && updatedQuotes === 0) updatedQuotes = null;
   }
   return { prices, error: failed, updatedQuotes };
 }

@@ -109,6 +109,7 @@ export function useHoldingsValuation(
       currency: defaultCurrency,
       previous,
       refresh: forced,
+      manualQuotes: model.refreshMarketQuotes,
       origin: ORIGIN,
       signal: controller.signal,
       fetch,
@@ -129,7 +130,7 @@ export function useHoldingsValuation(
         if (owns()) setState((s) => ({ ...s, key, busy: false, error: true, progress: null }));
       });
     return () => controller.abort();
-  }, [active, key, defaultCurrency, refresh, model.displayCache]);
+  }, [active, key, defaultCurrency, refresh, model.displayCache, model.refreshMarketQuotes]);
   const valuation = useMemo(
     () => (key && facts && prices && currency ? valuePortfolio(facts, prices, currency) : null),
     [key, facts, prices, currency],
