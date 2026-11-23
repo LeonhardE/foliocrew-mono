@@ -9,12 +9,14 @@ import { EmptyState, InlineError, LoadingIndicator } from "./WorkspaceFeedback";
 import { formatHoldingsTime } from "@/lib/holdings-facts";
 import {
   allocation,
+  brokerValuation,
   instrumentKey,
   money,
   unitMoney,
   decimalLabel,
   weightLabel,
   sumAmounts,
+  valueReportedCash,
   portfolioProfitLoss,
   profitLossLabel,
   type AllocationSlice,
@@ -167,14 +169,33 @@ export default function HoldingsValuation({
   const view = useHoldingsValuation(model, preferences.defaultPortfolioCurrency, active);
   const [chart, setChart] = useState<string | null>(null);
   const [profitMode, setProfitMode] = useState<ProfitLossMode>("percent");
+  const identity = model.editScope;
+  const [valuationSource, setValuationSource] = useState<{
+    identity: string;
+    source: "market" | "broker";
+  } | null>(null);
+  const imported = useMemo(
+    () =>
+      view.facts && view.prices && view.currency
+        ? brokerValuation(view.facts, view.prices, view.currency)
+        : null,
+    [view.facts, view.prices, view.currency],
+  );
+  const chosenSource =
+    valuationSource && valuationSource.identity === identity ? valuationSource.source : null;
+  const showBroker = Boolean(
+    imported &&
+    (chosenSource === "broker" ||
+      (!chosenSource && imported.valuedCount > (view.valuation?.valuedCount ?? 0))),
+  );
+  const valuation = showBroker ? imported : view.valuation;
   const profit = useMemo(
     () =>
-      view.facts && view.valuation && view.prices
-        ? portfolioProfitLoss(view.facts, view.valuation, view.prices)
+      view.facts && valuation && view.prices
+        ? portfolioProfitLoss(view.facts, valuation, view.prices)
         : null,
-    [view.facts, view.valuation, view.prices],
+    [view.facts, valuation, view.prices],
   );
-  const identity = model.editScope;
   useEffect(() => setChart(null), [identity]);
   const quoteMap = useMemo(
     () =>
@@ -186,9 +207,8 @@ export default function HoldingsValuation({
     [view.prices],
   );
   const rows = useMemo(
-    () =>
-      new Map(view.valuation?.rows.map((r) => [JSON.stringify([r.accountId, r.assetId]), r]) ?? []),
-    [view.valuation],
+    () => new Map(valuation?.rows.map((r) => [JSON.stringify([r.accountId, r.assetId]), r]) ?? []),
+    [valuation],
   );
   const cash = useMemo(() => {
     const values = new Map<Currency, Array<string | null>>();
@@ -204,7 +224,22 @@ export default function HoldingsValuation({
       };
     });
   }, [view.facts]);
+  const cashValuation = useMemo(
+    () =>
+      view.facts && view.prices && view.currency
+        ? valueReportedCash(view.facts, view.prices, view.currency)
+        : null,
+    [view.facts, view.prices, view.currency],
+  );
   if (!view.facts) return null;
+  const securitiesAmount = valuation?.subtotal ?? null;
+  const summaryAmounts = [securitiesAmount, cashValuation?.subtotal ?? null].filter(
+    (amount): amount is string => amount !== null,
+  );
+  const summaryAmount = summaryAmounts.length ? sumAmounts(summaryAmounts) : null;
+  const hasCash = cash.length > 0;
+  const partialCashValuation = hasCash && cashValuation?.complete === false;
+  const incomplete = Boolean((valuation && !valuation.complete) || partialCashValuation);
   const times = [...quoteMap.values()].flatMap((q) => (q.sourceAsOf ? [q.sourceAsOf] : [])).sort();
   const fxDate = view.prices?.fx.items.find((i) => i.sourceDate)?.sourceDate;
   const showProfit = (value: ProfitLoss | undefined) => {
@@ -241,10 +276,18 @@ export default function HoldingsValuation({
       <div className={styles.summary}>
         <div>
           <span className={styles.caption}>
-            {t(view.valuation && !view.valuation.complete ? "subtotal" : "total")}
+            {t(
+              hasCash
+                ? incomplete
+                  ? "subtotalWithCash"
+                  : "totalWithCash"
+                : incomplete
+                  ? "subtotal"
+                  : "total",
+            )}
           </span>
           <strong className={styles.total}>
-            {view.currency ? money(view.valuation?.subtotal ?? null, view.currency) : "—"}
+            {view.currency ? money(summaryAmount, view.currency) : "—"}
           </strong>
           <div className={styles.summaryProfit}>
             <span className={styles.caption}>{t("profitLoss")}</span>
@@ -254,20 +297,40 @@ export default function HoldingsValuation({
             <span className={styles.coverage}>
               {t("profitCoverage", {
                 known: profit.knownCount,
-                total: view.valuation!.positionCount,
+                total: valuation!.positionCount,
               })}
             </span>
           )}
-          {view.valuation && !view.valuation.complete && (
+          {partialCashValuation && (
+            <span className={styles.coverage}>{t("cashValuationPartial")}</span>
+          )}
+          {valuation && !valuation.complete && (
             <span className={styles.coverage}>
               {t("coverage", {
-                known: view.valuation.valuedCount,
-                total: view.valuation.positionCount,
+                known: valuation.valuedCount,
+                total: valuation.positionCount,
               })}
             </span>
           )}
         </div>
         <div className={styles.actions}>
+          {imported && (
+            <label className={styles.sourceChoice}>
+              <span className={styles.caption}>{t("valuationSource")}</span>
+              <select
+                value={showBroker ? "broker" : "market"}
+                onChange={(event) =>
+                  setValuationSource({
+                    identity,
+                    source: event.target.value === "broker" ? "broker" : "market",
+                  })
+                }
+              >
+                <option value="market">{t("marketValuation")}</option>
+                <option value="broker">{t("brokerValuation")}</option>
+              </select>
+            </label>
+          )}
           <label>
             <span className="sr-only">{t("displayCurrency")}</span>
             <select
@@ -288,6 +351,9 @@ export default function HoldingsValuation({
             </button>
           )}
           <div className={styles.segmented} role="group" aria-label={t("profitMode")}>
+            <span className={styles.caption} aria-hidden="true">
+              {t("profitMode")}
+            </span>
             <button
               type="button"
               aria-pressed={profitMode === "percent"}
@@ -303,7 +369,7 @@ export default function HoldingsValuation({
               {t("profitAmount")}
             </button>
           </div>
-          <button type="button" onClick={() => setChart(identity)} disabled={!view.valuation}>
+          <button type="button" onClick={() => setChart(identity)} disabled={!valuation}>
             {t("visualize")}
           </button>
           <button type="button" onClick={view.refresh} disabled={view.busy || !view.currency}>
@@ -335,16 +401,31 @@ export default function HoldingsValuation({
       {view.error && (
         <InlineError message={t("refreshError")} onRetry={view.refresh} retryLabel={t("retry")} />
       )}
-      {(view.valuation?.stale || profit?.stale) && (
+      {showBroker && (
+        <p className={styles.note} role="status">
+          {view.facts.data.reportDate
+            ? t("brokerValuationDated", { date: view.facts.data.reportDate })
+            : t("brokerValuationHelp")}
+        </p>
+      )}
+      {showBroker && !view.valuation?.complete && (
+        <p className={styles.note}>
+          {t("marketCoverage", {
+            known: view.valuation?.valuedCount ?? 0,
+            total: imported!.positionCount,
+          })}
+        </p>
+      )}
+      {(valuation?.stale || profit?.stale || cashValuation?.stale) && (
         <p className={styles.note} role="status">
           {t("stale")}
         </p>
       )}
-      {view.valuation && !view.valuation.complete && (
+      {valuation && !valuation.complete && (
         <p className={styles.note}>
           {t("partialDenominator", {
-            known: view.valuation.valuedCount,
-            total: view.valuation.positionCount,
+            known: valuation.valuedCount,
+            total: valuation.positionCount,
           })}
         </p>
       )}
@@ -361,7 +442,7 @@ export default function HoldingsValuation({
                     <th>{t("profitLoss")}</th>
                     <th>{t("weight")}</th>
                     <th>{t("quantity")}</th>
-                    <th>{t("quote")}</th>
+                    <th>{t(showBroker ? "brokerQuote" : "quote")}</th>
                     <th>{t("unitCost")}</th>
                     {onEdit && (
                       <th>
@@ -373,7 +454,8 @@ export default function HoldingsValuation({
                 <tbody>
                   {account.positions.map((p) => {
                     const row = rows.get(JSON.stringify([account.accountId, p.assetId])),
-                      quote = quoteMap.get(instrumentKey(p.instrument));
+                      quote = quoteMap.get(instrumentKey(p.instrument)),
+                      reportedPrice = p.reportedValues?.unitPrice;
                     return (
                       <tr key={p.assetId}>
                         <td>
@@ -384,7 +466,17 @@ export default function HoldingsValuation({
                           <strong>
                             {view.currency ? money(row?.value ?? null, view.currency) : "—"}
                           </strong>
-                          {row && row.status !== "valued" && <small>{t(row.status)}</small>}
+                          {row && row.status !== "valued" && (
+                            <small>
+                              {t(
+                                !showBroker && quote?.status === "unsupported"
+                                  ? "quoteUnsupported"
+                                  : showBroker && row.status === "missing_quote"
+                                    ? "brokerValueMissing"
+                                    : row.status,
+                              )}
+                            </small>
+                          )}
                         </td>
                         <td className={styles.number}>
                           {showProfit(
@@ -394,8 +486,19 @@ export default function HoldingsValuation({
                         <td className={styles.number}>{weightLabel(row?.weightPercent)}</td>
                         <td className={styles.number}>{decimalLabel(p.quantity)}</td>
                         <td className={styles.number}>
-                          {unitMoney(quote?.price ?? null, p.instrument.currency)}
-                          {quote?.status === "stale" && <small>{t("oldQuote")}</small>}
+                          {showBroker ? (
+                            unitMoney(
+                              reportedPrice?.amount ?? null,
+                              reportedPrice?.currency ?? p.instrument.currency,
+                            )
+                          ) : (
+                            <>
+                              {unitMoney(quote?.price ?? null, p.instrument.currency)}
+                              {quote?.sourceAsOf && (
+                                <small>{formatHoldingsTime(quote.sourceAsOf, locale)}</small>
+                              )}
+                            </>
+                          )}
                         </td>
                         <td
                           className={styles.number}
@@ -462,7 +565,7 @@ export default function HoldingsValuation({
         </dl>
         <p>{t("costHelp")}</p>
         <p>{t("profitHelp")}</p>
-        <p>{t("quoteSource")}</p>
+        {!showBroker && <p>{t("quoteSource")}</p>}
         {cash.length > 0 && <p>{t("cashHelp")}</p>}
         {fxDate && (
           <p>
@@ -479,10 +582,10 @@ export default function HoldingsValuation({
           <p>{t("excluded", { count: view.facts.data.excludedAssets.length })}</p>
         )}
       </details>
-      {chart === identity && view.valuation && (
+      {chart === identity && valuation && (
         <HoldingsAllocation
           facts={view.facts}
-          valuation={view.valuation}
+          valuation={valuation}
           identity={identity}
           onClose={() => setChart(null)}
         />

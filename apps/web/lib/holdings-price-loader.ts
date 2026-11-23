@@ -106,19 +106,21 @@ export async function loadHoldingsPrices(args: {
     try {
       return await Promise.race([
         cancelled,
-        (async () =>
-          readPublicValuation(
-            await request(args.origin + path, {
-              method: "POST",
-              credentials: "omit",
-              cache: "no-store",
-              signal: controller.signal,
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(json),
-            }),
-            validator,
-            controller.signal,
-          ))(),
+        (async () => {
+          const response = await request(args.origin + path, {
+            method: "POST",
+            credentials: "omit",
+            cache: "no-store",
+            signal: controller.signal,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(json),
+          });
+          if (response.status === 429) {
+            void response.body?.cancel().catch(() => {});
+            throw Error("refresh_limited");
+          }
+          return readPublicValuation(response, validator, controller.signal);
+        })(),
       ]);
     } finally {
       clearTimeout(timer);
@@ -168,49 +170,59 @@ export async function loadHoldingsPrices(args: {
   );
   if (args.signal.aborted) throw Error("cancelled");
   if (!fresh || args.refresh || !fxReady) {
-    // At most four producer batches of four instruments per visit/explicit refresh.
-    // Large sources still get all cache reads; missing rows retain honest partial coverage.
+    // The producer admits four quote misses at a time under a per-instance lock.
+    // Walk the finite instrument list once, with no overlapping quote refreshes.
     const pending = (fresh && !args.refresh ? [] : prices.quotes.flatMap((b) => b.items))
-      .filter((i) => i.status !== "available")
-      .sort((a, b) => Number(Boolean(a.price)) - Number(Boolean(b.price)))
-      .slice(0, 16);
-    const jobs: Array<() => Promise<void>> = chunks(
+      .filter((i) => i.status === "missing" || i.status === "stale")
+      .sort((a, b) => Number(Boolean(a.price)) - Number(Boolean(b.price)));
+    const quoteGroups = chunks(
       pending.map((i) => i.instrument),
       4,
-    ).map((group) => async () => {
-      replaceQuotes(
-        prices,
-        await call("/api/valuation/quotes", { instruments: group }, (v) => quoteBatch(v, group)),
-      );
-    });
-    if (
-      wantedFx.length &&
-      wantedFx.some(
-        (p) =>
-          !prices.fx.items.some(
-            (i) => i.base === p.base && i.quote === p.quote && i.status === "available",
-          ),
-      )
-    )
-      jobs.push(async () => {
+    );
+    const refreshFx = wantedFx.some(
+      (p) =>
+        !prices.fx.items.some(
+          (i) => i.base === p.base && i.quote === p.quote && i.status === "available",
+        ),
+    );
+    const total = quoteGroups.length + Number(refreshFx);
+    done = 0;
+    emit({ phase: "refresh", done, total });
+    const report = () => emit({ phase: "refresh", done: ++done, total });
+    const loadQuotes = async () => {
+      for (const group of quoteGroups) {
+        if (args.signal.aborted) break;
+        try {
+          const batch = await call("/api/valuation/quotes", { instruments: group }, (v) =>
+            quoteBatch(v, group),
+          );
+          replaceQuotes(prices, batch);
+          if (batch.items.some((i) => i.reason === "budget_exhausted")) {
+            error = true;
+            break;
+          }
+        } catch (failure) {
+          if (args.signal.aborted) break;
+          error = true;
+          if (failure instanceof Error && failure.message === "refresh_limited") break;
+        } finally {
+          report();
+        }
+      }
+    };
+    const loadFx = async () => {
+      if (!refreshFx || args.signal.aborted) return;
+      try {
         prices.fx = await call("/api/valuation/fx", { pairs: wantedFx }, (v) =>
           fxBatch(v, wantedFx),
         );
-      });
-    done = 0;
-    emit({ phase: "refresh", done, total: jobs.length });
-    await pool(
-      jobs,
-      async (run) => {
-        try {
-          await run();
-        } catch {
-          if (!args.signal.aborted) error = true;
-        }
-        emit({ phase: "refresh", done: ++done, total: jobs.length });
-      },
-      args.signal,
-    );
+      } catch {
+        if (!args.signal.aborted) error = true;
+      } finally {
+        report();
+      }
+    };
+    await Promise.all([loadQuotes(), loadFx()]);
   }
   if (args.signal.aborted) throw Error("cancelled");
   if (error) {

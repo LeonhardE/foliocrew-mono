@@ -46,6 +46,10 @@ function costBasis(position: Position) {
       : position.bookCostCad)
   );
 }
+function reportedMarketValue(position: Position) {
+  const origin = position.provenance.quantity.origin;
+  return origin === "import" || origin === "legacy" ? position.reportedValues?.marketValue : null;
+}
 export const instrumentKey = (
   i: Instrument | { symbol: string | null; market: string; currency: Currency },
 ) => JSON.stringify([i.symbol, i.market, i.currency]);
@@ -66,10 +70,22 @@ export function fxLegs(facts: HoldingsFacts, currency: Currency): Pair[] {
   const currencies = [
     ...new Set([
       ...displayCurrencies(facts, currency),
+      ...facts.data.accounts.flatMap((account) =>
+        account.balances
+          .filter(
+            (balance) =>
+              balance.cashBalance !== null && decimal(balance.cashBalance, true).n !== BigInt(0),
+          )
+          .map((balance) => balance.currency),
+      ),
       ...facts.data.accounts.flatMap((a) =>
         a.positions.flatMap((p) => {
           const cost = costBasis(p);
-          return cost && decimal(cost.amount).n !== BigInt(0) ? [cost.currency] : [];
+          const reported = reportedMarketValue(p);
+          return [
+            ...(cost && decimal(cost.amount).n !== BigInt(0) ? [cost.currency] : []),
+            ...(reported ? [reported.currency] : []),
+          ];
         }),
       ),
     ]),
@@ -338,6 +354,82 @@ export function valuePortfolio(
     fxSnapshotId: fx.snapshotId,
   };
 }
+export function brokerValuation(facts: HoldingsFacts, prices: PriceSet, currency: Currency) {
+  const positions = facts.data.accounts.flatMap((account) =>
+    account.positions.map((position) => ({
+      account,
+      position,
+      reported: reportedMarketValue(position),
+    })),
+  );
+  const values = positions.flatMap(({ reported }) => (reported ? [reported] : []));
+  if (!values.length) return null;
+  const fx = displayFx(
+    prices.fx,
+    values.map((value) => value.currency),
+    currency,
+  );
+  const rates = new Map(fx.items.map((rate) => [rate.base, rate]));
+  const rows: HoldingsValuation["rows"] = positions.map(({ account, position, reported }) => {
+    const rate = reported && reported.currency !== currency ? rates.get(reported.currency) : null;
+    const value = !reported
+      ? null
+      : reported.currency === currency
+        ? reported.amount
+        : rate?.rate
+          ? multiplyAmounts(reported.amount, rate.rate)
+          : null;
+    return {
+      accountId: account.accountId,
+      assetId: position.assetId,
+      status: value !== null ? "valued" : reported ? "missing_fx" : "missing_quote",
+      value,
+      weightPercent: null,
+      stale: value !== null && rate?.status === "stale",
+    };
+  });
+  const known = rows.flatMap((row) => (row.value === null ? [] : [row.value]));
+  const subtotal = known.length ? sumAmounts(known) : null;
+  for (const row of rows)
+    if (row.value !== null && subtotal !== null)
+      row.weightPercent = percentage(row.value, subtotal);
+  return {
+    currency,
+    rows,
+    subtotal,
+    complete: known.length === rows.length,
+    valuedCount: known.length,
+    positionCount: rows.length,
+    stale: rows.some((row) => row.stale),
+    quoteSnapshotIds: [],
+    fxSnapshotId: fx.snapshotId,
+  } satisfies HoldingsValuation;
+}
+export function valueReportedCash(facts: HoldingsFacts, prices: PriceSet, currency: Currency) {
+  const balances = facts.data.accounts.flatMap((account) => account.balances);
+  const fx = displayFx(
+    prices.fx,
+    balances.map((balance) => balance.currency),
+    currency,
+  );
+  const rates = new Map(fx.items.map((item) => [item.base, item]));
+  let stale = false;
+  const amounts = balances.flatMap(({ currency: native, cashBalance }) => {
+    if (cashBalance === null) return [];
+    if (native === currency || decimal(cashBalance, true).n === BigInt(0)) return [cashBalance];
+    const item = rates.get(native);
+    if (!item?.rate) return [];
+    stale ||= item.status === "stale";
+    return cashBalance.startsWith("-")
+      ? [`-${multiplyAmounts(cashBalance.slice(1), item.rate)}`]
+      : [multiplyAmounts(cashBalance, item.rate)];
+  });
+  return {
+    subtotal: amounts.length ? sumAmounts(amounts) : null,
+    complete: amounts.length === balances.length,
+    stale,
+  };
+}
 export function money(value: string | null, currency: Currency) {
   if (value === null) return "—";
   const [whole, tail] = roundDisplayAmount(value, currency).split(".");
@@ -345,7 +437,7 @@ export function money(value: string | null, currency: Currency) {
 }
 export function unitMoney(value: string | null, currency: Currency) {
   if (value === null) return "—";
-  return `${currency} ${decimalLabel(value)}`;
+  return `${currency} ${decimalLabel(roundDisplayAmount(value, "USD"))}`;
 }
 export function decimalLabel(value: string) {
   const [whole, tail] = value.split(".");
