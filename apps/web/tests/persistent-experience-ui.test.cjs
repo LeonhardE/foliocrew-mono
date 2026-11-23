@@ -299,6 +299,71 @@ test("an unlocked workspace opens the pairing review without approving it", asyn
   });
 });
 
+test("successful approval offers a copyable final step in every workbench language", async () => {
+  const cases = [
+    [
+      "en",
+      "Authorize and connect",
+      "Authorization saved",
+      "Copy message",
+      "Copied",
+      /finish setting up the same connection/,
+    ],
+    ["zh", "授权并连接", "授权已保存", "复制消息", "已复制", /请完成刚才的连接/],
+    ["zh-Hant", "授權並連線", "授權已儲存", "複製訊息", "已複製", /請完成剛才的連線/],
+  ];
+  for (const [locale, approve, saved, copy, copied, sameConnection] of cases) {
+    const writes = [];
+    const button = (tree, label) =>
+      all(tree, (node) => node.type === "button" && node.props.children === label)[0];
+    await render(locale, true, null, null, null, {
+      active: true,
+      pairing: { setupIntentId: "synthetic_intent" },
+      native: { nativeHandoff: () => null },
+      window: {
+        location: { hash: "#synthetic", search: "" },
+        history: { replaceState() {} },
+      },
+      navigator: {
+        clipboard: {
+          async writeText(value) {
+            writes.push(value);
+          },
+        },
+      },
+      model: {
+        async execute(request) {
+          return request({
+            inspectAuthorization: () => ({ connection: { provider: "muse" }, tasks: [] }),
+            authorize: () => ({ connected: true }),
+          });
+        },
+      },
+      async interact(view) {
+        assert.equal(button(view(), copy), undefined);
+        await new Promise(setImmediate);
+        button(view(), approve).props.onClick();
+        await new Promise(setImmediate);
+        const finished = view();
+        assert.ok(
+          all(finished, (node) => node.type === "h2" && node.props.children === saved).length,
+        );
+        const [field] = all(finished, (node) => node.type === "textarea");
+        assert.equal(field.props.readOnly, true);
+        assert.match(field.props.value, sameConnection);
+        const [instructions] = all(
+          finished,
+          (node) => node.props.id === field.props["aria-describedby"],
+        );
+        assert.match(instructions.props.children, /Muse/);
+        await button(finished, copy).props.onClick();
+        assert.deepEqual(writes, [field.props.value]);
+        assert.ok(button(view(), copied));
+      },
+    });
+  }
+});
+
 test("Agent connection messages copy the exact localized text and the branded address", async () => {
   const brand = connectionContracts.BRANDED_AGENT_ORIGIN;
   const endpoint = brand + "/mcp/v3";
@@ -333,6 +398,8 @@ test("Agent connection messages copy the exact localized text and the branded ad
       assert.match(chatgpt, /^请帮我在 ChatGPT/);
       assert.equal(addressFromMessage(chatgpt), endpoint);
       assert.doesNotMatch(chatgpt, /foliocrew-muse-prod|val010/);
+      assert.match(chatgpt, /打开原来的连接并重新授权/);
+      assert.match(chatgpt, /联系 Foliocrew 管理员获取已登记的 ChatGPT 专用 Client ID/);
       await button(view(), "复制消息").props.onClick();
       assert.deepEqual(writes, [muse, chatgpt]);
     },
