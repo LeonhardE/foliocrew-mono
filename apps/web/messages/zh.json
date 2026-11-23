@@ -872,10 +872,6 @@
     "resourceUnavailable": "暂不可用，请先刷新资源",
     "notPrepared": "尚未准备供 agent 使用的加密副本",
     "noResources": "暂无可选资源，仍可以创建自定义任务。",
-    "inputPolicy": "资源规则",
-    "partial": "允许使用不完整的资源",
-    "unknownAsOf": "允许数据时间未知的资源",
-    "maxAge": "最长取数间隔（分钟）",
     "output": "结果格式",
     "label": "结果标签",
     "language": "语言",
@@ -994,7 +990,6 @@
       "goal": "请描述任务，最多 2,000 字。",
       "template": "请选择支持的模板。",
       "resources": "简报需要至少一项可用资源，最多选择 10 项不同资源。",
-      "inputPolicy": "取数间隔须为 1 分钟至 7 天。",
       "output": "请检查结果标签、语言和详细程度。",
       "sections": "请填写 1–8 个标识不重复且有标题的章节。",
       "expectation": "请检查送达时间、时区和送达窗口。"

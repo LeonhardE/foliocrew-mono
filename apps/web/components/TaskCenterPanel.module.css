@@ -231,6 +231,9 @@
   box-sizing: border-box;
   resize: vertical;
 }
+.advancedOptions[open] > label {
+  margin-block-start: 14px;
+}
 .form fieldset {
   border: 0;
   padding: 0;

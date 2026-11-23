@@ -509,64 +509,6 @@ export function TasksView({
                       ))}
                   </section>
                   <section>
-                    <h2>{t("inputPolicy")}</h2>
-                    <label className={styles.check}>
-                      <input
-                        type="checkbox"
-                        checked={form.inputPolicy.allowPartial}
-                        onChange={(event) =>
-                          change({
-                            ...form,
-                            inputPolicy: {
-                              ...form.inputPolicy,
-                              allowPartial: event.target.checked,
-                            },
-                          })
-                        }
-                      />
-                      {t("partial")}
-                    </label>
-                    <label className={styles.check}>
-                      <input
-                        type="checkbox"
-                        checked={form.inputPolicy.allowUnknownAsOf}
-                        onChange={(event) =>
-                          change({
-                            ...form,
-                            inputPolicy: {
-                              ...form.inputPolicy,
-                              allowUnknownAsOf: event.target.checked,
-                            },
-                          })
-                        }
-                      />
-                      {t("unknownAsOf")}
-                    </label>
-                    <label>
-                      {t("maxAge")}
-                      <input
-                        type="number"
-                        min={1}
-                        max={10080}
-                        value={
-                          form.inputPolicy.maxFetchedAgeSeconds < 0
-                            ? ""
-                            : form.inputPolicy.maxFetchedAgeSeconds / 60
-                        }
-                        onChange={(event) =>
-                          change({
-                            ...form,
-                            inputPolicy: {
-                              ...form.inputPolicy,
-                              maxFetchedAgeSeconds:
-                                event.target.value === "" ? -1 : Number(event.target.value) * 60,
-                            },
-                          })
-                        }
-                      />
-                    </label>
-                  </section>
-                  <section>
                     <h2>{t("output")}</h2>
                     <div className={styles.columns}>
                       <label>

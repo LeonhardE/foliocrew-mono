@@ -7,12 +7,16 @@ export type TaskPreview = {
   nextExpectedAt: string | null;
   resourceCount: number;
 };
+// Keep the required field valid for older encrypted task readers.
+export function legacyTaskInputPolicy(): TaskContent["inputPolicy"] {
+  return { allowPartial: true, allowUnknownAsOf: true, maxFetchedAgeSeconds: 604800 };
+}
 export function defaultTask(template: "brief" | "custom" = "brief"): TaskContent {
   return {
     name: "",
     template,
     goal: "",
-    inputPolicy: { allowPartial: false, allowUnknownAsOf: false, maxFetchedAgeSeconds: 86400 },
+    inputPolicy: legacyTaskInputPolicy(),
     outputSpec: {
       label: "Report",
       sections: [{ sectionId: "overview", title: "Overview", instructions: "" }],
@@ -41,12 +45,6 @@ export function reviewTask(
     (content.template === "brief" && bindings.length === 0)
   )
     errors.push("resources");
-  if (
-    typeof content.inputPolicy.allowPartial !== "boolean" ||
-    typeof content.inputPolicy.allowUnknownAsOf !== "boolean" ||
-    !number(content.inputPolicy.maxFetchedAgeSeconds, 60, 604800)
-  )
-    errors.push("inputPolicy");
   const output = content.outputSpec;
   if (
     !text(output.label, 1, 40) ||
