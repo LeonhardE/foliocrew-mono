@@ -166,7 +166,7 @@
   dialog.innerHTML = `<div class="sample-frame">
     <header class="sample-appbar">
       <div class="sample-crumb"><b>Foliocrew</b><span aria-hidden="true">/</span><span data-word="workspace"></span></div>
-      <button type="button" data-sample-close data-label="close"><span aria-hidden="true">×</span></button>
+      <button type="button" data-sample-close data-label="close"><span aria-hidden="true"></span></button>
     </header>
     <div class="sample-scroll">
       <div class="sample-task-head"><h2 id="fc-sample-title" tabindex="-1" data-word="title"></h2>

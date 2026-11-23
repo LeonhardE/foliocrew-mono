@@ -56,8 +56,12 @@
 .actions {
   display: flex;
   gap: 8px;
-  align-items: center;
+  align-items: end;
   flex-wrap: wrap;
+}
+.sourceChoice {
+  display: grid;
+  gap: 4px;
 }
 .actions button,
 .actions select,
@@ -225,8 +229,12 @@
   font-variant-numeric: tabular-nums;
 }
 .segmented {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px;
+}
+.segmented .caption {
+  grid-column: 1 / -1;
 }
 .segmented button[aria-pressed="true"] {
   background: color-mix(in srgb, var(--accent) 12%, var(--panel));

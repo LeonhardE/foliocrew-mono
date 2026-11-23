@@ -139,8 +139,14 @@ export function ReportDialog({
         <>
           <header className={styles.dialogHeading}>
             <h2 id={`${id}-title`}>{title}</h2>
-            <button type="button" autoFocus onClick={requestClose} aria-label={closeLabel}>
-              ×
+            <button
+              type="button"
+              className="dialog-icon-button"
+              autoFocus
+              onClick={requestClose}
+              aria-label={closeLabel}
+            >
+              <span className="dialog-close-icon" aria-hidden="true" />
             </button>
           </header>
           <div className={styles.dialogBody}>{children}</div>

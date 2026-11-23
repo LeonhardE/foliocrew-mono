@@ -186,6 +186,78 @@ test("missing prices/FX and unknown markets produce explicit coverage, never zer
   );
   assert.equal(api.money(null, "USD"), "—");
 });
+test("reported cash converts exactly with signed balances and flags unavailable information", () => {
+  const f = facts();
+  const p = prices(f);
+  f.data.accounts[0].balances = [
+    { currency: "CAD", cashBalance: "25", buyingPower: null },
+    { currency: "USD", cashBalance: "-5.125", buyingPower: null },
+    { currency: "CNY", cashBalance: null, buyingPower: null },
+    { currency: "EUR", cashBalance: "0", buyingPower: null },
+    { currency: "GBP", cashBalance: "3", buyingPower: null },
+  ];
+  assert.ok(api.fxLegs(f, "CAD").some(({ base }) => base === "GBP"));
+  assert.ok(!api.fxLegs(f, "CAD").some(({ base }) => base === "CNY" || base === "EUR"));
+  assert.deepEqual(copy(api.valueReportedCash(f, p, "CAD")), {
+    subtotal: "14.75",
+    complete: false,
+    stale: false,
+  });
+  f.data.accounts[0].balances = f.data.accounts[0].balances.slice(0, 2);
+  p.fx.items[0].status = "stale";
+  assert.deepEqual(copy(api.valueReportedCash(f, p, "CAD")), {
+    subtotal: "14.75",
+    complete: true,
+    stale: true,
+  });
+  const securities = api.valuePortfolio(f, p, "CAD");
+  assert.equal(securities.subtotal, "50");
+  assert.equal(
+    api.sumAmounts([securities.subtotal, api.valueReportedCash(f, p, "CAD").subtotal]),
+    "64.75",
+  );
+  assert.equal(api.portfolioProfitLoss(f, securities, p).total.amount, "17");
+});
+
+test("broker valuation uses recorded market values without filling live quotes or reusing edited quantities", () => {
+  const f = facts();
+  f.data.editKind = "import";
+  f.data.importSnapshot = { snapshotId: f.data.snapshotId, sourceRevision: 1 };
+  const [usd, cad] = f.data.accounts[0].positions;
+  for (const [position, amount] of [
+    [usd, "21.3"],
+    [cad, "10"],
+  ]) {
+    position.provenance.quantity = factsApi.provenance("import", at, day);
+    position.reportedValues = {
+      unitPrice: null,
+      marketValue: { currency: position.instrument.currency, amount },
+      unrealizedReturn: null,
+    };
+  }
+  usd.instrument.market = "UNKNOWN";
+  const market = prices(f);
+  const unavailable = { ...market, quotes: [] };
+  assert.equal(api.valuePortfolio(f, unavailable, "CAD").valuedCount, 0);
+  const imported = api.brokerValuation(f, unavailable, "CAD");
+  assert.equal(imported.complete, true);
+  assert.equal(imported.subtotal, "52.6");
+  assert.deepEqual(copy(imported.rows.map((r) => r.value)), ["42.6", "10"]);
+  assert.equal(api.portfolioProfitLoss(f, imported, unavailable).total.amount, "19.6");
+  assert.equal(
+    api.brokerValuation(f, { ...unavailable, fx: api.missingFx(at) }, "CAD").rows[0].status,
+    "missing_fx",
+  );
+  cad.reportedValues.marketValue.currency = "CNY";
+  assert.ok(api.fxLegs(f, "CAD").some((pair) => pair.base === "CNY"));
+  cad.reportedValues.marketValue.currency = "CAD";
+  usd.provenance.quantity = factsApi.provenance("manual", at);
+  assert.equal(api.brokerValuation(f, unavailable, "CAD").complete, false);
+  assert.equal(api.brokerValuation(f, unavailable, "CAD").subtotal, "10");
+  assert.equal(api.unitMoney("208.323569307271411", "USD"), "USD 208.32");
+  assert.equal(api.unitMoney("264", "USD"), "USD 264.00");
+});
+
 test("chart grouping, tiny weights and zero holdings share the exact table denominator and retain unknown costs", () => {
   const f = facts(),
     p = f.data.accounts[0].positions[0];
@@ -213,7 +285,7 @@ test("chart grouping, tiny weights and zero holdings share the exact table denom
   assert.equal(slices.at(-1).positions, 3);
   assert.equal(api.sumAmounts(slices.map((s) => s.value)), v.subtotal);
   assert.equal(api.weightLabel("0.000001"), "<0.01%");
-  assert.equal(api.unitMoney("0.00000001", "USD"), "USD 0.00000001");
+  assert.equal(api.unitMoney("0.00000001", "USD"), "USD 0.00");
   for (const row of f.data.accounts[0].positions) row.quantity = "0";
   const zero = api.valuePortfolio(f, pset, "USD");
   assert.equal(zero.subtotal, "0");
@@ -391,7 +463,7 @@ test("native-style fetch receiver supports manual holdings cache reads and quote
     assert.equal(valued.subtotal, subtotal);
   }
 });
-test("large cold sources receive all cache batches but a refresh pass never expands the producer quota or loops on missing quotes", async () => {
+test("large cold sources fill every batch serially and never loop on missing quotes", async () => {
   const f = facts(),
     seed = f.data.accounts[0].positions[0];
   f.data.accounts[0].positions = Array.from({ length: 53 }, (_, n) => ({
@@ -400,6 +472,7 @@ test("large cold sources receive all cache batches but a refresh pass never expa
     instrument: { symbol: `S${n}`, market: "XNAS", currency: "USD" },
   }));
   const calls = [];
+  let inFlight = 0;
   const result = await loader.loadHoldingsPrices({
     facts: f,
     currency: "USD",
@@ -412,6 +485,11 @@ test("large cold sources receive all cache batches but a refresh pass never expa
       const body = JSON.parse(init.body);
       calls.push({ url, body });
       if (body.pairs) return reply(batch([rate("USD", "2")], "folioview.fx-batch.v1"));
+      if (url.endsWith("quotes")) {
+        assert.equal(++inFlight, 1);
+        await tick();
+        inFlight--;
+      }
       return reply(api.missingQuotes(body.instruments, at));
     },
   });
@@ -421,10 +499,47 @@ test("large cold sources receive all cache batches but a refresh pass never expa
     cache.map((c) => c.body.instruments.length),
     [50, 3],
   );
-  assert.equal(refresh.length, 4);
+  assert.equal(refresh.length, 14);
+  assert.deepEqual(
+    refresh.flatMap((c) => c.body.instruments.map((i) => i.symbol)),
+    f.data.accounts[0].positions.map((position) => position.instrument.symbol),
+  );
   assert.ok(refresh.every((c) => c.body.instruments.length <= 4));
   assert.equal(result.prices.quotes.flatMap((b) => b.items).length, 53);
   assert.equal(api.valuePortfolio(f, result.prices, "USD").subtotal, null);
+});
+test("a cold 22-position import fills every quote and stops early if the service limits a pass", async () => {
+  const f = facts();
+  const seed = f.data.accounts[0].positions[0];
+  f.data.accounts[0].positions = Array.from({ length: 22 }, (_, n) => ({
+    ...copy(seed),
+    assetId: `asset_${n}`,
+    instrument: { ...seed.instrument, symbol: `S${n}` },
+  }));
+  for (const [limited, expectedCalls, expectedValued] of [
+    [false, 6, 22],
+    [true, 2, 4],
+  ]) {
+    let calls = 0;
+    const result = await loader.loadHoldingsPrices({
+      facts: f,
+      currency: "USD",
+      refresh: false,
+      origin: "",
+      signal: new AbortController().signal,
+      now: () => Date.parse(at),
+      publish() {},
+      fetch: async (url, init) => {
+        const { instruments } = JSON.parse(init.body);
+        if (url.endsWith("?cached=true")) return reply(api.missingQuotes(instruments, at));
+        if (++calls === 2 && limited) return new Response("{}", { status: 429 });
+        return reply(batch(instruments.map((instrument) => quote(instrument, "42.12"))));
+      },
+    });
+    assert.equal(calls, expectedCalls);
+    assert.equal(result.error, limited);
+    assert.equal(api.valuePortfolio(f, result.prices, "USD").valuedCount, expectedValued);
+  }
 });
 test("abort prevents any late publication even if an obsolete transport resolves; fresh default changes only request missing FX", async () => {
   const f = facts(),

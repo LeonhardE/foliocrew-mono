@@ -132,9 +132,27 @@
   margin-inline-start: auto;
   width: 34px;
   padding: 0;
+  display: grid;
+  place-items: center;
 }
 #fc-sample [data-sample-close] span {
-  font: 23px/1 system-ui;
+  display: grid;
+  place-items: center;
+}
+#fc-sample [data-sample-close] span::before,
+#fc-sample [data-sample-close] span::after {
+  content: "";
+  grid-area: 1 / 1;
+  width: 15px;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
+}
+#fc-sample [data-sample-close] span::before {
+  transform: rotate(45deg);
+}
+#fc-sample [data-sample-close] span::after {
+  transform: rotate(-45deg);
 }
 #fc-sample .sample-scroll {
   overflow-y: auto;

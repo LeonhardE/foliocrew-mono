@@ -314,17 +314,18 @@ acceptance with new-profile inputs; deployment alone does not upgrade those host
 
 ### Holdings valuation and allocation
 
-Saved holdings show securities value, item values and weights in the default portfolio currency.
+Saved holdings show the value of securities and reported cash in the default portfolio currency.
+Weights and gain/loss use securities only.
 The selector offers exactly that default followed by native position currencies in the selected
 source. A temporary choice never changes the saved facts or account setting; changing the default
 or source resets an invalid choice. Stock-market quote pages keep their native currency.
 
 Public price requests contain only canonical instruments or currency pairs, without holdings
 quantities, account/source identifiers, unit costs or credentials. Quote cache reads use batches of
-50 and at most two concurrent transports. One refresh pass is bounded to four groups of four
-instruments, within the producer's existing quotas; large/cold sources may remain partially priced.
-Explicit refresh checks the server cache again and can update remaining missing rows. There is no
-unbounded refresh loop, new worker, background timer, higher quota or paid subscription.
+50 and at most two concurrent transports. One refresh pass requests every missing or expired
+instrument once in groups of four. Quote refresh groups run sequentially because the producer
+admits one refresh at a time. The pass stops on a producer quota response. The button checks
+the server cache again before another pass.
 The loader invokes its supplied fetch function without an options-object receiver, so native
 browser fetch can start both quote and FX requests. Returning a restored source to its default
 display currency updates the visible selection immediately without another price request.
@@ -333,11 +334,17 @@ One Bank of Canada daily-reference observation supplies CAD legs for native/defa
 All display crosses are derived locally from that observation. Changing display currency therefore
 does not reread ciphertext or fetch another FX date. Exact decimal arithmetic calculates quantity,
 price, conversion, portfolio totals and the common allocation denominator; rounding happens only
-for display. Native per-unit prices and recorded costs retain their original currency and precision.
+for display. Native per-unit prices and recorded costs retain their original currency and precision. Unit prices
+and costs are displayed with two decimal places.
 
-Missing quotes/FX remain unknown and show a priced subtotal with N/M coverage. Weights and both
-charts use that same securities subtotal; reported cash, including signed or unknown balances, is
-separate. Older quotes/reference rates are identified, and failed refreshes retain dated values
+When a broker report provides better coverage, its recorded market values are shown while the
+quote requests run. The user can choose broker or market valuation. Each subtotal uses one price
+source and the displayed reference FX; market quote timestamps identify the actual observations.
+Broker values are excluded for manually changed quantities. Missing quotes/FX remain unknown and
+show a priced subtotal with N/M coverage. Weights and both
+charts use that same securities subtotal. Reported cash is also listed by native currency.
+Signed cash balances use the displayed reference rate in the headline, and unknown balances or
+missing FX leave the headline subtotal incomplete. Older quotes/reference rates are identified, and failed refreshes retain dated values
 with an error rather than replacing them with zero. Source dates and attribution live in a closed
 details section. Daily reference FX is not advertised as real-time or as an execution rate.
 

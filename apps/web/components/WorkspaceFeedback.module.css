@@ -157,7 +157,6 @@
   border-radius: 8px;
   background: var(--raised);
   color: var(--text);
-  font-size: 25px;
 }
 .dialogBody {
   padding: 20px 24px 28px;

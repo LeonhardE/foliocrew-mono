@@ -425,8 +425,9 @@ test("data settings open a smooth dialog, preserve original pending-name recover
   let pending = false;
   const names = {
     scope: "A:root:1",
-    ready: true,
-    enabled: true,
+    ready: false,
+    enabled: false,
+    loading: true,
     name: () => "PRIVATE NAME",
     pending: () => pending,
     clearError() {},
@@ -458,10 +459,18 @@ test("data settings open a smooth dialog, preserve original pending-name recover
   assert.equal(dialog().props.open, true);
   const input = all(tree, (n) => n.type === "input")[0];
   assert.equal(input.props.value, "PRIVATE NAME");
+  assert.ok(!input.props.disabled);
+  model.busy = "reading";
   input.props.onChange({ target: { value: "Renamed" } });
   tree = render();
+  assert.equal(button(tree, "manage.saveName").props.disabled, true);
   all(tree, (n) => n.type === "form")[0].props.onSubmit({ preventDefault() {} });
-  assert.equal(calls[0][0], "rename");
+  assert.deepEqual(calls, []);
+  model.busy = null;
+  tree = render();
+  assert.equal(button(tree, "manage.saveName").props.disabled, false);
+  all(tree, (n) => n.type === "form")[0].props.onSubmit({ preventDefault() {} });
+  assert.deepEqual(calls[0], ["rename", ref, "Renamed"]);
   pending = true;
   tree = render();
   assert.equal(button(tree, "manage.saveName").props.disabled, true);
@@ -483,7 +492,7 @@ test("data settings open a smooth dialog, preserve original pending-name recover
     "account-scope review remains reachable during preview",
   );
   assert.equal(
-    button(tree, "manage.add").props.disabled,
+    button(tree, "lifecycle.add").props.disabled,
     false,
     "preview can be saved as independent data",
   );
@@ -566,7 +575,7 @@ test("holdings choices hide confirmed deletion by source incarnation and retain 
   tree = render();
   assert.equal(all(tree, (n) => n.type === "select").length, 0);
   assert.ok(all(tree, (n) => n.props.children === "lifecycle.empty").length);
-  assert.equal(button(tree, "manage.add").props.disabled, false);
+  assert.equal(button(tree, "lifecycle.add").props.disabled, false);
   h.close();
 });
 

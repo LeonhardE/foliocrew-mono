@@ -168,6 +168,17 @@ export function HoldingsSourceBar({
     !model.sourceMutation &&
     !model.sourceCreationId &&
     model.sourceMetadata?.state === "active";
+  const normalizedName = draft.trim();
+  const canSaveName = Boolean(
+    selectedRef &&
+    editable &&
+    names.scope &&
+    !names.busy &&
+    !pending &&
+    (!names.ready || names.enabled) &&
+    normalizedName &&
+    normalizedName !== names.name(selectedRef),
+  );
   return (
     <>
       <div className={styles.sourceBar}>
@@ -245,7 +256,7 @@ export function HoldingsSourceBar({
               }
               onClick={model.beginNewSource}
             >
-              {t("manage.add")}
+              {t("lifecycle.add")}
             </button>
           )}
         </div>
@@ -288,7 +299,7 @@ export function HoldingsSourceBar({
           className={styles.nameForm}
           onSubmit={(e) => {
             e.preventDefault();
-            if (selectedRef) void names.rename(selectedRef, draft.trim());
+            if (selectedRef && canSaveName) void names.rename(selectedRef, normalizedName);
           }}
         >
           <label>
@@ -297,22 +308,11 @@ export function HoldingsSourceBar({
               value={draft}
               maxLength={80}
               placeholder={title}
-              disabled={!editable || names.busy || pending || !names.enabled}
+              disabled={names.busy}
               onChange={(e) => setDraft(e.target.value)}
             />
           </label>
-          <button
-            className={styles.primary}
-            type="submit"
-            disabled={
-              !editable ||
-              names.busy ||
-              pending ||
-              !names.enabled ||
-              !draft.trim() ||
-              draft.trim() === names.name(selectedRef!)
-            }
-          >
+          <button className={styles.primary} type="submit" disabled={!canSaveName}>
             {t(names.busy ? "manage.savingName" : "manage.saveName")}
           </button>
         </form>

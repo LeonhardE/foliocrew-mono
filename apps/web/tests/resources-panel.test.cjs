@@ -511,7 +511,7 @@ test("disconnected data retains readable owner history while the upload control 
   );
   assert.ok(html.includes("9,007,199,254,740,993"));
   assert.ok(!html.includes('type="file"'));
-  assert.ok(html.includes("Add holdings"));
+  assert.ok(html.includes("New holdings source"));
 });
 
 test("locked and renewal-only phases hide source management and all prior private facts", () => {

@@ -834,11 +834,11 @@ export default function WorkspaceShell() {
           <span>{t("market.explore")}</span>
           <button
             type="button"
-            className="dialog-close"
+            className="dialog-close dialog-icon-button"
             aria-label={t("market.closePicker")}
             onClick={() => pickerDialog.current?.close()}
           >
-            ×
+            <span className="dialog-close-icon" aria-hidden="true" />
           </button>
         </div>
         {renderPicker("mobile")}
