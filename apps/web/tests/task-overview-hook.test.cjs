@@ -550,6 +550,25 @@ test("explicit metadata refresh during an overview cannot replay old metadata or
   }
 });
 
+test("a fresh Task Center tab keeps names and report counts without new overview reads", async () => {
+  const h = harness({ count: 3 });
+  try {
+    const before = await h.ready();
+    assert.equal(Object.keys(before.m.taskNames).length, 3);
+    const reads = h.calls.length;
+    h.hide(true);
+    assert.equal(Object.keys(h.current.m.taskNames).length, 0);
+    h.advance(29 * 60 * 1000);
+    h.hide(false);
+    const after = await h.ready();
+    assert.deepEqual(after.m.taskNames, before.m.taskNames);
+    assert.deepEqual(after.r.unreadCounts, before.r.unreadCounts);
+    assert.equal(h.calls.length, reads);
+  } finally {
+    h.close();
+  }
+});
+
 test("visible return waits for its metadata receipt and uses inline packets before requesting names", async () => {
   let block = false,
     release,
@@ -569,7 +588,7 @@ test("visible return waits for its metadata receipt and uses inline packets befo
     const start = h.calls.length,
       opens = h.opens.length;
     h.hide(true);
-    h.advance(30001);
+    h.advance(30 * 60 * 1000 + 1);
     block = true;
     h.hide(false);
     const waiting = await h.ready();
@@ -625,7 +644,7 @@ test("visible overview fallback reads only uncovered names through strictly shri
     try {
       await h.ready();
       h.hide(true);
-      h.advance(30001);
+      h.advance(30 * 60 * 1000 + 1);
       block = true;
       const start = h.calls.length;
       h.hide(false);
@@ -682,7 +701,7 @@ test("a non-503 metadata failure retains the list and waits for an explicit retr
   try {
     await h.ready();
     h.hide(true);
-    h.advance(30001);
+    h.advance(30 * 60 * 1000 + 1);
     failed = true;
     const start = h.calls.length;
     h.hide(false);

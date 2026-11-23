@@ -265,8 +265,8 @@ function harness({ transport, center, timers, clock = Date, resultsVisible = tru
       hash = v;
       events.get("hashchange")?.();
     },
-    hidden() {
-      visible = false;
+    hidden(hidden = true) {
+      visible = !hidden;
       docEvents.get("visibilitychange")?.();
     },
     close() {
@@ -296,6 +296,23 @@ test("task reports read the persistent feed and retire old bookmarks locally", a
     h.close();
   }
 });
+test("returning to a fresh Reports tab preserves its list without another read", async () => {
+  const h = harness();
+  try {
+    const original = await h.ready();
+    assert.equal(original.rows[0].kind, "persistent");
+    const requestCount = h.calls.length;
+    h.hidden();
+    assert.equal(h.render().rows.length, 0);
+    h.hidden(false);
+    const resumed = await h.ready();
+    assert.deepEqual(resumed.rows, original.rows);
+    assert.equal(h.calls.length, requestCount);
+  } finally {
+    h.close();
+  }
+});
+
 test("title preload never marks read; presentation performs exactly one signed update, and history retains the original Agent", async () => {
   const h = harness();
   let m = await h.ready();

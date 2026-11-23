@@ -58,7 +58,7 @@ export function CurrencyPreferencesProvider({ children }: { children: ReactNode 
     store.start();
     const visible = () => {
       if (typeof document !== "undefined" && document.visibilityState === "visible")
-        store.refresh();
+        store.refresh(false, true);
     };
     if (typeof document !== "undefined") document.addEventListener("visibilitychange", visible);
     return () => {

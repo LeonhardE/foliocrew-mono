@@ -6,7 +6,7 @@ import type { HoldingsWorkspace } from "./useHoldingsWorkspace";
 import type { TaskCenterModel } from "./useTaskCenter";
 import type { TaskModel } from "./useTasks";
 import type { PersistentWorkspaceModel } from "./usePersistentWorkspace";
-import { DisplayLru, untilSignal } from "@/lib/workspace-cache";
+import { DisplayLru, hasFreshWorkspaceDisplay, untilSignal } from "@/lib/workspace-cache";
 import { readReportProviders } from "@/lib/report-provider-attribution";
 import { readInboxResultLink, clearInboxResultLink } from "@/lib/inbox-link";
 import {
@@ -37,14 +37,14 @@ export function useTaskResults(
     [visible, setVisible] = useState(
       () => typeof document === "undefined" || document.visibilityState !== "hidden",
     );
-  const scope =
-    visible &&
+  const sessionScope =
     auth.status === "authenticated" &&
     workspace.owner === auth.sessionKey &&
     workspace.phase === "unlocked" &&
     !workspace.needsDeviceApproval
       ? `${auth.sessionKey}:${workspace.vault?.vaultId}:${workspace.vaultGeneration}`
       : null;
+  const scope = visible ? sessionScope : null;
   const [state, setState] = useState<{
     scope: string | null;
     rows: ResultRow[];
@@ -92,6 +92,11 @@ export function useTaskResults(
       }
     >(),
   );
+  const tabReturn = useRef(false);
+  const freshRead = (at: number) =>
+    tabReturn.current
+      ? hasFreshWorkspaceDisplay(at, Date.now())
+      : at > 0 && Date.now() - at >= 0 && Date.now() - at < 30_000;
   const rows = useRef(new Map<string, ResultRow>()),
     feed = useRef(initialFeed()),
     jobs = useRef(new Set<AbortController>()),
@@ -112,7 +117,7 @@ export function useTaskResults(
     titlePending = useRef(new Set<string>()),
     titleActive = useRef(0);
   const reportProviders = useRef({
-    scope,
+    scope: sessionScope,
     providers: {} as Record<string, "muse" | "chatgpt">,
     at: 0,
     ready: false,
@@ -125,6 +130,7 @@ export function useTaskResults(
     attemptedRead = useRef(new Set<string>()),
     scroll = useRef(new Map<string, number>());
   const link = useRef<ReturnType<typeof readInboxResultLink>>(null),
+    resolvedLink = useRef<{ scope: string; hash: string; at: number } | null>(null),
     [linkedRow, setLinkedRow] = useState<ResultRow | null>(null),
     [retiredReportLink, setRetiredReportLink] = useState(false),
     channel = useRef<BroadcastChannel | null>(null);
@@ -254,13 +260,12 @@ export function useTaskResults(
       const start = live.current,
         epoch = generation.current,
         record = reportProviders.current;
-      const age = Date.now() - record.at;
       if (
         !start.scope ||
         !start.active ||
         record.scope !== start.scope ||
         record.loading ||
-        (!force && record.ready && !record.error && age >= 0 && age < 30000)
+        (!force && record.ready && !record.error && freshRead(record.at))
       )
         return;
       const current = () =>
@@ -337,8 +342,7 @@ export function useTaskResults(
         if (force) reloadAfter.current = true;
         return;
       }
-      if (!start.scope || !start.active || (!force && !more && Date.now() - fresh.current < 30000))
-        return;
+      if (!start.scope || !start.active || (!force && !more && freshRead(fresh.current))) return;
       loading.current = true;
       const serial = ++loadSerial.current,
         epoch = generation.current;
@@ -434,6 +438,7 @@ export function useTaskResults(
   const pump = useRef<() => void>(() => {});
   pump.current = () => {
     const start = live.current;
+    const epoch = generation.current;
     if (!start.scope || !start.active) return;
     while (titleActive.current < 2 && titleQueue.current.length) {
       const row = titleQueue.current.shift()!,
@@ -445,6 +450,7 @@ export function useTaskResults(
       void read(row, false)
         .then((detail) => {
           if (
+            generation.current === epoch &&
             live.current.scope === start.scope &&
             JSON.stringify(immutableMetadata(rows.current.get(key)?.metadata ?? {})) === version
           )
@@ -452,6 +458,7 @@ export function useTaskResults(
         })
         .catch((error) => {
           if (
+            generation.current === epoch &&
             live.current.scope === start.scope &&
             live.current.active &&
             error?.message !== "cancelled"
@@ -459,7 +466,7 @@ export function useTaskResults(
             failures.current.add(key);
         })
         .finally(() => {
-          if (live.current.scope === start.scope) {
+          if (generation.current === epoch && live.current.scope === start.scope) {
             titlePending.current.delete(key);
             titleActive.current--;
             update({ revision: ++uiRevision.current }, start.scope);
@@ -695,8 +702,12 @@ export function useTaskResults(
     const changed = () => {
       const v = document.visibilityState !== "hidden";
       live.current.visible = v;
+      tabReturn.current = v && live.current.active;
       setVisible(v);
-      if (!v) for (const j of jobs.current) j.abort();
+      if (!v) {
+        for (const j of jobs.current) j.abort();
+        setState((previous) => ({ ...previous, loading: false, busy: false }));
+      }
     };
     document.addEventListener("visibilitychange", changed);
     return () => document.removeEventListener("visibilitychange", changed);
@@ -708,7 +719,7 @@ export function useTaskResults(
     for (const j of jobs.current) j.abort();
     rows.current.clear();
     reportProviders.current = {
-      scope,
+      scope: sessionScope,
       providers: {},
       at: 0,
       ready: false,
@@ -725,18 +736,20 @@ export function useTaskResults(
     cache.current.clear();
     attributions.current.clear();
     taskPages.current.clear();
+    resolvedLink.current = null;
     checkedRunResults.current = "";
     reloadAfter.current = false;
     pending.current = null;
     attemptedRead.current.clear();
     fresh.current = 0;
+    tabReturn.current = false;
     loading.current = false;
     evicted.current = false;
     scroll.current.clear();
     selections.current.clear();
     setFilters({});
     setState({
-      scope,
+      scope: sessionScope,
       rows: [],
       loading: false,
       ready: false,
@@ -748,8 +761,9 @@ export function useTaskResults(
       revision: 0,
       selection: null,
     });
-  }, [scope]);
+  }, [sessionScope]);
   useEffect(() => {
+    if (!active) tabReturn.current = false;
     if (scope && active) {
       void load();
       void loadReportProviders();
@@ -765,8 +779,9 @@ export function useTaskResults(
       if (reportProviders.current.scope === scope) reportProviders.current.loading = false;
       loading.current = false;
       reloadAfter.current = false;
-      checkedRunResults.current = "";
       titleQueue.current = [];
+      titlePending.current.clear();
+      titleActive.current = 0;
       for (const job of jobs.current) job.abort();
       update({ loading: false, busy: false }, scope);
     };
@@ -783,7 +798,7 @@ export function useTaskResults(
         (!force &&
           !more &&
           previous &&
-          Date.now() - previous.fresh < 30000 &&
+          freshRead(previous.fresh) &&
           previous.observed === observedResults &&
           previous.rules === rules) ||
         (!force && more && previous?.done)
@@ -914,31 +929,46 @@ export function useTaskResults(
   useEffect(() => {
     if (!active) return;
     let stopped = false;
-    const resolve = async () => {
-      const value = readInboxResultLink(window.location.hash);
+    const resolve = async (revisit: boolean) => {
+      const hash = window.location.hash;
+      const value = readInboxResultLink(hash);
       link.current = value;
-      setLinkedRow(null);
       const retired = value !== null && !value.resultId.startsWith("presult_");
       setRetiredReportLink(retired);
-      if (!value || retired || !scope) return;
+      if (!scope) return;
+      const saved = resolvedLink.current;
+      if (
+        revisit &&
+        tabReturn.current &&
+        saved?.scope === scope &&
+        saved.hash === hash &&
+        hasFreshWorkspaceDisplay(saved.at, Date.now())
+      )
+        return;
+      resolvedLink.current = null;
+      setLinkedRow(null);
+      if (!value || retired) return;
       try {
         if (value.revision !== undefined && value.revision !== 1) throw Error("not_found");
         const raw = await api(resultRecordPath(workspace.vault!.vaultId, value.resultId));
         const meta = persistentResultMetadata(raw.metadata);
         await api(`/api/v2/tasks/${meta.taskId}`, { fresh: true });
-        if (!stopped && link.current === value)
+        if (!stopped && link.current === value) {
+          resolvedLink.current = { scope, hash, at: Date.now() };
           setLinkedRow({ kind: "persistent", metadata: meta, triggerKind: "legacy_unknown" });
+        }
       } catch {
         if (!stopped && link.current === value) update({ error: "not_found" });
       }
     };
-    void resolve();
-    window.addEventListener("hashchange", resolve);
-    window.addEventListener("popstate", resolve);
+    void resolve(true);
+    const navigate = () => void resolve(false);
+    window.addEventListener("hashchange", navigate);
+    window.addEventListener("popstate", navigate);
     return () => {
       stopped = true;
-      window.removeEventListener("hashchange", resolve);
-      window.removeEventListener("popstate", resolve);
+      window.removeEventListener("hashchange", navigate);
+      window.removeEventListener("popstate", navigate);
     };
   }, [scope, active, api, update, workspace.vault?.vaultId]);
   useEffect(() => {
@@ -971,6 +1001,7 @@ export function useTaskResults(
       loadSerial.current++;
       loading.current = false;
       fresh.current = 0;
+      resolvedLink.current = null;
       taskPages.current.delete(detail.taskId);
       cache.current.clear();
       titles.current.clear();

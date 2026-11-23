@@ -619,7 +619,7 @@ test("metadata list does not decrypt task names; opening is explicit; saved hand
   );
   h.unmount();
 });
-test("incomplete drafts autosave sealed and restore only after re-unlock; hidden page clears plaintext immediately", async () => {
+test("an incomplete draft remains hidden in the background and returns with its sealed revision", async () => {
   const h = harness({ rows: [] });
   let model = await h.ready();
   model.startNew();
@@ -634,7 +634,7 @@ test("incomplete drafts autosave sealed and restore only after re-unlock; hidden
   h.render();
   h.visibility(true);
   model = await h.ready();
-  assert.equal(model.form, null);
+  assert.equal(model.form.name, "PRIVATE_TASK");
   assert.equal(model.drafts.length, 1);
   await model.restoreDraft("new");
   model = await h.drain();
@@ -928,7 +928,7 @@ test("deferred HTTP body is fenced before private open after lock; deadlines rel
   slow.resolve(content());
   h2.unmount();
 });
-test("returning to a verified task reuses its exact current detail until refresh or hiding", async () => {
+test("returning to a verified task reuses its detail across hiding and revalidates on explicit refresh", async () => {
   const a = meta();
   const b = meta(1, { taskId: "task_B" });
   const h = harness({
@@ -956,7 +956,7 @@ test("returning to a verified task reuses its exact current detail until refresh
   h.visibility(true);
   model = await h.ready();
   await model.openTask(a.taskId);
-  assert.equal(countA(), reads + 2);
+  assert.equal(countA(), reads + 1);
   h.unmount();
 });
 
@@ -1442,7 +1442,7 @@ test("internal navigation preserves the editor, sealed draft, selection and veri
   assert.equal(Object.keys(model.taskNames).length, 0);
   h.visibility(true);
   model = await h.drain();
-  assert.equal(model.form, null);
+  assert.equal(model.form.goal, "PRIVATE_UNSAVED_GOAL");
   h.unmount();
 });
 

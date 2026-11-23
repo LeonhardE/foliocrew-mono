@@ -1,3 +1,11 @@
+const WORKSPACE_DISPLAY_FRESH_MS = 30 * 60 * 1000;
+
+/** Display reuse only. Mutations still read and verify their current authority. */
+export function hasFreshWorkspaceDisplay(checkedAt: number | null | undefined, now: number) {
+  const age = checkedAt ? now - checkedAt : Infinity;
+  return age >= 0 && age < WORKSPACE_DISPLAY_FRESH_MS;
+}
+
 /** Settle even when a transport/SDK ignores cancellation. No operation is replayed. */
 export function untilSignal<T>(
   promise: Promise<T>,

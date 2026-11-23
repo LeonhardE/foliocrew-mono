@@ -16,6 +16,7 @@ const { CurrencyPreferenceStore } = compile(
   "../lib/currency-preferences-store.ts",
   {
     "./currency-preferences": contract,
+    "./workspace-cache": compile("../lib/workspace-cache.ts"),
   },
   { setTimeout, clearTimeout },
 );

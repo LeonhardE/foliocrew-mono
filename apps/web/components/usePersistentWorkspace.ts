@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "./AuthProvider";
-import { AGENT_VIEW_RESUME_MS } from "@/lib/agent-connections";
+import { hasFreshWorkspaceDisplay } from "@/lib/workspace-cache";
 import type { HoldingsWorkspace } from "./useHoldingsWorkspace";
 import {
   connectionSummary,
@@ -357,10 +357,7 @@ export function usePersistentWorkspace(
         !start.hubOrigin ||
         !start.active ||
         !start.auth.agentHubConfigured ||
-        (!force &&
-          fresh.current !== 0 &&
-          Date.now() >= fresh.current &&
-          Date.now() - fresh.current < AGENT_VIEW_RESUME_MS)
+        (!force && hasFreshWorkspaceDisplay(fresh.current, Date.now()))
       )
         return null;
       const token = Symbol();

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "./AuthProvider";
 import type { HoldingsWorkspace } from "./useHoldingsWorkspace";
 import { RESOURCE_DISPLAY_PATH } from "@/lib/resource-display";
-import { untilSignal } from "@/lib/workspace-cache";
+import { hasFreshWorkspaceDisplay, untilSignal } from "@/lib/workspace-cache";
 type J = Record<string, any>;
 type ReadGuard = { signal: AbortSignal; assert: () => void };
 const C = "folioview.agent-workspace.v2.0",
@@ -30,8 +30,7 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
     [visible, setVisible] = useState(
       () => typeof document === "undefined" || document.visibilityState !== "hidden",
     );
-  const scope =
-    visible &&
+  const sessionScope =
     auth.status === "authenticated" &&
     auth.agentHubConfigured &&
     workspace.owner === auth.sessionKey &&
@@ -40,6 +39,7 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
     workspace.vault
       ? `${auth.sessionKey}:${workspace.vault.vaultId}:${workspace.vault.rootKeyId}:${workspace.vaultGeneration}${workspace.vault.userAuthority ? ":user" : ""}`
       : null;
+  const scope = visible ? sessionScope : null;
   const [state, setState] = useState<{
     scope: string | null;
     ready: boolean;
@@ -63,6 +63,7 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
   live.current = { scope, workspace, auth, active, visible };
   const jobs = useRef(new Set<AbortController>()),
     fresh = useRef(0),
+    tabReturn = useRef(false),
     readSerial = useRef(0),
     readBusy = useRef(false),
     readLane = useRef<AbortController | null>(null),
@@ -250,7 +251,10 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
         !start.active ||
         readBusy.current ||
         Boolean(writing.current) ||
-        (!force && fresh.current > 0 && Date.now() - fresh.current < 30000)
+        (!force &&
+          (tabReturn.current
+            ? hasFreshWorkspaceDisplay(fresh.current, Date.now())
+            : fresh.current > 0 && Date.now() - fresh.current < 30_000))
       )
         return;
       const serial = ++readSerial.current;
@@ -545,6 +549,7 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
     const changed = () => {
       const v = document.visibilityState !== "hidden";
       live.current.visible = v;
+      tabReturn.current = v && live.current.active;
       setVisible(v);
       if (!v) for (const j of jobs.current) j.abort();
     };
@@ -559,8 +564,9 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
     writing.current = null;
     pending.current.clear();
     fresh.current = 0;
+    tabReturn.current = false;
     setState({
-      scope,
+      scope: sessionScope,
       ready: false,
       enabled: false,
       loading: false,
@@ -572,7 +578,7 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
     return () => {
       for (const j of jobs.current) j.abort();
     };
-  }, [scope]);
+  }, [sessionScope]);
   const refsVersion = workspace.sources
     .map((s) => displayRefKey(s.resourceRef) + ":" + s.sourceEpoch)
     .sort()
@@ -584,13 +590,14 @@ export function useDisplayNames(workspace: HoldingsWorkspace, active: boolean) {
       void load(true);
     }
   }, [
-    scope,
+    sessionScope,
     refsVersion,
     workspace.vault?.version,
     workspace.resourceDisplay?.readKey,
     cancelRead,
   ]);
   useEffect(() => {
+    if (!active) tabReturn.current = false;
     if (scope && active) void load();
     else cancelRead();
   }, [scope, active, load, cancelRead]);
