@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { useAuth } from "./AuthProvider";
 import type { HoldingsWorkspace } from "./useHoldingsWorkspace";
@@ -84,12 +84,14 @@ export function PersistentAgentsPanel({
   const [accountBusy, setAccountBusy] = useState(false);
   const [bridge, setBridge] = useState<NativeOwnerBridge | null>(null),
     [account, setAccount] = useState<{ owner: string; value: Json } | null>(null),
+    [confirmedAccountOwner, setConfirmedAccountOwner] = useState<string | null>(null),
     [help, setHelp] = useState<string | null>(null),
     [copied, setCopied] = useState(false),
     [handoffReady, setHandoffReady] = useState(false),
     [linkError, setLinkError] = useState(false),
     [now, setNow] = useState(() => Date.now() / 1000);
   const handoff = useRef<AgentAuthorizationHandoff | null>(null),
+    reviewedHandoff = useRef<{ value: AgentAuthorizationHandoff; scope: string } | null>(null),
     oldOwner = useRef(model.owner);
   const scope = model.unlocked
     ? `${model.owner}:${workspace.vault?.vaultId ?? "unavailable"}:${workspace.vaultGeneration}`
@@ -115,13 +117,16 @@ export function PersistentAgentsPanel({
     return () => clearTimeout(timer);
   }, [active, model.unlocked, nextClockUpdate]);
   useEffect(() => {
+    reviewedHandoff.current = null;
     setAuthorization(null);
   }, [scope]);
   useEffect(() => {
     if (oldOwner.current && oldOwner.current !== model.owner) {
       handoff.current = null;
+      reviewedHandoff.current = null;
       setHandoffReady(false);
       setAccount(null);
+      setConfirmedAccountOwner(null);
     }
     oldOwner.current = model.owner;
   }, [model.owner]);
@@ -143,7 +148,8 @@ export function PersistentAgentsPanel({
     let attached: NativeOwnerBridge | null = null;
     try {
       const value = nativeHandoff(window.location.search);
-      if (value)
+      if (value) {
+        setConfirmedAccountOwner(null);
         void connectNativeOwnerBridge(value, trusted, abort.signal)
           .then((v) => {
             if (abort.signal.aborted) v.close();
@@ -155,6 +161,7 @@ export function PersistentAgentsPanel({
           .catch(() => {
             if (!abort.signal.aborted) setLinkError(true);
           });
+      }
     } catch {
       setLinkError(true);
     }
@@ -179,12 +186,18 @@ export function PersistentAgentsPanel({
       });
     return () => abort.abort();
   }, [bridge, model.owner, active, auth.requestNativeAccount]);
-  const readAuthorization = async () => {
+  const readAuthorization = useCallback(async () => {
     const original = live.current.scope,
       value = handoff.current;
     if (!original || !value) return;
+    reviewedHandoff.current = { value, scope: original };
     const reviewed = await model.execute((c) => c.inspectAuthorization(value));
-    if (reviewed && live.current.scope === original)
+    if (
+      reviewed &&
+      live.current.active &&
+      live.current.scope === original &&
+      handoff.current === value
+    )
       setAuthorization({
         scope: original,
         value: reviewed,
@@ -193,25 +206,31 @@ export function PersistentAgentsPanel({
           ? reviewed.tasks.map((task: PersistentTask) => task.taskId)
           : [],
       });
-  };
+  }, [model.execute]);
+  useEffect(() => {
+    const value = handoff.current;
+    if (!active || !model.enabled || model.busy || !scope || !handoffReady || !value) return;
+    if (reviewedHandoff.current?.value === value && reviewedHandoff.current.scope === scope) return;
+    void readAuthorization();
+  }, [active, model.enabled, model.busy, scope, handoffReady, readAuthorization]);
   const approveAccount = async () => {
-    if (!bridge || !model.owner || !workspace.vault) return;
-    if (accountBusy || !live.current.scope) return;
+    if (!bridge || !model.owner || !accountVault || accountBusy) return;
     const owner = model.owner;
     setAccountBusy(true);
     try {
       await auth.requestNativeAccount(
         bridge,
         "approve",
-        { contractVersion: CONTRACT, vaultId: workspace.vault.vaultId },
+        { contractVersion: CONTRACT, vaultId: accountVault.vaultId },
         owner,
       );
-      if (live.current.owner !== owner) return;
+      if (live.current.owner !== owner || !live.current.active) return;
       setAccount(null);
+      setConfirmedAccountOwner(owner);
       bridge.close();
       setBridge(null);
       window.history.replaceState(null, "", "/agents");
-      await model.reload();
+      if (live.current.scope) await model.reload();
     } catch {
       if (live.current.owner === owner) setLinkError(true);
     } finally {
@@ -227,6 +246,7 @@ export function PersistentAgentsPanel({
     );
     if (result && live.current.scope === value.scope) {
       handoff.current = null;
+      reviewedHandoff.current = null;
       setHandoffReady(false);
       setAuthorization(null);
       await model.reload();
@@ -264,20 +284,24 @@ export function PersistentAgentsPanel({
     checking = model.unlocked && !ready && !readError,
     canChangeConnection = ready && !readError && !model.busy;
   const groups = providerGroups(ready ? model.views : [], ready ? model.providerStates : {}, now);
-  const helpHasConnection = Boolean(groups.find((group) => group.provider === help)?.current);
+  const helpGroup = groups.find((group) => group.provider === help);
+  const helpHasConnection = Boolean(helpGroup?.current || helpGroup?.accountStep);
+  const helpIsPairing = helpGroup?.accountStep === "pairingNeeded";
   const connectorOrigin = brandOrigin ?? origin;
   const connectorAddress = connectorOrigin && `${connectorOrigin}/mcp/v3`;
   const connectionPrompt =
-    connectorAddress && help
-      ? help === "chatgpt"
-        ? t("chatgptConnectionPrompt", { address: connectorAddress })
-        : connectorOrigin === BRANDED_AGENT_ORIGIN
-          ? t("museConnectionPromptWithClient", {
-              address: connectorAddress,
-              clientId: PUBLIC_MUSE_CLIENT_ID,
-            })
-          : t("museConnectionPrompt", { address: connectorAddress })
-      : null;
+    help && helpIsPairing
+      ? t("pairingPrompt")
+      : connectorAddress && help
+        ? help === "chatgpt"
+          ? t("chatgptConnectionPrompt", { address: connectorAddress })
+          : connectorOrigin === BRANDED_AGENT_ORIGIN
+            ? t("museConnectionPromptWithClient", {
+                address: connectorAddress,
+                clientId: PUBLIC_MUSE_CLIENT_ID,
+              })
+            : t("museConnectionPrompt", { address: connectorAddress })
+        : null;
   const needsPasskey = workspace.phase === "needs-vault";
   const checkingPasskey = workspace.phase === "checking";
   const taskLink = (event: MouseEvent<HTMLAnchorElement>, taskId: string) => {
@@ -294,8 +318,19 @@ export function PersistentAgentsPanel({
   };
   const currentAuthorization = authorization?.scope === scope ? authorization : null,
     currentAccount = account?.owner === model.owner ? account.value : null;
+  // Account OAuth only links a signed-in user's existing vault. The separate
+  // Agent pairing operation still signs in the unlocked Owner Worker.
+  const accountVault =
+    currentAccount &&
+    workspace.authenticated &&
+    workspace.owner === model.owner &&
+    (workspace.phase === "locked" || workspace.phase === "unlocked")
+      ? workspace.vault
+      : null;
+  const accountConfirmed = Boolean(model.owner && confirmedAccountOwner === model.owner);
   const cancel = () => {
     handoff.current = null;
+    reviewedHandoff.current = null;
     setHandoffReady(false);
     setAuthorization(null);
   };
@@ -346,7 +381,7 @@ export function PersistentAgentsPanel({
             {t("signIn")}
           </button>
         </div>
-      ) : !model.unlocked ? (
+      ) : !model.unlocked && !accountVault && !accountConfirmed ? (
         <div className={styles.unlock}>
           <p role={checkingPasskey ? "status" : undefined}>
             {t(checkingPasskey ? "loading" : needsPasskey ? "setUpPasskeyHelp" : "unlockHelp")}
@@ -391,10 +426,19 @@ export function PersistentAgentsPanel({
           <p>{t("accountHelp")}</p>
           <button
             className={styles.primary}
-            disabled={accountBusy || !model.unlocked || !workspace.canWriteState}
+            disabled={accountBusy || !accountVault}
             onClick={() => void approveAccount()}
           >
             {t("confirmAccount")}
+          </button>
+        </div>
+      )}
+      {accountConfirmed && (
+        <div className={styles.setup}>
+          <h2>{t("accountConfirmed")}</h2>
+          <p role="status">{t("accountReturnHelp")}</p>
+          <button className={styles.primary} onClick={() => window.close()}>
+            {t("returnToAuthorization")}
           </button>
         </div>
       )}
@@ -506,7 +550,18 @@ export function PersistentAgentsPanel({
       <div className={styles.connectionGrid}>
         {groups.map((group) => {
           const view = group.current,
+            pending = group.pending,
             expiry = credentialExpiry(view),
+            action =
+              group.accountStep === "accountConnecting"
+                ? null
+                : group.accountStep === "pairingNeeded"
+                  ? "finishPairing"
+                  : group.accountStep === "accountLinkExpired"
+                    ? "retryAccountLink"
+                    : view?.connection.status === "active"
+                      ? "reauthorizeButton"
+                      : "connect",
             value = !model.unlocked
               ? "unlockStatus"
               : !ready
@@ -515,9 +570,7 @@ export function PersistentAgentsPanel({
                   : "loading"
                 : group.reviewRequired
                   ? "reviewRequired"
-                  : view
-                    ? status(view)
-                    : "notConnected";
+                  : (group.accountStep ?? (view ? status(view) : "notConnected"));
           return (
             <article
               key={group.provider}
@@ -536,8 +589,13 @@ export function PersistentAgentsPanel({
                   {t(checkingPasskey ? "loading" : needsPasskey ? "passkeyRequired" : value)}
                 </span>
               </div>
-              {expiry && <p className={styles.note}>{expiry}</p>}
+              {expiry && !group.accountStep && <p className={styles.note}>{expiry}</p>}
               {group.reviewRequired && <p className={styles.note}>{t("reviewConnections")}</p>}
+              {group.accountStep && (
+                <p className={styles.note}>
+                  {t(`${group.accountStep}Help`, { provider: providerName(group.provider) })}
+                </p>
+              )}
               {model.unlocked && view?.tasks.length ? (
                 <ul className={styles.taskLinks}>
                   {view.tasks.map((task) => (
@@ -553,23 +611,23 @@ export function PersistentAgentsPanel({
                 </ul>
               ) : null}
               <div className={styles.actions}>
-                <button
-                  className={styles.primary}
-                  disabled={!connectorAddress || !model.enabled || !canChangeConnection}
-                  onClick={() => {
-                    setHelp(group.provider);
-                    setCopied(false);
-                  }}
-                >
-                  {t(view?.connection.status === "active" ? "reauthorizeButton" : "connect", {
-                    provider: providerName(group.provider),
-                  })}
-                </button>
-                {view?.pending && view.connection.status === "active" && (
+                {action && (
+                  <button
+                    className={styles.primary}
+                    disabled={!connectorAddress || !model.enabled || !canChangeConnection}
+                    onClick={() => {
+                      setHelp(group.provider);
+                      setCopied(false);
+                    }}
+                  >
+                    {t(action, { provider: providerName(group.provider) })}
+                  </button>
+                )}
+                {pending && (
                   <button
                     className={styles.secondary}
                     disabled={!canChangeConnection || !workspace.canWriteState}
-                    onClick={() => void model.continueOperation(view.connection)}
+                    onClick={() => void model.continueOperation(pending.connection)}
                   >
                     {t("continue")}
                   </button>
@@ -586,35 +644,6 @@ export function PersistentAgentsPanel({
                   </button>
                 )}
               </div>
-              {group.history.length > 0 && (
-                <details className={styles.connectionHistory}>
-                  <summary>{t("history", { count: group.history.length })}</summary>
-                  {group.history.map((old) => (
-                    <div className={styles.historyRow} key={old.connection.connectionId}>
-                      <span>{t(old.credential ? status(old) : "previousConnection")}</span>
-                      {credentialExpiry(old)}
-                      {old.pending && old.connection.status === "active" && (
-                        <button
-                          disabled={!canChangeConnection || !workspace.canWriteState}
-                          onClick={() => void model.continueOperation(old.connection)}
-                        >
-                          {t("continue")}
-                        </button>
-                      )}
-                      {old.connection.status === "active" && (
-                        <button
-                          disabled={!canChangeConnection}
-                          onClick={() => {
-                            void model.disconnect(old.connection);
-                          }}
-                        >
-                          {t("disconnect")}
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </details>
-              )}
             </article>
           );
         })}
@@ -637,9 +666,16 @@ export function PersistentAgentsPanel({
         {help && connectionPrompt && (
           <>
             <p id="connect-agent-instructions">
-              {t(helpHasConnection ? "reconnectHelp" : "connectHelp", {
-                provider: providerName(help),
-              })}
+              {t(
+                helpIsPairing
+                  ? "pairingNeededHelp"
+                  : helpHasConnection
+                    ? "reconnectHelp"
+                    : "connectHelp",
+                {
+                  provider: providerName(help),
+                },
+              )}
             </p>
             <textarea
               aria-label={t("connectionMessage")}

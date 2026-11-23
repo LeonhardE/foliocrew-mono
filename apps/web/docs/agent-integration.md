@@ -32,6 +32,8 @@ Native OAuth approval uses a branded source/origin/request/nonce-bound MessageCh
 to the original Hub window, limited to `pending` and `approve`. It severs the opener
 before transporting a transient Google credential, fences account/visibility changes
 and returns no OAuth code, token or callback URL to the application or Agent.
+Account confirmation uses the authenticated Owner's existing vault record. An unlocked
+Worker is required when the Owner signs the separate Agent pairing, not for account linking.
 
 The public Agent link configuration retains its original response by default. Web asks
 for `?version=2` to discover the legacy Hub, the optionally admitted `https://mcp.foliocrew.app`,
@@ -121,8 +123,8 @@ retention and native schedule execution still require the separate live validati
 
 ## Provider connection management
 
-The Agent management page groups each provider into one current card and a folded
-history. A canonical slot selects its exact verified credential reference. Before
+The Agent management page gives each provider one current card, with any in-progress
+account link or pairing shown on that card. A canonical slot selects its exact verified credential reference. Before
 migration, one live credential may be shown; multiple live legacy credentials
 require review and never acquire an arbitrary winner. Expired history does not
 contradict the current card. Task links use in-workspace navigation to preserve
