@@ -687,6 +687,43 @@ test("private requests use a fresh SDK token, fixed API route, and no credential
   assert.equal(harness.requests.length, 2);
 });
 
+test("manual quote refresh sends the workspace token only to the admitted Market route", async () => {
+  const market = "https://market-api-630815932903.northamerica-northeast2.run.app";
+  const route = "/api/valuation/quotes/manual";
+  const json = { instruments: [{ symbol: "AAPL", market: "XNAS", currency: "USD" }] };
+  for (const origin of [market, "https://other.example.com"]) {
+    const harness = mountProvider({
+      env: {
+        NEXT_PUBLIC_API_BASE_URL: origin,
+        NEXT_PUBLIC_USER_API_BASE_URL: "https://user.example.com",
+        NODE_ENV: "production",
+      },
+    });
+    harness.emitUser(user("a"));
+    await settle();
+    const load = (path, body = json) =>
+      harness.actions.requestPrivate("market", path, "a:1", { method: "POST", json: body });
+    await assert.rejects(load("/api/valuation/quotes"), /Invalid private API path/);
+    await assert.rejects(
+      load(route, { ...json, private: "canary" }),
+      /Invalid private API request/,
+    );
+    assert.equal(harness.requests.length, 1);
+    if (origin !== market) {
+      await assert.rejects(load(route), /not configured/);
+      assert.equal(harness.requests.length, 1);
+      continue;
+    }
+    await load(route);
+    const [url, options] = harness.requests.at(-1);
+    assert.equal(url, market + route);
+    assert.equal(options.headers.Authorization, "Bearer test-token-a");
+    assert.deepEqual(JSON.parse(options.body), json);
+    assert.equal(options.credentials, "omit");
+    assert.equal(options.redirect, "error");
+  }
+});
+
 test("private User recovery reads use only the same-origin POST proxy", async () => {
   const harness = mountProvider({
     env: { NEXT_PUBLIC_USER_API_BASE_URL: "https://user.example.test" },

@@ -28,6 +28,14 @@ import {
 } from "@/lib/holdings-valuation";
 import styles from "./HoldingsValuation.module.css";
 
+const quoteRefreshErrors = {
+  daily: "quoteDailyLimit",
+  minute: "quoteMinuteLimit",
+  provider: "quoteProviderLimit",
+  busy: "quoteRefreshBusy",
+  unavailable: "quoteRefreshUnavailable",
+} as const;
+
 const COLORS = [
   "#4263c7",
   "#9c60b5",
@@ -402,13 +410,9 @@ export default function HoldingsValuation({
       {view.error && (
         <InlineError
           message={t(
-            view.prices?.quoteLimit === "daily"
-              ? "quoteDailyLimit"
-              : view.prices?.quoteLimit === "minute"
-                ? "quoteMinuteLimit"
-                : "refreshError",
+            view.prices?.quoteLimit ? quoteRefreshErrors[view.prices.quoteLimit] : "refreshError",
           )}
-          onRetry={view.prices?.quoteLimit === "daily" ? undefined : view.refresh}
+          onRetry={view.refresh}
           retryLabel={t("retry")}
         />
       )}

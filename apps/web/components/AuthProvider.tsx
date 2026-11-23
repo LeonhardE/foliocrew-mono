@@ -50,7 +50,12 @@ const USER_API_BASE_URL = process.env.NEXT_PUBLIC_USER_API_BASE_URL || API_BASE_
 const CONFIG_API_BASE_URL = process.env.NEXT_PUBLIC_CONFIG_API_BASE_URL || API_BASE_URL;
 const INVITATION_MESSAGE = "Your Google account needs an invitation to access the workspace.";
 
-export type PrivateService = "user" | "config" | "portfolio" | "agent-hub";
+export type PrivateService = "user" | "config" | "portfolio" | "agent-hub" | "market";
+export const MANUAL_QUOTES_PATH = "/api/valuation/quotes/manual";
+const MARKET_TOKEN_ORIGINS = [
+  "https://market-api-630815932903.northamerica-northeast2.run.app",
+  "https://market-api-cvvovj6jja-pd.a.run.app",
+];
 type PrivateMethod = "GET" | "PUT" | "DELETE" | "POST" | "PATCH";
 type PrivateRequestOptions = {
   preferenceRead?: PreferenceReadMode;
@@ -936,7 +941,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let maxBodyBytes = 589824;
     let validatedJson = options.json;
     const recoveryRead = service === "user" ? userRecoveryRoute(path) : null;
-    if (service === "user" && invitationRoute(path, method) !== null) {
+    if (service === "market") {
+      if (path !== MANUAL_QUOTES_PATH) throw new Error("Invalid private API path");
+      if (
+        method !== "POST" ||
+        Object.keys(options.headers ?? {}).length ||
+        !exact(options.json, ["instruments"]) ||
+        !Array.isArray(options.json.instruments) ||
+        options.json.instruments.length < 1 ||
+        options.json.instruments.length > 4 ||
+        options.json.instruments.some(
+          (item) =>
+            !exact(item, ["symbol", "market", "currency"]) ||
+            typeof item.symbol !== "string" ||
+            !/^[A-Z0-9][A-Z0-9.^-]{0,31}$/.test(item.symbol) ||
+            typeof item.market !== "string" ||
+            !/^[A-Z0-9]{4}$/.test(item.market) ||
+            typeof item.currency !== "string" ||
+            !/^[A-Z]{3}$/.test(item.currency),
+        )
+      )
+        throw new Error("Invalid private API request");
+      const localMarket =
+        process.env.NODE_ENV !== "production" &&
+        /^http:\/\/(?:localhost|127\.0\.0\.1)(?::[0-9]+)?$/.test(API_BASE_URL);
+      if (!MARKET_TOKEN_ORIGINS.includes(API_BASE_URL) && !localMarket)
+        throw new Error("Market quote refresh is not configured");
+      origin = API_BASE_URL;
+      maxBodyBytes = 1024;
+    } else if (service === "user" && invitationRoute(path, method) !== null) {
       origin = "";
       maxBodyBytes = 512;
     } else if (recoveryRead) {
@@ -1173,7 +1206,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       void response.body?.cancel().catch(() => {});
       throw sessionChanged();
     }
-    if (response.status === 401) {
+    if (response.status === 401 && service !== "market") {
       invalidateSession();
       throw sessionChanged();
     }

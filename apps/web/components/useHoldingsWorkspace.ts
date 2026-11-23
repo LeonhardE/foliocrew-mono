@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useAuth } from "@/components/AuthProvider";
+import { MANUAL_QUOTES_PATH, useAuth } from "@/components/AuthProvider";
+import type { Instrument } from "@/lib/holdings-valuation";
 import {
   HOLDINGS_CSV_MAX_BYTES,
   HoldingsCsvError,
@@ -501,6 +502,18 @@ function importDraft(
 export function useHoldingsWorkspace() {
   const auth = useAuth();
   const owner = auth.status === "authenticated" && auth.profile ? auth.sessionKey : null;
+  const requestPrivate = auth.requestPrivate;
+  const refreshMarketQuotes = useCallback(
+    (instruments: Instrument[], signal: AbortSignal) => {
+      if (!owner) return Promise.reject(new Error("Sign in to refresh quotes"));
+      return requestPrivate("market", MANUAL_QUOTES_PATH, owner, {
+        method: "POST",
+        signal,
+        json: { instruments },
+      });
+    },
+    [owner, requestPrivate],
+  );
   const uid = owner ? auth.profile!.uid : null;
   const configured = auth.agentHubConfigured;
   const holdingsConfigured = auth.portfolioConfigured && configured;
@@ -5530,6 +5543,7 @@ export function useHoldingsWorkspace() {
   return {
     providerSlotsSupported: true,
     displayCache: displayCache.current,
+    refreshMarketQuotes,
     contentRefreshing: state.busy === "reading" && Boolean(state.content),
     contentStale: Boolean(state.error && state.content),
     ...publicVisible,

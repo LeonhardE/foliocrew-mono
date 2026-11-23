@@ -730,6 +730,50 @@ test("private display hook masks lock/generation changes, resets invalid selecti
   assert.equal(v.valuation?.subtotal ?? null, null);
   h.close();
 });
+test("manual refresh checks recent quotes and keeps successful results when Yahoo throttles", async () => {
+  const f = facts(),
+    previous = prices(f),
+    publicCalls = [],
+    manualCalls = [];
+  const request = {
+    facts: f,
+    currency: "CNY",
+    previous,
+    origin: "",
+    signal: new AbortController().signal,
+    now: () => Date.parse(at) + 1,
+    publish() {},
+    fetch: async (url) => {
+      publicCalls.push(url);
+      return reply(previous.fx);
+    },
+    manualQuotes: async (instruments, signal) => {
+      assert.equal(signal.aborted, false);
+      manualCalls.push(instruments);
+      return new Response(
+        JSON.stringify(batch([quote(instruments[0], "11"), quote(instruments[1], "2")])),
+        {
+          headers: {
+            "Content-Type": "application/json",
+            "X-Foliocrew-Quote-Limit": "provider",
+          },
+        },
+      );
+    },
+  };
+  const automatic = await loader.loadHoldingsPrices({ ...request, refresh: false });
+  assert.equal(automatic.updatedQuotes, null);
+  assert.deepEqual(manualCalls, []);
+  const manual = await loader.loadHoldingsPrices({ ...request, refresh: true });
+  assert.deepEqual(copy(manualCalls), copy([api.instruments(f)]));
+  assert.ok(publicCalls.every((url) => url.startsWith("/api/valuation/fx")));
+  assert.equal(manual.prices.quoteLimit, "provider");
+  assert.equal(manual.updatedQuotes, 1);
+  assert.equal(manual.error, true);
+  assert.equal(manual.prices.quotes[0].items[0].price, "11");
+  assert.equal(manual.prices.quotes[0].items[0].status, "available");
+});
+
 test("explicit refresh rereads available server caches; failed updates preserve dated stale values and a cached error", async () => {
   const f = facts(),
     original = prices(f),
