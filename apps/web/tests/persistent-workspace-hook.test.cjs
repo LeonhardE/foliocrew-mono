@@ -1314,6 +1314,33 @@ test("separate is only a hint and performs the original fresh vault capabilities
   }
 });
 
+test("the transferred Owner display uses the verified resume path only on automatic entry", async () => {
+  const h = harness(null, null, discovery([connection(1)]));
+  h.workspace.vault = { ...h.workspace.vault, userAuthority: {} };
+  installVerifier(h);
+  const refreshes = [];
+  h.workspace.refreshVault = async (_signal, forState, _read, reuseResume) => {
+    refreshes.push([forState, reuseResume]);
+    return h.workspace.vault;
+  };
+  try {
+    h.render();
+    await h.settle();
+    assert.equal(h.render().loaded, true);
+    assert.deepEqual(refreshes, [[false, true]]);
+    assert.equal(h.calls.filter((c) => c.path.endsWith("/display")).length, 0);
+    assert.equal(h.calls.filter((c) => c.path.endsWith("/summary")).length, 1);
+    await h.render().reload();
+    assert.deepEqual(refreshes, [
+      [false, true],
+      [false, false],
+    ]);
+    assert.equal(h.calls.filter((c) => c.path.endsWith("/summary")).length, 2);
+  } finally {
+    h.close();
+  }
+});
+
 test("vault rejection or partial display never verifies credentials or replaces the prior pair", async () => {
   let fail = false,
     partial = false;

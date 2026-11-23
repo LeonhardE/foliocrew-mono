@@ -115,6 +115,7 @@ export function usePersistentWorkspace(
         api: (path: string, options?: any) => Promise<any>,
         assert: () => void,
       ) => Promise<(() => Promise<Response>) | undefined>,
+      reuseOwnerResume = false,
     ): Promise<T | null> => {
       if (job.current) return null;
       if (display && (!live.current.active || displayJob.current)) return null;
@@ -258,11 +259,13 @@ export function usePersistentWorkspace(
         signal: AbortSignal,
         forState = false,
         readCurrent?: () => Promise<Response>,
+        reuseResume = false,
       ) =>
         live.current.workspace.refreshVault(
           signal,
           forState,
           readCurrent ?? (() => request("agent-hub", "/api/v2/vaults/current")),
+          reuseResume,
         );
       const hub = (path: string, options: any = {}) => api("agent-hub", path, options);
       if (!display)
@@ -279,7 +282,7 @@ export function usePersistentWorkspace(
               const readCurrent =
                 display && prepareDisplay ? await prepareDisplay(hub, assert) : undefined;
               assert();
-              await refreshVault(abort.signal, false, readCurrent);
+              await refreshVault(abort.signal, false, readCurrent, reuseOwnerResume);
               assert();
             }
             return action(
@@ -356,6 +359,7 @@ export function usePersistentWorkspace(
       )
         return null;
       const token = Symbol();
+      const transferred = Boolean(start.workspace.vault?.userAuthority);
       read.current = token;
       setState((s) => ({
         ...(s.owner === start.owner ? s : { ...initial, owner: start.owner }),
@@ -475,20 +479,24 @@ export function usePersistentWorkspace(
         },
         true,
         true,
-        async (api, assert) => {
-          const vaultId = start.workspace.vault!.vaultId;
-          const value = await api(`/api/v3/provider-connections/${vaultId}/display`, {
-            coalesceDisplay: true,
-          });
-          assert();
-          if (!connectionDisplay(value, vaultId))
-            throw new PersistentExperienceError("invalid_response");
-          prepared = value;
-          return value.mode === "complete"
-            ? async () =>
-                Response.json(value.vaultResponse, { headers: { "Cache-Control": "no-store" } })
-            : undefined;
-        },
+        // Hub display returns only a separate-read hint for a transferred vault.
+        transferred
+          ? undefined
+          : async (api, assert) => {
+              const vaultId = start.workspace.vault!.vaultId;
+              const value = await api(`/api/v3/provider-connections/${vaultId}/display`, {
+                coalesceDisplay: true,
+              });
+              assert();
+              if (!connectionDisplay(value, vaultId))
+                throw new PersistentExperienceError("invalid_response");
+              prepared = value;
+              return value.mode === "complete"
+                ? async () =>
+                    Response.json(value.vaultResponse, { headers: { "Cache-Control": "no-store" } })
+                : undefined;
+            },
+        transferred && !force,
       );
       if (read.current === token && live.current.scope === start.scope && live.current.active) {
         setState((s) => ({ ...s, loading: false, loadError: result !== true }));
