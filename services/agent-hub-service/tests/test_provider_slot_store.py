@@ -212,6 +212,12 @@ class ProviderConnectionTests(unittest.TestCase):
         self.gate()
 
     def test_transferred_brand_activation_keeps_the_stale_slot_version_and_history(self):
+        self.check_transferred_brand_activation(revoked_after_transfer=False)
+
+    def test_transferred_brand_activation_replaces_an_unlinked_current_connection(self):
+        self.check_transferred_brand_activation(revoked_after_transfer=True)
+
+    def check_transferred_brand_activation(self, *, revoked_after_transfer):
         legacy, legacy_operation = self.packet()
         first = self.apply(legacy, legacy_operation)["slot"]
         credential, operation, connection = self.pending_second_connection()
@@ -229,6 +235,8 @@ class ProviderConnectionTests(unittest.TestCase):
 
         def transfer(unit):
             old = {**unit.get(old_path), "status": "revoked"}
+            if revoked_after_transfer:
+                old[USER_AUTHORITY_TRANSITION] = marker["transitionFingerprint"]
             unit.put(old_path, old)
             unit.put(
                 new_path,
@@ -250,13 +258,14 @@ class ProviderConnectionTests(unittest.TestCase):
             self.service.now() + 8,
         )
         self.service.user_vaults = ScopedUserVaults(self.store, owner=self.f.owner, client=reader)
-        still_active = {**retired, "status": "active"}
-        self.store.transact(lambda unit: unit.put(old_path, still_active))
-        unreviewed, _ = self.packet(credential, operation)
-        with self.assertRaisesRegex(ContractError, "version_conflict"):
-            self.apply(unreviewed, operation)
-        self.assertEqual(self.store.transact(lambda unit: unit.get(old_path)), still_active)
-        self.store.transact(lambda unit: unit.put(old_path, retired))
+        if not revoked_after_transfer:
+            still_active = {**retired, "status": "active"}
+            self.store.transact(lambda unit: unit.put(old_path, still_active))
+            unreviewed, _ = self.packet(credential, operation)
+            with self.assertRaisesRegex(ContractError, "version_conflict"):
+                self.apply(unreviewed, operation)
+            self.assertEqual(self.store.transact(lambda unit: unit.get(old_path)), still_active)
+            self.store.transact(lambda unit: unit.put(old_path, retired))
 
         review = self.state()
         packet, operation = self.packet(credential, operation, state=review)
