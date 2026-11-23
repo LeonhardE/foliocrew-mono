@@ -170,6 +170,7 @@ test("Agent connection messages copy the exact localized text and the branded ad
   const button = (tree, label) =>
     all(tree, (node) => node.type === "button" && node.props.children === label)[0];
   const message = (tree) => all(tree, (node) => node.type === "textarea")[0].props.value;
+  const addressFromMessage = (value) => value.match(/https:\/\/[^\s。，]+(?=[。，]|\.\s)/)?.[0];
   await render("zh", true, null, null, null, {
     brandOrigin: brand,
     model: { views: [] },
@@ -184,7 +185,7 @@ test("Agent connection messages copy the exact localized text and the branded ad
       button(view(), "连接 Muse").props.onClick();
       const muse = message(view());
       assert.match(muse, /^请帮我添加/);
-      assert.ok(muse.includes(endpoint));
+      assert.equal(addressFromMessage(muse), endpoint);
       assert.match(muse, /foliocrew-muse-prod/);
       await button(view(), "复制消息").props.onClick();
       assert.deepEqual(writes, [muse]);
@@ -193,7 +194,7 @@ test("Agent connection messages copy the exact localized text and the branded ad
       button(view(), "连接 ChatGPT").props.onClick();
       const chatgpt = message(view());
       assert.match(chatgpt, /^请帮我在 ChatGPT/);
-      assert.ok(chatgpt.includes(endpoint));
+      assert.equal(addressFromMessage(chatgpt), endpoint);
       assert.doesNotMatch(chatgpt, /foliocrew-muse-prod|val010/);
       await button(view(), "复制消息").props.onClick();
       assert.deepEqual(writes, [muse, chatgpt]);
@@ -205,8 +206,9 @@ test("Agent connection messages copy the exact localized text and the branded ad
       button(view(), "Connect Muse").props.onClick();
       const guide = message(view());
       assert.match(guide, /^Help me add/);
-      assert.ok(
-        guide.includes("https://agent-hub-api-123456789.northamerica-northeast2.run.app/mcp/v3"),
+      assert.equal(
+        addressFromMessage(guide),
+        "https://agent-hub-api-123456789.northamerica-northeast2.run.app/mcp/v3",
       );
       assert.doesNotMatch(guide, /Client ID/);
     },
