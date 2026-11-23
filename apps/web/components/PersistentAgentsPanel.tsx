@@ -89,15 +89,19 @@ export function PersistentAgentsPanel({
     [copied, setCopied] = useState(false),
     [handoffReady, setHandoffReady] = useState(false),
     [linkError, setLinkError] = useState(false),
+    [readingAuthorization, setReadingAuthorization] = useState(false),
+    [moreOptionsOpen, setMoreOptionsOpen] = useState(false),
+    [approvedProvider, setApprovedProvider] = useState<string | null>(null),
     [now, setNow] = useState(() => Date.now() / 1000);
   const handoff = useRef<AgentAuthorizationHandoff | null>(null),
     reviewedHandoff = useRef<{ value: AgentAuthorizationHandoff; scope: string } | null>(null),
     oldOwner = useRef(model.owner);
-  const scope = model.unlocked
-    ? `${model.owner}:${workspace.vault?.vaultId ?? "unavailable"}:${workspace.vaultGeneration}`
-    : null;
-  const live = useRef({ scope, owner: model.owner, active });
-  live.current = { scope, owner: model.owner, active };
+  const scope =
+    model.owner && workspace.owner === model.owner && workspace.phase === "unlocked"
+      ? `${model.owner}:${workspace.vault?.vaultId ?? "unavailable"}:${workspace.vaultGeneration}`
+      : null;
+  const live = useRef({ scope, owner: model.owner, active, unlocked: model.unlocked });
+  live.current = { scope, owner: model.owner, active, unlocked: model.unlocked };
   const [authorization, setAuthorization] = useState<{
     scope: string;
     value: Json;
@@ -119,6 +123,7 @@ export function PersistentAgentsPanel({
   useEffect(() => {
     reviewedHandoff.current = null;
     setAuthorization(null);
+    setApprovedProvider(null);
   }, [scope]);
   useEffect(() => {
     if (oldOwner.current && oldOwner.current !== model.owner) {
@@ -138,6 +143,8 @@ export function PersistentAgentsPanel({
       if (value) {
         handoff.current = value;
         setHandoffReady(true);
+        setMoreOptionsOpen(false);
+        setApprovedProvider(null);
         window.history.replaceState(null, "", "/agents");
       }
     } catch {
@@ -186,33 +193,37 @@ export function PersistentAgentsPanel({
       });
     return () => abort.abort();
   }, [bridge, model.owner, active, auth.requestNativeAccount]);
+  const { execute, reload } = model;
   const readAuthorization = useCallback(async () => {
     const original = live.current.scope,
       value = handoff.current;
-    if (!original || !value) return;
+    if (!original || !value || !live.current.unlocked) return;
     reviewedHandoff.current = { value, scope: original };
-    const reviewed = await model.execute((c) => c.inspectAuthorization(value));
-    if (
-      reviewed &&
-      live.current.active &&
-      live.current.scope === original &&
-      handoff.current === value
-    )
-      setAuthorization({
-        scope: original,
-        value: reviewed,
-        lifetimeSeconds: reviewed.pendingLifetimeSeconds ?? DEFAULT_CONNECTION_SECONDS,
-        selected: reviewed.renewing
-          ? reviewed.tasks.map((task: PersistentTask) => task.taskId)
-          : [],
-      });
-  }, [model.execute]);
+    setReadingAuthorization(true);
+    const reviewed = await execute((c) => c.inspectAuthorization(value));
+    setReadingAuthorization(false);
+    if (live.current.active && live.current.scope === original && handoff.current === value) {
+      if (reviewed) {
+        setAuthorization({
+          scope: original,
+          value: reviewed,
+          lifetimeSeconds: reviewed.pendingLifetimeSeconds ?? DEFAULT_CONNECTION_SECONDS,
+          selected: reviewed.renewing
+            ? reviewed.tasks.map((task: PersistentTask) => task.taskId)
+            : [],
+        });
+      } else if (!live.current.unlocked) {
+        reviewedHandoff.current = null;
+      }
+      void reload(false);
+    }
+  }, [execute, reload]);
   useEffect(() => {
     const value = handoff.current;
-    if (!active || !model.enabled || model.busy || !scope || !handoffReady || !value) return;
+    if (!active || !model.unlocked || model.busy || !scope || !handoffReady || !value) return;
     if (reviewedHandoff.current?.value === value && reviewedHandoff.current.scope === scope) return;
     void readAuthorization();
-  }, [active, model.enabled, model.busy, scope, handoffReady, readAuthorization]);
+  }, [active, model.unlocked, model.busy, scope, handoffReady, readAuthorization]);
   const approveAccount = async () => {
     if (!bridge || !model.owner || !accountVault || accountBusy) return;
     const owner = model.owner;
@@ -249,6 +260,7 @@ export function PersistentAgentsPanel({
       reviewedHandoff.current = null;
       setHandoffReady(false);
       setAuthorization(null);
+      setApprovedProvider(value.value.connection.provider);
       await model.reload();
     }
   };
@@ -316,7 +328,8 @@ export function PersistentAgentsPanel({
       window.history.pushState(null, "", `/tasks#task/${taskId}`);
     }
   };
-  const currentAuthorization = authorization?.scope === scope ? authorization : null,
+  const currentAuthorization =
+      model.unlocked && authorization?.scope === scope ? authorization : null,
     currentAccount = account?.owner === model.owner ? account.value : null;
   // Account OAuth only links a signed-in user's existing vault. The separate
   // Agent pairing operation still signs in the unlocked Owner Worker.
@@ -442,27 +455,32 @@ export function PersistentAgentsPanel({
           </button>
         </div>
       )}
+      {approvedProvider && model.unlocked && (
+        <div className={styles.setup} role="status">
+          <h2>{t("authorizationSaved")}</h2>
+          <p>{t("returnAfterAuthorization", { provider: providerName(approvedProvider) })}</p>
+        </div>
+      )}
       {handoffReady && (
-        <div className={styles.setup}>
+        <div className={`${styles.setup} ${styles.authorization}`}>
           <h2>{t("authorizeTitle")}</h2>
           {!currentAuthorization ? (
-            <>
-              <p>{t("authorizeHelp")}</p>
-              <button
-                className={styles.primary}
-                disabled={!model.unlocked || model.busy || !model.enabled}
-                onClick={() => void readAuthorization()}
-              >
-                {t("review")}
-              </button>
-            </>
+            <p role="status">
+              {t(readingAuthorization ? "preparingAuthorization" : "authorizeHelp")}
+            </p>
           ) : (
             <>
               <p>
                 {currentAuthorization.value.providerState
-                  ? t("replaceReview", {
-                      count: currentAuthorization.value.providerState.retirementCandidates.length,
-                    })
+                  ? t(
+                      currentAuthorization.value.providerState.retirementCandidates.length
+                        ? "replaceReview"
+                        : "newConnectionReview",
+                      {
+                        count: currentAuthorization.value.providerState.retirementCandidates.length,
+                        provider: providerName(currentAuthorization.value.connection.provider),
+                      },
+                    )
                   : t(currentAuthorization.value.renewing ? "restoreHelp" : "chooseTasks", {
                       provider: providerName(currentAuthorization.value.connection.provider),
                     })}
@@ -504,7 +522,11 @@ export function PersistentAgentsPanel({
                 ) : (
                   <p>{t("noAvailableTasks")}</p>
                 ))}
-              <details>
+              <details
+                className={styles.authorizationOptions}
+                open={moreOptionsOpen}
+                onToggle={(event) => setMoreOptionsOpen(event.currentTarget.open)}
+              >
                 <summary>{t("moreOptions")}</summary>
                 <AgentConnectionDuration
                   seconds={currentAuthorization.lifetimeSeconds}
@@ -515,22 +537,37 @@ export function PersistentAgentsPanel({
                   }
                 />
               </details>
+            </>
+          )}
+          <div className={styles.actions}>
+            {currentAuthorization ? (
               <button
                 className={styles.primary}
                 disabled={model.busy || !workspace.canWriteState}
                 onClick={() => void confirmAuthorization()}
               >
                 {t(
-                  currentAuthorization.value.renewing && !currentAuthorization.value.providerState
-                    ? "confirmRestore"
-                    : "confirm",
+                  model.busy
+                    ? "savingAuthorization"
+                    : currentAuthorization.value.renewing &&
+                        !currentAuthorization.value.providerState
+                      ? "confirmRestore"
+                      : "confirm",
                 )}
               </button>
-            </>
-          )}
-          <button className={styles.textButton} disabled={model.busy} onClick={cancel}>
-            {t("cancel")}
-          </button>
+            ) : model.unlocked && !readingAuthorization ? (
+              <button
+                className={styles.primary}
+                disabled={model.busy}
+                onClick={() => void readAuthorization()}
+              >
+                {t("review")}
+              </button>
+            ) : null}
+            <button className={styles.textButton} disabled={model.busy} onClick={cancel}>
+              {t("cancel")}
+            </button>
+          </div>
         </div>
       )}
       <LoadingIndicator

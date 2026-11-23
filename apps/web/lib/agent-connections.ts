@@ -1,4 +1,5 @@
 export const CONNECTION_CONTRACT = "folioview.agent-workspace.v2.0";
+export const AGENT_VIEW_RESUME_MS = 30 * 60 * 1000;
 export const BRANDED_AGENT_ORIGIN = "https://mcp.foliocrew.app";
 export const isLegacyAgentOrigin = (value: unknown): value is string =>
   typeof value === "string" &&

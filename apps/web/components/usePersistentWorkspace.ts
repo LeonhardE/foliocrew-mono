@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "./AuthProvider";
+import { AGENT_VIEW_RESUME_MS } from "@/lib/agent-connections";
 import type { HoldingsWorkspace } from "./useHoldingsWorkspace";
 import {
   connectionSummary,
@@ -91,10 +92,11 @@ export function usePersistentWorkspace(
   const [visible, setVisible] = useState(
     () => typeof document === "undefined" || document.visibilityState !== "hidden",
   );
-  const scope =
-    visible && owner && workspace.owner === owner && workspace.phase === "unlocked"
+  const sessionScope =
+    owner && workspace.owner === owner && workspace.phase === "unlocked"
       ? `${owner}:${workspace.vault?.vaultId ?? "unavailable"}:${workspace.vaultGeneration}${brandOrigin ? ":" + brandOrigin : ""}`
       : null;
+  const scope = visible ? sessionScope : null;
   const [state, setState] = useState<State>(initial);
   const live = useRef({ auth, workspace, owner, scope, visible, hubOrigin, active, brandOrigin });
   live.current = { auth, workspace, owner, scope, visible, hubOrigin, active, brandOrigin };
@@ -355,7 +357,10 @@ export function usePersistentWorkspace(
         !start.hubOrigin ||
         !start.active ||
         !start.auth.agentHubConfigured ||
-        (!force && fresh.current !== 0 && Date.now() - fresh.current < 30000)
+        (!force &&
+          fresh.current !== 0 &&
+          Date.now() >= fresh.current &&
+          Date.now() - fresh.current < AGENT_VIEW_RESUME_MS)
       )
         return null;
       const token = Symbol();
@@ -559,16 +564,25 @@ export function usePersistentWorkspace(
       displayJob.current = null;
       read.current = null;
     };
-  }, [owner, scope, hubOrigin]);
+  }, [owner, sessionScope, hubOrigin]);
   useEffect(() => {
     if (active && scope) void reload(false);
     else {
+      if (!visible && job.current) {
+        job.current.abort();
+        job.current = null;
+        fresh.current = 0;
+      }
       displayJob.current?.abort();
       displayJob.current = null;
       read.current = null;
-      setState((s) => ({ ...s, loading: false }));
+      setState((s) => ({
+        ...s,
+        loading: false,
+        ...(!visible && { busy: false, waitingForService: false }),
+      }));
     }
-  }, [active, scope, hubOrigin, reload]);
+  }, [active, scope, hubOrigin, reload, visible]);
   useEffect(() => {
     const change = () => setVisible(document.visibilityState !== "hidden");
     change();

@@ -87,6 +87,7 @@ function render(locale, unlocked, plan, credential = null, duration = null, stat
     loadError: false,
     error: "",
     enabled: true,
+    reload: async () => true,
     providerStates: {},
     views: [
       {
@@ -272,6 +273,7 @@ test("an unlocked workspace opens the pairing review without approving it", asyn
       history: { replaceState() {} },
     },
     model: {
+      enabled: false,
       async execute(request) {
         return request({
           inspectAuthorization(value) {

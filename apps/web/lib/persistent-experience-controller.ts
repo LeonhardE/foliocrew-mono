@@ -342,8 +342,15 @@ export class PersistentExperienceController {
     if (!this.trustedOrigin(handoff.issuer) || handoff.vaultId !== this.vault().vaultId)
       fail("invalid_handoff");
     const base = `/api/v3/agent-credentials/${handoff.vaultId}/${handoff.connectionId}`;
-    const setup = await this.request(`${base}/setups/${handoff.setupIntentId}`);
-    const list = await this.request("/api/v2/persistent-connections");
+    const workspace = this.workspace();
+    const [setup, list, current, slots] = await Promise.all([
+      this.request(`${base}/setups/${handoff.setupIntentId}`),
+      this.request("/api/v2/persistent-connections"),
+      this.request(base),
+      workspace.providerSlotsSupported
+        ? this.request("/api/v3/provider-connections/capabilities")
+        : null,
+    ]);
     const connection = list.connections.find(
       (v: PersistentConnection) =>
         v.connectionId === handoff.connectionId &&
@@ -351,39 +358,37 @@ export class PersistentExperienceController {
         v.provider === setup.provider,
     );
     if (!connection) fail("connection_unavailable");
-    const current = await this.request(base),
-      actor = this.actor(connection);
-    const review = await this.workspace().inspectAgentCredentialSetup({
-      actor,
-      handoff,
-      setup,
-      current,
-      hubOrigin: handoff.issuer,
-    });
+    const actor = this.actor(connection);
+    const [review, providerState, pending] = await Promise.all([
+      workspace.inspectAgentCredentialSetup({
+        actor,
+        handoff,
+        setup,
+        current,
+        hubOrigin: handoff.issuer,
+      }),
+      slots?.enabled
+        ? this.request(`/api/v3/provider-connections/${handoff.vaultId}/${connection.provider}`)
+        : null,
+      workspace.loadPersistentPending(actor),
+    ]);
     this.assert();
-    if ((this.workspace() as any).providerSlotsSupported) {
-      const caps = await this.request("/api/v3/provider-connections/capabilities");
-      if (caps.enabled) {
-        const providerState = await this.request(
-            `/api/v3/provider-connections/${handoff.vaultId}/${connection.provider}`,
-          ),
-          pending = await this.workspace().loadPersistentPending(actor);
-        this.assert();
-        return {
-          connection,
-          setup,
-          current,
-          review,
-          scope: { reviewDigest: review.reviewDigest, identities: [], permissions: [] },
-          tasks: [],
-          renewing: Boolean(current.lease || providerState.slot),
-          providerState,
-          pendingLifetimeSeconds:
-            pending?.kind === "credential" && pending.setupIntentId === setup.setupIntentId
-              ? credentialLifetime(pending)
-              : null,
-        };
-      }
+    const pendingLifetimeSeconds =
+      pending?.kind === "credential" && pending.setupIntentId === setup.setupIntentId
+        ? credentialLifetime(pending)
+        : null;
+    if (providerState) {
+      return {
+        connection,
+        setup,
+        current,
+        review,
+        scope: { reviewDigest: review.reviewDigest, identities: [], permissions: [] },
+        tasks: [],
+        renewing: Boolean(current.lease || providerState.slot),
+        providerState,
+        pendingLifetimeSeconds,
+      };
     }
     const legacy = setup.predecessorConnectionId,
       sources = await this.restorationSources(connection, current.identity ? null : legacy);
@@ -400,12 +405,7 @@ export class PersistentExperienceController {
           )
         : !task.authority.authority,
     );
-    const pending = await this.workspace().loadPersistentPending(this.actor(connection));
     this.assert();
-    const pendingLifetimeSeconds =
-      pending?.kind === "credential" && pending.setupIntentId === setup.setupIntentId
-        ? credentialLifetime(pending)
-        : null;
     return {
       connection,
       setup,
