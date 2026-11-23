@@ -16,6 +16,7 @@ type State = {
   busy: boolean;
   error: boolean;
   progress: PriceProgress | null;
+  updatedQuotes?: number | null;
 };
 
 export function useHoldingsValuation(
@@ -118,11 +119,11 @@ export function useHoldingsValuation(
         setState({ key, prices: next, busy: true, error: false, progress });
       },
     })
-      .then(({ prices: next, error }) => {
+      .then(({ prices: next, error, updatedQuotes }) => {
         if (!owns()) return;
         next = keepSelection(next);
         cache.valuations.set(key, next);
-        setState({ key, prices: next, busy: false, error, progress: null });
+        setState({ key, prices: next, busy: false, error, progress: null, updatedQuotes });
       })
       .catch(() => {
         if (owns()) setState((s) => ({ ...s, key, busy: false, error: true, progress: null }));
@@ -142,6 +143,7 @@ export function useHoldingsValuation(
     busy: Boolean(active && key && defaultCurrency && (current?.busy ?? !prices)),
     error: current?.error ?? false,
     progress: current?.progress ?? null,
+    updatedQuotes: current?.updatedQuotes ?? null,
     select: (next: Currency) => {
       if (key && defaultCurrency && options.includes(next)) {
         const previous = model.displayCache.valuations.get(key) as PriceSet | undefined;

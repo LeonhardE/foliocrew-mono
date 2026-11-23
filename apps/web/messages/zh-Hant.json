@@ -1794,6 +1794,8 @@
     "retry": "重試",
     "updating": "正在更新報價",
     "refreshError": "部分報價未能更新，已有資料已保留。",
+    "quoteRefreshUnchanged": "已檢查報價，本次未收到新報價。",
+    "quoteRefreshUpdated": "已更新 {count} 檔證券的報價。",
     "quoteDailyLimit": "共用報價日額度已用完，暫時顯示上次取得的報價。",
     "quoteMinuteLimit": "報價請求暫時受限，稍後可再更新。",
     "stale": "部分市值或盈虧使用較早的市場觀測或每日參考匯率，以顯示的時間為準。",

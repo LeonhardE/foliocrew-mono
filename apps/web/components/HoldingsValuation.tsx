@@ -412,6 +412,13 @@ export default function HoldingsValuation({
           retryLabel={t("retry")}
         />
       )}
+      {typeof view.updatedQuotes === "number" && (
+        <p className={styles.note} role="status">
+          {view.updatedQuotes === 0
+            ? t("quoteRefreshUnchanged")
+            : t("quoteRefreshUpdated", { count: view.updatedQuotes })}
+        </p>
+      )}
       {showBroker && (
         <p className={styles.note} role="status">
           {view.facts.data.reportDate
