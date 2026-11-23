@@ -86,7 +86,7 @@ export function PersistentAgentsPanel({
     [account, setAccount] = useState<{ owner: string; value: Json } | null>(null),
     [confirmedAccountOwner, setConfirmedAccountOwner] = useState<string | null>(null),
     [help, setHelp] = useState<string | null>(null),
-    [copied, setCopied] = useState(false),
+    [copiedMessage, setCopiedMessage] = useState<string | null>(null),
     [handoffReady, setHandoffReady] = useState(false),
     [linkError, setLinkError] = useState(false),
     [readingAuthorization, setReadingAuthorization] = useState(false),
@@ -260,6 +260,7 @@ export function PersistentAgentsPanel({
       reviewedHandoff.current = null;
       setHandoffReady(false);
       setAuthorization(null);
+      setCopiedMessage(null);
       setApprovedProvider(value.value.connection.provider);
       await model.reload();
     }
@@ -314,6 +315,15 @@ export function PersistentAgentsPanel({
               })
             : t("museConnectionPrompt", { address: connectorAddress })
         : null;
+  const finishConnectionMessage = t("finishConnectionPrompt");
+  const copyMessage = async (message: string) => {
+    try {
+      await navigator.clipboard.writeText(message);
+      setCopiedMessage(message);
+    } catch {
+      setCopiedMessage(null);
+    }
+  };
   const needsPasskey = workspace.phase === "needs-vault";
   const checkingPasskey = workspace.phase === "checking";
   const taskLink = (event: MouseEvent<HTMLAnchorElement>, taskId: string) => {
@@ -456,9 +466,22 @@ export function PersistentAgentsPanel({
         </div>
       )}
       {approvedProvider && model.unlocked && (
-        <div className={styles.setup} role="status">
-          <h2>{t("authorizationSaved")}</h2>
-          <p>{t("returnAfterAuthorization", { provider: providerName(approvedProvider) })}</p>
+        <div className={`${styles.setup} ${styles.authorization}`}>
+          <h2 role="status">{t("authorizationSaved")}</h2>
+          <p id="finish-agent-instructions">
+            {t("returnAfterAuthorization", { provider: providerName(approvedProvider) })}
+          </p>
+          <textarea
+            aria-label={t("connectionMessage")}
+            aria-describedby="finish-agent-instructions"
+            className={styles.connectMessage}
+            rows={3}
+            value={finishConnectionMessage}
+            readOnly
+          />
+          <button className={styles.secondary} onClick={() => copyMessage(finishConnectionMessage)}>
+            {t(copiedMessage === finishConnectionMessage ? "copied" : "copyConnectionMessage")}
+          </button>
         </div>
       )}
       {handoffReady && (
@@ -654,7 +677,7 @@ export function PersistentAgentsPanel({
                     disabled={!connectorAddress || !model.enabled || !canChangeConnection}
                     onClick={() => {
                       setHelp(group.provider);
-                      setCopied(false);
+                      setCopiedMessage(null);
                     }}
                   >
                     {t(action, { provider: providerName(group.provider) })}
@@ -706,9 +729,11 @@ export function PersistentAgentsPanel({
               {t(
                 helpIsPairing
                   ? "pairingNeededHelp"
-                  : helpHasConnection
-                    ? "reconnectHelp"
-                    : "connectHelp",
+                  : help === "chatgpt"
+                    ? "chatgptConnectHelp"
+                    : helpHasConnection
+                      ? "reconnectHelp"
+                      : "connectHelp",
                 {
                   provider: providerName(help),
                 },
@@ -722,18 +747,8 @@ export function PersistentAgentsPanel({
               value={connectionPrompt}
               readOnly
             />
-            <button
-              className={styles.secondary}
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(connectionPrompt);
-                  setCopied(true);
-                } catch {
-                  setCopied(false);
-                }
-              }}
-            >
-              {t(copied ? "copied" : "copyConnectionMessage")}
+            <button className={styles.secondary} onClick={() => copyMessage(connectionPrompt)}>
+              {t(copiedMessage === connectionPrompt ? "copied" : "copyConnectionMessage")}
             </button>
           </>
         )}
