@@ -541,6 +541,50 @@ test("a cold 22-position import fills every quote and stops early if the service
     assert.equal(api.valuePortfolio(f, result.prices, "USD").valuedCount, expectedValued);
   }
 });
+test("quote quota feedback stops a mixed refresh without marking its successful new prices stale", async () => {
+  const f = facts();
+  const seed = f.data.accounts[0].positions[0];
+  f.data.accounts[0].positions = Array.from({ length: 8 }, (_, n) => ({
+    ...copy(seed),
+    assetId: `asset_${n}`,
+    instrument: { ...seed.instrument, symbol: `L${n}` },
+  }));
+  const old = "2026-11-13T21:00:00Z";
+  const dated = (instrument) => ({
+    ...quote(instrument, "1"),
+    sourceAsOf: old,
+    fetchedAt: old,
+    status: "stale",
+  });
+  for (const quota of ["daily", "minute"]) {
+    let refreshes = 0;
+    const result = await loader.loadHoldingsPrices({
+      facts: f,
+      currency: "USD",
+      refresh: true,
+      origin: "",
+      signal: new AbortController().signal,
+      now: () => Date.parse(at),
+      publish() {},
+      fetch: async (url, init) => {
+        const { instruments } = JSON.parse(init.body);
+        if (url.endsWith("?cached=true")) return reply(batch(instruments.map(dated)));
+        refreshes++;
+        return new Response(
+          JSON.stringify(batch(instruments.map((i, n) => (n === 0 ? quote(i, "2") : dated(i))))),
+          { headers: { "Content-Type": "application/json", "X-Foliocrew-Quote-Limit": quota } },
+        );
+      },
+    });
+    assert.equal(refreshes, 1);
+    assert.equal(result.error, true);
+    assert.equal(result.prices.quoteLimit, quota);
+    const rows = result.prices.quotes[0].items;
+    assert.equal(rows[0].price, "2");
+    assert.equal(rows[0].status, "available");
+    assert.ok(rows.slice(1).every((row) => row.price === "1" && row.sourceAsOf === old));
+  }
+});
 test("recent cache entries for an earlier session skip quote round trips while expired and missing quotes refresh", async () => {
   const f = facts();
   const recent = Date.parse(at);

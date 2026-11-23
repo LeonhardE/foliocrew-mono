@@ -21,6 +21,7 @@ export type PriceSet = {
   fx: Batch<FxItem>;
   readAt: number;
   error?: boolean;
+  quoteLimit?: "daily" | "minute";
   displaySelection?: { currency: Currency; defaultCurrency: Currency };
 };
 export type HoldingsValuation = Omit<Valuation, "quoteSnapshotId"> & {
