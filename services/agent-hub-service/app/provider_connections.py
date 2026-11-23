@@ -116,10 +116,10 @@ def _activation_slot(unit, owner, row, records, transition):
         )
     ):
         raise StoreUnavailable
-    if previous.get("status") != "revoked" or previous.get(USER_AUTHORITY_TRANSITION) == transition:
+    if previous.get("status") != "revoked":
         return None
-    # The previous authority cannot contribute an active credential or grants, but
-    # the reviewed slot still has to compare against its real version and history.
+    # An unlinked account cannot contribute active grants. Keep the slot's
+    # version and last credential so the new approval still compares exactly.
     return {**row, "slot": {**slot, "currentCredential": None}, "retainedSelections": []}
 
 
