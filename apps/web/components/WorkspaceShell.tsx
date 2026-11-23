@@ -97,7 +97,7 @@ export default function WorkspaceShell() {
   const visited = useRef(new Set<WorkspaceView>());
   if (activeView) visited.current.add(activeView);
   const marketsVisited = visited.current.has("markets");
-  const encryptedWorkspace = useHoldingsWorkspace();
+  const encryptedWorkspace = useHoldingsWorkspace(activeView === "agents");
   const agentScope = JSON.stringify([
     encryptedWorkspace.owner,
     encryptedWorkspace.vault?.vaultId,

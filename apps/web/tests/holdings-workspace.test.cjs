@@ -32,6 +32,8 @@ const compile = (file, imports, globals = {}) => {
         return require("./resource-library-helpers.cjs").compile("../lib/display-name-contract.ts");
       if (name === "@/lib/holdings-view") return require("./holdings-view-helpers.cjs");
       if (name === "@/lib/workspace-cache") return cacheContracts;
+      if (name === "@/lib/agent-connections")
+        return require("./resource-library-helpers.cjs").compile("../lib/agent-connections.ts");
       if (name === "@/lib/user-recovery-route")
         return require("./resource-library-helpers.cjs").compile("../lib/user-recovery-route.ts");
       if (name === "@/lib/holdings-facts")
@@ -160,6 +162,7 @@ function harness({
   sharedUnlock = false,
   sharedResume = false,
   userVault = false,
+  agentViewActive = false,
   now = Date.now,
   viewMode = "sync_required",
   sessionOverrides,
@@ -1261,7 +1264,7 @@ function harness({
     do {
       dirty = false;
       index = 0;
-      model = useHoldingsWorkspace();
+      model = useHoldingsWorkspace(agentViewActive);
       if (flush)
         for (const { slot, effect, dependencies } of effects.splice(0)) {
           cells[slot]?.cleanup?.();
@@ -3632,6 +3635,31 @@ async function pumpResourceView(view, active = true, turns = 6) {
     await settle();
   }
 }
+
+test("a fresh Agent tab return does not reload the vault or prompt for a Passkey", async () => {
+  let now = Date.now();
+  const h = harness({
+    sharedUnlock: true,
+    sharedResume: true,
+    agentViewActive: true,
+    now: () => now,
+  });
+  await ready(h);
+  const before = h.requests.length;
+  h.visibility(false);
+  now += 29 * 60 * 1000;
+  h.visibility(true);
+  await settle();
+  assert.equal(h.requests.length, before);
+  assert.equal(h.render().phase, "unlocked");
+  h.visibility(false);
+  now += 60 * 1000;
+  h.visibility(true);
+  await settle();
+  assert.ok(h.requests.length > before);
+  assert.equal(h.counts().passkeyCalls, 0);
+  h.unmount();
+});
 
 test("visibility return automatically restores the selected saved snapshot after authority-only resume", async () => {
   const h = harness({ sharedUnlock: true, sharedResume: true });

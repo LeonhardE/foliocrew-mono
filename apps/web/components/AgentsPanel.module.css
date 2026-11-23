@@ -110,6 +110,26 @@
   cursor: pointer;
   font-weight: 550;
 }
+.authorization {
+  padding: 22px clamp(16px, 3vw, 28px);
+}
+.authorization h2 {
+  margin: 0 0 14px;
+}
+.authorizationOptions {
+  margin: 16px 0;
+  padding-block: 5px;
+  border-block: 1px solid var(--border);
+}
+.authorizationOptions > summary {
+  padding-block: 10px;
+}
+.authorizationOptions[open] {
+  padding-bottom: 14px;
+}
+.authorization > .actions {
+  margin-top: 16px;
+}
 .setup ol {
   padding-left: 20px;
   color: var(--muted);

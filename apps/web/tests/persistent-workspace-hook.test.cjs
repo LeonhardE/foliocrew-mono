@@ -28,6 +28,7 @@ function harness(authOverride, ownerRequest, readRequest, otherRequest) {
     timers = new Map(),
     timerDelays = new Map();
   let nextTimer = 0;
+  let now = Date.now();
   const changed = (a, b) => !a || b.some((v, i) => v !== a[i]);
   const react = {
     useState(initial) {
@@ -149,6 +150,7 @@ function harness(authOverride, ownerRequest, readRequest, otherRequest) {
       },
       "@/lib/persistent-experience-controller": controller,
       "@/lib/connection-summary": compile("../lib/connection-summary.ts"),
+      "@/lib/agent-connections": compile("../lib/agent-connections.ts"),
     },
     {
       document,
@@ -159,7 +161,11 @@ function harness(authOverride, ownerRequest, readRequest, otherRequest) {
       clearInterval: (n) => timers.delete(n),
       Map,
       Set,
-      Date,
+      Date: class extends Date {
+        static now() {
+          return now;
+        }
+      },
     },
   );
   let model;
@@ -214,6 +220,12 @@ function harness(authOverride, ownerRequest, readRequest, otherRequest) {
       visible = false;
       events.get("visibilitychange")?.();
       return render(flush);
+    },
+    show(elapsed) {
+      now += elapsed;
+      visible = true;
+      events.get("visibilitychange")?.();
+      return render();
     },
     close() {
       for (const c of cells) c?.cleanup?.();
@@ -273,6 +285,26 @@ test("hidden pages mask private connection and task state immediately, abort wor
     assert.deepEqual(Array.from(hidden.tasks), []);
     assert.doesNotMatch(JSON.stringify(hidden.views), /PRIVATE_CANARY/);
     assert.equal(await hidden.execute(async () => assert.fail("hidden work")), null);
+    assert.equal(h.unlocks, 0);
+  } finally {
+    h.close();
+  }
+});
+
+test("returning to a verified Agent tab keeps its display for 30 minutes", async () => {
+  const h = harness();
+  try {
+    h.render();
+    assert.equal((await h.settle()).loaded, true);
+    const before = h.calls.length;
+    h.hide(true);
+    assert.equal(h.show(29 * 60 * 1000).loaded, true);
+    assert.equal((await h.settle()).loaded, true);
+    assert.equal(h.calls.length, before);
+    h.hide(true);
+    assert.equal(h.show(60 * 1000).loaded, true, "keep the last display during revalidation");
+    assert.equal((await h.settle()).loaded, true);
+    assert.ok(h.calls.length > before);
     assert.equal(h.unlocks, 0);
   } finally {
     h.close();
