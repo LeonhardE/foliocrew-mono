@@ -22,6 +22,12 @@ type Fetch = (input: string, init: RequestInit) => Promise<Response>;
 const timestamp = (value: string | null) => (value ? Date.parse(value) : 0);
 // Keep this in step with the quote producer's positive-cache lifetime.
 const QUOTE_CACHE_MS = 15 * 60 * 1000;
+const FOREGROUND_RECHECK_MS = 60 * 60 * 1000;
+
+export function quoteCheckDue(prices: PriceSet | undefined, now = Date.now()) {
+  const readAt = prices?.readAt ?? 0;
+  return readAt <= 0 || readAt > now || now - readAt >= FOREGROUND_RECHECK_MS;
+}
 function needsQuoteRefresh(quote: QuoteItem, now: number) {
   if (quote.status === "missing") return true;
   if (quote.status !== "stale") return false;
@@ -149,7 +155,7 @@ export async function loadHoldingsPrices(args: {
   const emit = (progress: PriceProgress) => {
     if (!args.signal.aborted) args.publish({ ...prices, quotes: [...prices.quotes] }, progress);
   };
-  const fresh = prices.readAt > 0 && now() - prices.readAt < 60_000;
+  const fresh = !quoteCheckDue(prices, now());
   const fxReady = wantedFx.every((p) =>
     prices.fx.items.some((i) => i.base === p.base && i.quote === p.quote),
   );
@@ -271,7 +277,7 @@ export async function loadHoldingsPrices(args: {
     };
   }
   prices.error = error;
-  prices.readAt = now();
+  if (!fresh || args.refresh) prices.readAt = now();
   const failed = error || Boolean(prices.quoteLimit);
   let updatedQuotes: number | null = null;
   if (args.refresh && (manual || !failed)) {

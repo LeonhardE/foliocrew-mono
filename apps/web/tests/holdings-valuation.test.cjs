@@ -664,6 +664,31 @@ test("abort prevents any late publication even if an obsolete transport resolves
   assert.equal(calls, 1);
   assert.equal(api.valuePortfolio(f, next.prices, "CNY").subtotal, "100");
 });
+test("returning within an hour reuses quotes and keeps the original check time", async () => {
+  const f = facts(),
+    previous = prices(f),
+    initial = Date.parse(at);
+  for (const elapsed of [5 * 60_000, 59 * 60_000, 60 * 60_000]) {
+    let calls = 0;
+    const result = await loader.loadHoldingsPrices({
+      facts: f,
+      currency: "CNY",
+      previous,
+      refresh: false,
+      origin: "",
+      signal: new AbortController().signal,
+      now: () => initial + elapsed,
+      publish() {},
+      fetch: async (url) => {
+        calls++;
+        return reply(url.includes("/fx") ? previous.fx : previous.quotes[0]);
+      },
+    });
+    assert.equal(calls, elapsed < 60 * 60_000 ? 0 : 2);
+    assert.equal(result.prices.readAt, elapsed < 60 * 60_000 ? initial : initial + elapsed);
+  }
+});
+
 test("private display hook masks lock/generation changes, resets invalid selections, and switching currency never reopens ciphertext or refetches", async () => {
   const h = hooks(),
     cache = compile("../lib/workspace-cache.ts"),
@@ -985,6 +1010,12 @@ test("inactive pages make no price requests and valid display selection survives
     c = new Cache();
   c.bind("owner:1");
   let calls = 0;
+  const listeners = new Map();
+  const foreground = {
+    visibilityState: "visible",
+    addEventListener: (event, listener) => listeners.set(event, listener),
+    removeEventListener: (event) => listeners.delete(event),
+  };
   const f = facts(),
     model = {
       owner: "owner",
@@ -1011,6 +1042,8 @@ test("inactive pages make no price requests and valid display selection survives
         },
         {
           process: { env: {} },
+          document: foreground,
+          window: foreground,
           fetch: async (url) => {
             calls++;
             return reply(url.includes("/fx") ? prices(f).fx : prices(f).quotes[0]);
@@ -1051,6 +1084,24 @@ test("inactive pages make no price requests and valid display selection survives
   await tick();
   await tick();
   assert.equal(calls, 2);
+  listeners.get("focus")();
+  b.render();
+  await tick();
+  assert.equal(calls, 2);
+  c.valuations.get(c.valuations.keys().next().value).readAt -= 60 * 60_000;
+  foreground.visibilityState = "hidden";
+  listeners.get("visibilitychange")();
+  b.render();
+  await tick();
+  assert.equal(calls, 2);
+  foreground.visibilityState = "visible";
+  listeners.get("visibilitychange")();
+  listeners.get("focus")();
+  b.render();
+  await tick();
+  await tick();
+  assert.equal(calls, 4);
+  assert.equal(b.render().manualAttempt, false);
   b.close();
 });
 test("resetting a restored source currency schedules the actual component and hides reset without fetching", async () => {

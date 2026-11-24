@@ -325,6 +325,14 @@ export default function WorkspaceShell() {
     chart.loading ||
     chart.refreshing ||
     (pickerTab === "watchlist" && watchlistQuotes.loading);
+  const overviewWarning = overview.refreshError || overview.data?.warning;
+  const showOverviewWarning =
+    overviewWarning &&
+    (!overview.data?.stocks.some((stock) => stock.latestClose != null) ||
+      ![
+        "The shared daily market refresh limit has been reached.",
+        "Market refreshes are temporarily limited. Please try again shortly.",
+      ].includes(overviewWarning));
   const marketRefreshOutcome =
     manual && !marketRefreshing && overview.hasSettled && chart.hasSettled
       ? overview.manualOutcome === "updated" || chart.manualOutcome === "updated"
@@ -542,9 +550,9 @@ export default function WorkspaceShell() {
             {message(overview.error)}
           </p>
         )}
-        {(overview.refreshError || overview.data?.warning) && (
+        {showOverviewWarning && (
           <p className="overview-notice" role="status">
-            {message(overview.refreshError || overview.data?.warning)}
+            {message(overviewWarning)}
           </p>
         )}
       </>
