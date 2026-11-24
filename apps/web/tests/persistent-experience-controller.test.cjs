@@ -717,3 +717,58 @@ test("a completed provider cutover leaves task restoration and assignment for ex
   const result = await h.c.authorize({}, state, []);
   assert.equal(result.requiresTaskReview, true);
 });
+
+test("task setup checks the exact saved version and recovers only its own pending publication", async () => {
+  const ref = { kind: "watchlist", resourceId: "shared", incarnation: "scope" };
+  const binding = { ref, sourceEpoch: 1 };
+  const metadata = {
+    taskId: "task_A",
+    taskVersion: 2,
+    envelopeFingerprint: "a".repeat(64),
+    resourceBindings: [binding],
+  };
+  const item = { ...binding, revision: 4, state: "active" };
+  const saved = { metadata };
+  let taskReads = 0;
+  const h = harness(async (_service, path) => {
+    assert.equal(path, "/api/v2/tasks/task_A");
+    taskReads++;
+    return saved;
+  });
+  const context = { identityState: {}, policy: {} };
+  h.c.context = async () => context;
+  h.c.catalogue = async () => ({
+    groups: [{ items: [item, { ...item, ref: { ...ref, resourceId: "unrelated" } }] }],
+  });
+  h.c.taskAuthority = async () => ({});
+  h.w.preparePersistentConsent = async ({ resources }) => {
+    assert.equal(resources.length, 1);
+    assert.equal(resources[0].ref, ref);
+    return { kind: "no_change" };
+  };
+  h.w.preparePersistentTask = async ({ task }) => {
+    assert.equal(task, saved);
+    return { kind: "no_change" };
+  };
+  const effects = [];
+  h.c.send = async (_connection, original) => {
+    if (original.kind !== "no_change") effects.push(original);
+  };
+  h.c.publishResource = async (_connection, verified, current, catalogue) => {
+    assert.equal(verified, context);
+    assert.equal(current, item);
+    assert.ok(catalogue);
+    effects.push("selected resource");
+  };
+  const options = { beforePublish: async () => effects.push("assignment") };
+  h.w.pending = { ...packet, context: { objectType: "task", taskId: "unrelated" } };
+  await assert.rejects(
+    h.c.approveTask(connection, metadata, options),
+    (e) => e.code === "persistent_operation_pending",
+  );
+  assert.deepEqual(effects, []);
+  h.w.pending = { ...packet, context: { objectType: "resource", ...binding } };
+  await h.c.approveTask(connection, metadata, options);
+  assert.deepEqual(effects, [h.w.pending, "assignment", "selected resource"]);
+  assert.equal(taskReads, 2);
+});

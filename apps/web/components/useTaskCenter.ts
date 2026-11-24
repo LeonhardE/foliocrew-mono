@@ -303,7 +303,7 @@ export function useTaskCenter(
     [api, base, update],
   );
   const send = useCallback(
-    async (packet: J) => {
+    async (packet: J, refreshDetail = true) => {
       const start = live.current;
       const path =
         base(packet.taskId) + (packet.action === "manual_intent" ? "/manual" : "/commands");
@@ -355,13 +355,19 @@ export function useTaskCenter(
           },
         }));
       } else update({ pending: null }, start.scope);
-      await load(packet.taskId, true);
+      if (refreshDetail) await load(packet.taskId, true);
       return receipt;
     },
     [api, base, load, update, invalidateDetail],
   );
   const command = useCallback(
-    async (task: string, action: string, value: unknown = null, provided?: J) => {
+    async (
+      task: string,
+      action: string,
+      value: unknown = null,
+      provided?: J,
+      refreshDetail = true,
+    ) => {
       const start = live.current;
       const startingVisit = runVisit.current;
       if (!start.scope || writes.current || !start.workspace.canWriteState)
@@ -406,7 +412,7 @@ export function useTaskCenter(
           value,
         });
         update({ pending: packet }, start.scope);
-        return await send(packet);
+        return await send(packet, refreshDetail);
       } catch (e) {
         if (action !== "manual_intent" || runVisit.current === startingVisit)
           update({ error: error(e) }, start.scope);

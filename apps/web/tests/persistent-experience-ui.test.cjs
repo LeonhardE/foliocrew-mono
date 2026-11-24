@@ -555,7 +555,7 @@ test("refreshing keeps the last loaded connection visible and adds a busy indica
     assert.doesNotMatch(muse, /Not connected|未连接/);
     assert.match(muse, /aria-busy="true"/);
     assert.match(muse, /data-checking="true"/);
-    assert.match(muse, /<button disabled="">Authorize again|<button disabled="">重新授权/);
+    assert.match(muse, /<button disabled="">(?:Revoke access|取消授权)/);
   }
 });
 
@@ -570,7 +570,8 @@ test("background summary refresh preserves actions on the last verified connecti
   );
   const muse = out.match(/<article[^>]*>[\s\S]*?<\/article>/)[0];
   assert.match(muse, /aria-busy="true"/);
-  assert.match(muse, /<button>Authorize again/);
+  assert.match(muse, /<button>Revoke access/);
+  assert.doesNotMatch(muse, /Authorize again|Continue authorization/);
 });
 
 test("Agent readiness reflects the complete verified display and never treats retained errors or stale data as ready", () => {

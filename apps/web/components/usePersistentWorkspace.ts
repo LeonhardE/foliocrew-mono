@@ -118,6 +118,7 @@ export function usePersistentWorkspace(
         assert: () => void,
       ) => Promise<(() => Promise<Response>) | undefined>,
       reuseOwnerResume = false,
+      actionTimeoutMs = 120000,
     ): Promise<T | null> => {
       if (job.current) return null;
       if (display && (!live.current.active || displayJob.current)) return null;
@@ -143,7 +144,7 @@ export function usePersistentWorkspace(
           timedOut = true;
           abort.abort();
         },
-        display ? 14000 : 120000,
+        display ? 14000 : actionTimeoutMs,
       );
       let cancel = () => {};
       const cancelled = new Promise<never>((_, reject) => {
@@ -450,10 +451,12 @@ export function usePersistentWorkspace(
                 };
                 view.identity = credential.state.identity;
               }
-              view.pending = !!(await live.current.workspace.loadPersistentPending({
+              const pending = await live.current.workspace.loadPersistentPending({
                 connectionId: connection.connectionId,
                 clientId: connection.clientId,
-              }));
+              });
+              view.pending = Boolean(pending);
+              view.pendingKind = pending?.kind;
               assert();
             }
           };
@@ -634,6 +637,8 @@ export function usePersistentWorkspace(
       }));
     },
     execute,
+    executeTaskActivation: <T>(action: Parameters<typeof execute<T>>[0]) =>
+      execute(action, true, false, undefined, false, 180000),
     review: (connection: PersistentConnection) => execute((c) => c.review(connection)),
     approve: (
       connection: PersistentConnection,
