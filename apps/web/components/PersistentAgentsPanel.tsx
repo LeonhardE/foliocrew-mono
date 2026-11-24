@@ -610,10 +610,11 @@ export function PersistentAgentsPanel({
       <div className={styles.connectionGrid}>
         {groups.map((group) => {
           const view = group.current,
-            pending = group.pending,
+            connected = view && status(view) === "connected" && !group.accountStep,
+            pending = connected ? null : group.pending,
             expiry = credentialExpiry(view),
             action =
-              group.accountStep === "accountConnecting"
+              connected || group.accountStep === "accountConnecting"
                 ? null
                 : group.accountStep === "pairingNeeded"
                   ? "finishPairing"
@@ -700,7 +701,7 @@ export function PersistentAgentsPanel({
                       void model.disconnect(view.connection);
                     }}
                   >
-                    {t("disconnect")}
+                    {t(connected ? "revokeAccess" : "disconnect")}
                   </button>
                 )}
               </div>

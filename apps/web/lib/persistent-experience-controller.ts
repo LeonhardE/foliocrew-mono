@@ -5,6 +5,7 @@ import {
   readChannelFollows,
 } from "./resource-library";
 import { taskMetadata, taskPage } from "./task-types";
+import type { TaskMetadata } from "./encrypted-types";
 import type { HoldingsWorkspace } from "../components/useHoldingsWorkspace";
 export const PERSISTENT_CONTRACT = "folioview.agent-workspace.v2.0";
 export const DEFAULT_CONNECTION_SECONDS = 7776000;
@@ -41,6 +42,7 @@ export type PersistentConnectionView = {
   policy: Json | null;
   tasks: PersistentTask[];
   pending: boolean;
+  pendingKind?: string;
   error: string;
   credential?: Json | null;
 };
@@ -127,8 +129,10 @@ export class PersistentExperienceController {
   private async context(connection: PersistentConnection) {
     const actor = this.actor(connection),
       base = this.base(connection);
-    const identityState = await this.request(base),
-      resourceState = await this.request(base + "/resource-consent");
+    const [identityState, resourceState] = await Promise.all([
+      this.request(base),
+      this.request(base + "/resource-consent"),
+    ]);
     const receipts = [];
     for (const op of resourceState.operations)
       receipts.push(await this.request(base + "/resource-operations/" + op));
@@ -601,7 +605,11 @@ export class PersistentExperienceController {
     }
     return { restored };
   }
-  async taskAuthority(connection: PersistentConnection, task: PersistentTask, previous?: Json) {
+  async taskAuthority(
+    connection: PersistentConnection,
+    task: Pick<PersistentTask, "taskId">,
+    previous?: Json,
+  ) {
     try {
       return await this.request(
         `/api/v2/persistent-content/${connection.vaultId}/tasks/${task.taskId}/authority`,
@@ -688,24 +696,88 @@ export class PersistentExperienceController {
     const context = await this.context(connection);
     return { identity: context.identityState.identity, policy: context.policy };
   }
+  async approveTask(
+    connection: PersistentConnection,
+    metadata: TaskMetadata,
+    options: {
+      previous?: Json;
+      beforePublish: (packet: Json, context: Json) => Promise<void>;
+    },
+  ) {
+    const actor = this.actor(connection);
+    const [packet, pending] = await Promise.all([
+      this.request("/api/v2/tasks/" + metadata.taskId),
+      this.workspace().loadPersistentPending(actor),
+    ]);
+    if (!same(packet.metadata, metadata)) fail("version_conflict");
+    this.assert();
+    if (pending) {
+      const matchesBinding = (resource: Json) =>
+        metadata.resourceBindings.some(
+          (binding) =>
+            same(resource.ref, binding.ref) && resource.sourceEpoch === binding.sourceEpoch,
+        );
+      const publication = pending.kind === "publication" && pending.context;
+      const matchesPublication =
+        publication &&
+        (publication.objectType === "task"
+          ? publication.taskId === metadata.taskId &&
+            publication.taskVersion === metadata.taskVersion &&
+            publication.ownerTaskFingerprint === metadata.envelopeFingerprint
+          : matchesBinding(publication));
+      let matchesConsent = false;
+      if (pending.kind === "consent") {
+        const encoded = pending.body.command.payload.replaceAll("-", "+").replaceAll("_", "/");
+        const decoded = new TextDecoder().decode(
+          Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0)),
+        );
+        const resources = JSON.parse(decoded).resources;
+        matchesConsent =
+          Array.isArray(resources) && resources.length > 0 && resources.every(matchesBinding);
+      }
+      if (!matchesPublication && !matchesConsent) fail("persistent_operation_pending");
+      // Only recover the exact signed operation for this task or one of its sources.
+      await this.send(connection, pending);
+    }
+    return this.approveReviewed(
+      connection,
+      [{ taskId: metadata.taskId, packet }],
+      null,
+      false,
+      options,
+    );
+  }
+
   async approve(
     connection: PersistentConnection,
     tasks: PersistentTask[],
     expected: Json,
     allowReassign = false,
+  ) {
+    return this.approveReviewed(connection, tasks, expected, allowReassign);
+  }
+
+  private async approveReviewed(
+    connection: PersistentConnection,
+    tasks: Pick<PersistentTask, "taskId" | "packet">[],
+    expected: Json | null,
+    allowReassign = false,
     taskCenter?: {
       previous?: Json;
-      beforePublish: (task: PersistentTask, packet: Json, context: Json) => Promise<void>;
+      beforePublish: (packet: Json, context: Json) => Promise<void>;
     },
   ) {
     if (!tasks.length) fail("select_task");
-    const context = await this.context(connection),
-      catalogue = await this.catalogue();
-    if (!same({ identity: context.identityState.identity, policy: context.policy }, expected))
+    const [context, catalogue] = await Promise.all([this.context(connection), this.catalogue()]);
+    if (
+      !taskCenter &&
+      !same({ identity: context.identityState.identity, policy: context.policy }, expected)
+    )
       fail("review_changed");
     const sources = new Map<string, Json>();
     for (const task of tasks) {
-      const current = await this.request("/api/v2/tasks/" + task.taskId);
+      // Task Center already fetched the exact current packet within this operation.
+      const current = taskCenter ? task.packet : await this.request("/api/v2/tasks/" + task.taskId);
       if (!same(current.metadata, task.packet.metadata)) fail("review_changed");
       for (const b of current.metadata.resourceBindings) {
         const item = catalogue.groups
@@ -733,7 +805,7 @@ export class PersistentExperienceController {
     });
     this.assert();
     await this.send(connection, packet);
-    const current = await this.context(connection);
+    const current = packet.kind === "no_change" ? context : await this.context(connection);
     for (const task of tasks) {
       const authority = await this.taskAuthority(connection, task, taskCenter?.previous);
       const p = await this.workspace().preparePersistentTask({
@@ -744,14 +816,37 @@ export class PersistentExperienceController {
         allowReassign,
       });
       this.assert();
-      if (taskCenter) await taskCenter.beforePublish(task, p, current);
+      if (taskCenter) await taskCenter.beforePublish(p, current);
       this.assert();
       await this.send(connection, p);
     }
-    await this.synchronize(connection, !taskCenter);
+    if (!taskCenter) {
+      await this.synchronize(connection);
+      return;
+    }
+    const latest = await this.catalogue();
+    for (const source of sources.values()) {
+      const item = latest.groups
+        .flatMap((group) => group.items)
+        .find((entry) => same(entry.ref, source.ref));
+      if (
+        !item ||
+        item.sourceEpoch !== source.sourceEpoch ||
+        item.revision === null ||
+        item.revision < source.revision ||
+        !["active", "ready", "empty"].includes(item.state)
+      )
+        return fail("source_unavailable");
+      await this.publishResource(connection, current, item, latest);
+    }
   }
-  private async publishResource(connection: PersistentConnection, context: Json, item: Json) {
-    const before = await this.catalogue(),
+  private async publishResource(
+    connection: PersistentConnection,
+    context: Json,
+    item: Json,
+    discovered?: Awaited<ReturnType<PersistentExperienceController["catalogue"]>>,
+  ) {
+    const before = discovered ?? (await this.catalogue()),
       find = (c: any) =>
         c.groups
           .flatMap((g: any) => g.items)

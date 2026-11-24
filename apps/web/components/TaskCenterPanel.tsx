@@ -84,6 +84,7 @@ export function TaskCenterView({
     [deleting, setDeleting] = useState(false),
     [localBusy, setLocalBusy] = useState(false),
     [localError, setLocalError] = useState(""),
+    [activation, setActivation] = useState<"schedule" | "prepare" | null>(null),
     [copied, setCopied] = useState("");
   const finishing = useRef(false),
     reopen = useRef<string | null>(null),
@@ -145,6 +146,8 @@ export function TaskCenterView({
       setDeleting(false);
       setProviders([]);
       setLocalError("");
+      setLocalBusy(false);
+      setActivation(null);
       finishing.current = false;
     }
   }, [center.scope]);
@@ -219,12 +222,18 @@ export function TaskCenterView({
   ]);
   const configure = async () => {
     const snapshot = live.current.scope;
-    if (!selected || !snapshot) return;
+    if (!selected || !snapshot || localBusy) return;
+    const assertScope = () => {
+      if (live.current.scope !== snapshot || live.current.task !== selected.taskId)
+        throw Error("cancelled");
+    };
     setLocalBusy(true);
+    setActivation("schedule");
     setLocalError("");
     try {
       if (center.enabled) {
         let state = await center.api(center.base(selected.taskId));
+        assertScope();
         const desired = scheduled ? schedule : null,
           d = state.rules?.definition;
         const sameSchedule =
@@ -235,7 +244,7 @@ export function TaskCenterView({
                 (k) => JSON.stringify(d.schedule[k]) === JSON.stringify((desired as J)[k]),
               );
         let previous = persistent?.tasks.find((v) => v.taskId === selected.taskId)?.authority;
-        if (!d)
+        if (!d && providers.length)
           previous = await center.api(
             `/api/v2/persistent-content/${selected.vaultId}/tasks/${selected.taskId}/authority`,
           );
@@ -245,54 +254,86 @@ export function TaskCenterView({
           d.executionEpoch !== selected.executionEpoch ||
           !sameSchedule
         ) {
-          await center.command(selected.taskId, "set_rules", desired, state);
+          assertScope();
+          await center.command(selected.taskId, "set_rules", desired, state, false);
           state = await center.api(center.base(selected.taskId));
+          assertScope();
         }
         for (const row of state.assignments) {
-          if (row.assignment.status === "active" && !providers.includes(row.assignment.provider))
-            await center.command(selected.taskId, "remove_assignment", row.assignment.assignmentId);
+          if (row.assignment.status === "active" && !providers.includes(row.assignment.provider)) {
+            assertScope();
+            await center.command(
+              selected.taskId,
+              "remove_assignment",
+              row.assignment.assignmentId,
+              undefined,
+              false,
+            );
+          }
         }
         for (const provider of providers) {
+          assertScope();
           const view = available.find((v) => v.connection.provider === provider);
           if (!view || !persistent) throw Error("connection_unavailable");
-          const result = await persistent.execute(async (c, api, assert) => {
-            const packet = await api(`/api/v2/tasks/${selected.taskId}`);
-            if (JSON.stringify(packet.metadata) !== JSON.stringify(selected))
-              throw Error("version_conflict");
-            const content = await workspace.openTask(packet);
-            assert();
-            const taskValue = {
-              taskId: selected.taskId,
-              title: content.name,
-              packet,
-              content,
-              authority: previous ?? {},
-              plan: null,
-            };
-            const review = await c.review(view.connection);
-            await c.approve(view.connection, [taskValue], review, false, {
+          setActivation("prepare");
+          const result = await persistent.executeTaskActivation(async (controller, api, assert) => {
+            await controller.approveTask(view.connection, selected, {
               previous,
-              beforePublish: async (_task, p, context) => {
-                const slot = await center.api(
+              beforePublish: async (packet, context) => {
+                assert();
+                assertScope();
+                const current = await center.api(center.base(selected.taskId));
+                const fingerprint =
+                  packet.kind === "no_change" ? packet.authority.fingerprint : packet.fingerprint;
+                if (packet.kind === "no_change") {
+                  const verified = await workspace.verifyTaskCenterState(current);
+                  assert();
+                  assertScope();
+                  const credential = view.credential?.reference;
+                  if (
+                    credential &&
+                    verified.assignments.some(
+                      ({ assignment }: J) =>
+                        assignment.status === "active" &&
+                        assignment.provider === provider &&
+                        assignment.authorityFingerprint === fingerprint &&
+                        Object.keys(credential).every(
+                          (key) => credential[key] === assignment.credential[key],
+                        ),
+                    )
+                  )
+                    return;
+                }
+                const slot = await api(
                   `/api/v3/provider-connections/${selected.vaultId}/${provider}`,
                 );
+                assert();
+                assertScope();
                 if (
                   !slot.slot?.currentCredential ||
                   slot.slot.currentCredential.connectionId !== view.connection.connectionId
                 )
                   throw Error("connection_unavailable");
-                await center.command(selected.taskId, "set_assignment", {
-                  slot: slot.slot,
-                  identityState: context.identityState,
-                  authorityFingerprint:
-                    p.kind === "no_change" ? p.authority.fingerprint : p.fingerprint,
-                });
+                await center.command(
+                  selected.taskId,
+                  "set_assignment",
+                  {
+                    slot: slot.slot,
+                    identityState: context.identityState,
+                    authorityFingerprint: fingerprint,
+                  },
+                  current,
+                  false,
+                );
+                assert();
+                assertScope();
               },
             });
             return true;
           });
-          if (result !== true) throw Error("authorization_pending");
+          if (result !== true) throw Error("task_activation_unconfirmed");
         }
+        assertScope();
         await center.load(selected.taskId, true);
       }
       if (live.current.scope === snapshot) {
@@ -301,9 +342,12 @@ export function TaskCenterView({
       }
     } catch (e) {
       if (live.current.scope === snapshot)
-        setLocalError(e instanceof Error ? e.message : "request_failed");
+        setLocalError(e instanceof Error ? e.message : "task_activation_unconfirmed");
     } finally {
-      if (live.current.scope === snapshot) setLocalBusy(false);
+      if (live.current.scope === snapshot) {
+        setActivation(null);
+        setLocalBusy(false);
+      }
     }
   };
   useEffect(() => {
@@ -505,10 +549,11 @@ export function TaskCenterView({
           message={failureLabel}
           onRetry={() => {
             setLocalError("");
-            if (task) void center.load(task, true);
+            if (failure === "task_activation_unconfirmed") void configure();
+            else if (task) void center.load(task, true);
             else void model.reload();
           }}
-          retryLabel={t("retry")}
+          retryLabel={t(failure === "task_activation_unconfirmed" ? "continueActivation" : "retry")}
         />
       )}
       {model.catalogueError && (mode === "edit" || request) && (
@@ -1010,7 +1055,17 @@ export function TaskCenterView({
                     }
                     onClick={step === 3 ? confirm : next}
                   >
-                    {busy ? t("saving") : step === 3 ? t("confirm") : t("next")}
+                    {activation
+                      ? t(activation === "schedule" ? "settingSchedule" : "preparingExecutor")
+                      : busy
+                        ? t("saving")
+                        : step === 3
+                          ? t(
+                              localError === "task_activation_unconfirmed"
+                                ? "continueActivation"
+                                : "confirm",
+                            )
+                          : t("next")}
                   </button>
                 </footer>
               </div>

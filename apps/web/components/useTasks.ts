@@ -1124,13 +1124,23 @@ export function useTasks(
   );
 
   const freshWrite = useCallback(
-    async (context: Context, current: Editor, action: "save" | "pause" | "resume" | "archive") => {
+    async (
+      context: Context,
+      current: Editor,
+      action: "save" | "pause" | "resume" | "archive",
+      confirmNewTask: boolean,
+    ) => {
       if (!live.current.workspace.canWriteState) throw new TaskError("unlock_required");
-      await live.current.workspace.refreshVault(context.signal, true);
+      // The review already read the catalogue. Creation validates bindings again on the server.
+      const [, headValue, catalogueValue] = await Promise.all([
+        live.current.workspace.refreshVault(context.signal, true),
+        current.baseVersion > 0 ? api(`/api/v2/tasks/${current.taskId}`, context) : null,
+        confirmNewTask ? null : api("/api/v2/resources/catalogue", context),
+      ]);
       context.assert();
       let head: EncryptedTask | null = null;
       if (current.baseVersion > 0) {
-        head = encryptedTask(await api(`/api/v2/tasks/${current.taskId}`, context));
+        head = encryptedTask(headValue);
         context.assert();
         if (head.metadata.taskId !== current.taskId) throw new TaskError("invalid_response");
         if (
@@ -1143,12 +1153,12 @@ export function useTasks(
         if (head.metadata.status === "archived") throw new TaskError("historical_read_only");
         if (head.metadata.taskVersion >= 50) throw new TaskError("version_limit");
       }
-      const catalogue = taskCatalogue(await api("/api/v2/resources/catalogue", context));
-      context.assert();
-      updatePrivate((previous) => ({ ...previous, catalogue }));
+      const catalogue = confirmNewTask ? null : taskCatalogue(catalogueValue);
+      if (catalogue) updatePrivate((previous) => ({ ...previous, catalogue }));
       const snapshot = stateRef.current;
       // Pausing/archiving never expands a source and must remain available during an upstream outage.
       if (
+        catalogue &&
         action !== "pause" &&
         action !== "archive" &&
         snapshot.bindings.some(
@@ -1310,7 +1320,9 @@ export function useTasks(
             updatePrivate((previous) => ({ ...previous, pending: outstanding }));
             throw new TaskError("pending_task");
           }
-          const { head, authority } = await freshWrite(context, current, action);
+          const confirmNewTask =
+            confirmed && current.baseVersion === 0 && reviewed.current?.action === "save";
+          const { head, authority } = await freshWrite(context, current, action, confirmNewTask);
           context.assert();
           if (
             editor.current !== current ||
