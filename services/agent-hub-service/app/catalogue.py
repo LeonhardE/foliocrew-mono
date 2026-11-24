@@ -649,6 +649,11 @@ class CatalogueService:
         scope = self.user_vaults.read(uid, deadline=deadline)
         if scope is None:
             return self._snapshot(uid, registry_cache=registry_cache)[0]
+        return self._transferred_context(uid, scope)
+
+    def _transferred_context(self, uid, scope):
+        if scope.authority["ownerSubject"] != owner_key(uid):
+            raise ContractError("source_unavailable")
 
         def transferred(unit):
             scope.require_current(unit, self.vaults.now())
@@ -733,6 +738,13 @@ class CatalogueService:
         return result
 
     def read(self, uid):
+        return self._read(uid)[0]
+
+    def read_for_task_write(self, uid, verified_scope):
+        """Reuse task preflight authority and return the fresh, checked final proof."""
+        return self._read(uid, initial_scope=verified_scope)
+
+    def _read(self, uid, *, initial_scope=None):
         clock = self.sources.clock
         started = clock()
         deadline = started + TOTAL_SECONDS
@@ -743,7 +755,11 @@ class CatalogueService:
         try:
             stage_name = "before"
             stage = started
-            before = self.context(uid, registry_cache=registry_cache, deadline=deadline)
+            before = (
+                self.context(uid, registry_cache=registry_cache, deadline=deadline)
+                if initial_scope is None
+                else self._transferred_context(uid, initial_scope)
+            )
             timing["before"] = clock() - stage
             source_count = len(before["sources"])
             stage_name = None
@@ -760,7 +776,16 @@ class CatalogueService:
             # changed local authority/fence being presented as active discovery.
             stage_name = "after"
             stage = clock()
-            after = self.context(uid, registry_cache=registry_cache, deadline=deadline)
+            final_scope = None
+            if initial_scope is None:
+                after = self.context(uid, registry_cache=registry_cache, deadline=deadline)
+            else:
+                final_scope = self.user_vaults.read(
+                    uid, initial_scope.authority["vaultId"], deadline=deadline
+                )
+                if final_scope is None:
+                    raise ContractError("source_unavailable")
+                after = self._transferred_context(uid, final_scope)
             timing["after"] = clock() - stage
             stage_name = None
             remaining(deadline, clock)
@@ -769,7 +794,7 @@ class CatalogueService:
             value = _response(result, self.vaults.now())
             remaining(deadline, clock)
             complete = True
-            return value
+            return value, final_scope
         finally:
             if stage_name is not None:
                 timing[stage_name] += clock() - stage

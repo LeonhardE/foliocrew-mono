@@ -649,7 +649,14 @@ class CatalogueTests(CatalogueFixture, unittest.TestCase):
                 client.read.call_args_list[0].kwargs["deadline"],
                 client.read.call_args_list[1].kwargs["deadline"],
             )
+            client.read.reset_mock()
+            task_catalogue, final_scope = service.read_for_task_write(UID, proof)
+            self.assertEqual(task_catalogue, view)
+            self.assertIs(final_scope, proof)
+            self.assertEqual(client.read.call_count, 1)
             client.read.side_effect = ContractError("source_unavailable")
+            with self.assertRaisesRegex(ContractError, "source_unavailable"):
+                service.read_for_task_write(UID, proof)
             with self.assertRaisesRegex(ContractError, "source_unavailable"):
                 service.read(UID)
 
