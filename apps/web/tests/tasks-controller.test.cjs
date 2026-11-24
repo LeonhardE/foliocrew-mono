@@ -1880,6 +1880,20 @@ test("unmounting a pending name batch cannot refill its display queue", async ()
   assert.equal(h.opens.length, 0);
 });
 
+test("task discovery waits for the initial vault check before reading the list", async () => {
+  const h = harness({ catalogueOnDemand: true });
+  try {
+    h.workspace.phase = "checking";
+    await h.ready();
+    assert.equal(h.calls.filter((r) => r.route.startsWith("/api/v2/tasks")).length, 0);
+    h.unlock();
+    await h.drain();
+    assert.equal(h.calls.filter((r) => r.route.startsWith("/api/v2/tasks?")).length, 1);
+  } finally {
+    h.unmount();
+  }
+});
+
 test("only creating or editing a task requests the resource catalogue in on-demand mode", async () => {
   const h = harness({ catalogueOnDemand: true });
   let m = await h.drain();

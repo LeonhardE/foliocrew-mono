@@ -604,8 +604,7 @@ export function usePersistentWorkspace(
             visibleState.busy ||
             visibleState.scope !== scope ||
             !visibleState.loaded ||
-            !fresh.current ||
-            Date.now() - fresh.current >= 30000
+            !hasFreshWorkspaceDisplay(fresh.current, Date.now())
           ? "loading"
           : "ready";
   return {

@@ -63,7 +63,12 @@ export function WorkspaceSidebar({
   activeView: WorkspaceView;
   onNavigate: (view: WorkspaceView) => void;
   privateNavigationDisabled?: boolean;
-  workspace?: { authenticated: boolean; phase: string; lock: () => void };
+  workspace?: {
+    authenticated: boolean;
+    phase: string;
+    peerUnlocked?: boolean;
+    lock: () => void;
+  };
 }) {
   const t = useTranslations();
   const [collapsed, setCollapsed] = useState(true);
@@ -258,7 +263,8 @@ export function WorkspaceSidebar({
             collapsed={compact}
             canLock={Boolean(
               workspace?.authenticated &&
-              ["unlocked", "needs-device", "renewal-only"].includes(workspace.phase),
+              (workspace.peerUnlocked ||
+                ["unlocked", "needs-device", "renewal-only"].includes(workspace.phase)),
             )}
             onLock={workspace?.lock}
           />

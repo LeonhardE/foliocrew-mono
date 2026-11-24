@@ -80,6 +80,7 @@ export function HoldingsSourceBar({
   names,
   library,
   onCreateTask,
+  onRequestCatalogue,
   onUpdate,
   children,
 }: {
@@ -87,6 +88,7 @@ export function HoldingsSourceBar({
   names: DisplayNamesModel;
   library: ResourceLibraryModel;
   onCreateTask?: (selection: ResourceSelection) => void;
+  onRequestCatalogue?: () => void;
   onUpdate: () => void;
   children: ReactNode;
 }) {
@@ -223,8 +225,10 @@ export function HoldingsSourceBar({
             className={styles.secondary}
             disabled={blocked || library.offline}
             onClick={() => {
-              if (unchecked && !selected) void library.reload("catalogue");
-              else void model.readStored();
+              if (unchecked && !selected) {
+                if (onRequestCatalogue) onRequestCatalogue();
+                else void library.reload("catalogue");
+              } else void model.readStored();
             }}
           >
             {t("manage.refresh")}
@@ -238,6 +242,7 @@ export function HoldingsSourceBar({
                 setDiscardName(false);
                 setDraft(names.name(selected.resourceRef) ?? "");
                 names.clearError();
+                if (onCreateTask) onRequestCatalogue?.();
                 setSettingsFor(selectedKey);
               }}
             >
@@ -281,7 +286,10 @@ export function HoldingsSourceBar({
         <button
           type="button"
           className={styles.secondary}
-          onClick={() => setSettingsFor(selectedKey)}
+          onClick={() => {
+            if (onCreateTask) onRequestCatalogue?.();
+            setSettingsFor(selectedKey);
+          }}
         >
           {t("manage.finishPending")}
         </button>
@@ -433,6 +441,16 @@ export function HoldingsSourceBar({
             {t("manage.sharing")}
           </a>
         </div>
+        {onCreateTask && !library.offline && catalogue.loading && (
+          <LoadingIndicator busy hasContent label={t("loading")} />
+        )}
+        {onCreateTask && !library.offline && catalogue.error && (
+          <InlineError
+            message={t("lifecycle.sourcesUnavailable")}
+            retryLabel={t("manage.retry")}
+            onRetry={() => void library.reload("catalogue")}
+          />
+        )}
         {settings && selectedRef && <RelatedTasks model={model} source={selectedRef} />}
         <details className={styles.advanced}>
           <summary>{t("manage.advanced")}</summary>

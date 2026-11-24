@@ -49,7 +49,7 @@ test("workspace navigation keeps one owner session without server transitions af
   const InboxPanel = () => null;
   const TasksPanel = () => null;
   const sharedWorkspace = { lock() {}, owner: "session_A", authenticated: true };
-  let workspaceCalls = 0;
+  const workspaceStarts = [];
   let pathname = "/";
   let privateWorkspaceAvailable = true;
   const historyCalls = [];
@@ -80,6 +80,7 @@ test("workspace navigation keeps one owner session without server transitions af
           ownerCapabilities: { invitationRequired: !privateWorkspaceAvailable },
           privateWorkspaceAvailable,
           status: privateWorkspaceAvailable ? "authenticated" : "anonymous",
+          sessionKey: privateWorkspaceAvailable ? sharedWorkspace.owner : null,
         }),
       },
       "./useWorkspaceJourney": { useWorkspaceJourney: () => () => {} },
@@ -127,8 +128,8 @@ test("workspace navigation keeps one owner session without server transitions af
       "@/components/TasksPanel": { __esModule: true, default: TasksPanel },
       "@/components/InboxPanel": { __esModule: true, default: InboxPanel },
       "@/components/useHoldingsWorkspace": {
-        useHoldingsWorkspace: () => {
-          workspaceCalls++;
+        useHoldingsWorkspace: (start) => {
+          workspaceStarts.push(start);
           return sharedWorkspace;
         },
       },
@@ -170,10 +171,11 @@ test("workspace navigation keeps one owner session without server transitions af
     find(tree, (node) => node.type === TasksPanel),
     null,
   );
-  assert.equal(workspaceCalls, 1);
+  assert.deepEqual(workspaceStarts, [false]);
   sidebar.props.onNavigate("resources");
   assert.equal(pathname, "/resources");
   tree = render();
+  assert.equal(workspaceStarts.at(-1), true);
   const first = find(tree, (node) => node.type === ResourcePanel);
   assert.equal(first.tree.props.workspace, sharedWorkspace);
   const active = first;
@@ -214,6 +216,7 @@ test("workspace navigation keeps one owner session without server transitions af
   sidebar = find(tree, (node) => node.type === Sidebar).tree;
   sidebar.props.onNavigate("markets");
   tree = render();
+  assert.equal(workspaceStarts.at(-1), true, "Market retains an established private session");
   const returned = find(tree, (node) => node.type === ResourcePanel);
   assert.equal(returned.parent.props.hidden, true);
   assert.deepEqual(returned.trail, first.trail);

@@ -99,7 +99,12 @@ export default function WorkspaceShell() {
   const visited = useRef(new Set<WorkspaceView>());
   if (activeView) visited.current.add(activeView);
   const marketsVisited = visited.current.has("markets");
-  const encryptedWorkspace = useHoldingsWorkspace();
+  const privateOwner = useRef<string | null>(null);
+  const signedInOwner = authStatus === "authenticated" ? sessionKey : null;
+  if (activeView && activeView !== "markets") privateOwner.current = signedInOwner;
+  const encryptedWorkspace = useHoldingsWorkspace(
+    Boolean(signedInOwner && signedInOwner === privateOwner.current),
+  );
   const agentScope = JSON.stringify([
     encryptedWorkspace.owner,
     encryptedWorkspace.vault?.vaultId,
@@ -203,7 +208,6 @@ export default function WorkspaceShell() {
     range: ChartRange;
     watchlist: boolean;
   } | null>(null);
-  const signedInOwner = authStatus === "authenticated" ? sessionKey : null;
   const manual =
     signedInOwner &&
     manualSelection?.owner === signedInOwner &&
