@@ -182,6 +182,24 @@ test("lock, logout and switched owner mask all private form and selection in sam
     assert.doesNotMatch(html, /Synthetic private|Synthetic instructions|Synthetic report/);
   }
 });
+test("a locked task view shows only unlock guidance and genuine unlock errors", () => {
+  for (const locale of ["en", "zh"]) {
+    const locked = render(
+      fixture({ listError: "request_failed", error: "request_failed" }, { phase: "locked" }),
+      locale,
+    );
+    const copy = catalogs[locale].tasks;
+    assert.ok(locked.includes(copy.unlockTitle));
+    assert.ok(!locked.includes(copy.retryTasks));
+    assert.ok(!locked.includes(copy.readErrors.request_failed));
+    assert.ok(!locked.includes(copy.emptyTitle));
+    const unlockFailure = render(
+      fixture({}, { phase: "locked", error: "request_timeout" }),
+      locale,
+    );
+    assert.match(unlockFailure, /role="alert"/);
+  }
+});
 test("historical/read-only and dirty transitions do not offer writable fields", () => {
   const html = render(fixture({ historical: true, dirty: false }));
   assert.match(html, /<fieldset disabled=""/);
