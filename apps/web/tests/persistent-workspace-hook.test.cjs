@@ -909,6 +909,16 @@ test("unrelated routes start no Agent reads and revisiting retains a fresh verif
     assert.equal(h.render().loaded, true);
     assert.equal(h.calls.length, count);
     assert.equal(h.render().providerStates, m.providerStates);
+    h.hide();
+    h.show(29 * 60_000);
+    await h.settle();
+    assert.equal(h.render().displayState, "ready");
+    assert.equal(h.calls.length, count);
+    h.hide();
+    h.show(61_000);
+    await h.settle();
+    assert.equal(h.render().displayState, "ready");
+    assert.ok(h.calls.length > count);
   } finally {
     h.close();
   }

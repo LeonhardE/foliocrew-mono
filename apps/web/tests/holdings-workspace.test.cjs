@@ -1266,12 +1266,12 @@ function harness({
       },
     },
   );
-  function render({ flush = true } = {}) {
+  function render({ flush = true, start = true } = {}) {
     let model;
     do {
       dirty = false;
       index = 0;
-      model = useHoldingsWorkspace();
+      model = useHoldingsWorkspace(start);
       if (flush)
         for (const { slot, effect, dependencies } of effects.splice(0)) {
           cells[slot]?.cleanup?.();
@@ -3198,6 +3198,79 @@ test("explicit locking ends reuse and the next unlock requests a new Passkey", a
   assert.equal(h.instances.length, 2);
   assert.equal(h.instances[0].locked, true);
   h.unmount();
+});
+
+test("a deferred private session issues no vault request and still locks the owner's peer on sign-out", async () => {
+  const h = harness({ sharedUnlock: true, sharedResume: true });
+  try {
+    assert.equal(h.render({ start: false }).peerUnlocked, false);
+    h.peerUnlock();
+    const model = h.render({ start: false });
+    assert.equal(model.peerUnlocked, true);
+    assert.equal(h.requests.length, 0);
+    model.lock();
+    assert.equal(h.render({ start: false }).peerUnlocked, false);
+    h.auth({ status: "anonymous", sessionKey: null, profile: null });
+    assert.equal(h.render({ start: false }).authenticated, false);
+    assert.deepEqual(h.counts().sharedLocks, ["owner_a", "owner_a"]);
+  } finally {
+    h.unmount();
+  }
+});
+
+test("returning to a tab retries a cancelled initial vault check without opening a Passkey", async () => {
+  const h = harness();
+  const gate = deferred();
+  try {
+    h.holdCurrent(gate);
+    h.render();
+    await settle();
+    const reads = () => h.requests.filter((r) => r.route === "/api/v2/vaults/current");
+    assert.equal(reads().length, 1);
+    h.visibility(false);
+    h.render();
+    assert.equal(reads()[0].options.signal.aborted, true);
+    h.holdCurrent(null);
+    h.visibility(true);
+    await settle();
+    assert.equal(h.render().phase, "locked");
+    assert.equal(reads().length, 2);
+    assert.equal(h.counts().passkeyCalls, 0);
+    gate.resolve(new Response("{}", { status: 500 }));
+    await settle();
+    assert.equal(h.render().error, "");
+  } finally {
+    h.unmount();
+  }
+});
+
+test("first automatic Agent display can reuse verified User authority after an explicit unlock", async () => {
+  const route = "/api/v3/private-resources/vaults/current/read";
+  const h = harness({
+    userVault: true,
+    sessionOverrides: () => ({ hasPendingArchiveWork: async () => false }),
+  });
+  try {
+    let model = await ready(h);
+    for (let i = 0; model.phase === "checking" && i < 50; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      model = h.render();
+    }
+    assert.equal(model.phase, "locked");
+    const action = model.unlock({ forResults: true, enableState: true });
+    h.resolvePasskey();
+    await action;
+    model = h.render();
+    assert.equal(model.phase, "unlocked");
+    const reads = () => h.requests.filter((r) => r.route === route).length;
+    const count = reads();
+    await model.refreshVault(new AbortController().signal, false, undefined, true);
+    assert.equal(reads(), count);
+    await h.render().refreshVault(new AbortController().signal, false, undefined, true);
+    assert.equal(reads(), count + 1);
+  } finally {
+    h.unmount();
+  }
 });
 
 test("a fresh page resumes its verified owner's shared unlock without a Passkey", async () => {

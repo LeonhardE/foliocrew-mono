@@ -258,7 +258,8 @@ export function WorkspaceSidebar({
             collapsed={compact}
             canLock={Boolean(
               workspace?.authenticated &&
-              ["unlocked", "needs-device", "renewal-only"].includes(workspace.phase),
+              (workspace.peerUnlocked ||
+                ["unlocked", "needs-device", "renewal-only"].includes(workspace.phase)),
             )}
             onLock={workspace?.lock}
           />

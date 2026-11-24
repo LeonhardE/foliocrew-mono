@@ -304,12 +304,14 @@ function Workspace({
   names,
   library,
   onCreateTask,
+  onRequestCatalogue,
   active = true,
 }: {
   model: HoldingsWorkspace;
   names: DisplayNamesModel;
   library: ResourceLibraryModel;
   onCreateTask?: (selection: ResourceSelection) => void;
+  onRequestCatalogue?: () => void;
   active?: boolean;
 }) {
   const t = useTranslations("resources");
@@ -442,6 +444,7 @@ function Workspace({
             names={names}
             library={library}
             onCreateTask={onCreateTask}
+            onRequestCatalogue={onRequestCatalogue}
             onUpdate={() => {
               setImportOpen(true);
               requestAnimationFrame(() => file.current?.focus());
@@ -904,6 +907,24 @@ function ResourcesView({
 }: ResourcesProps & { model: HoldingsWorkspace }) {
   const t = useTranslations("resources"),
     names = useDisplayNames(model, active);
+  const [catalogueRequestedFor, setCatalogueRequestedFor] = useState<string | null>(null);
+  // A single transferred source can be shown from its verified Portfolio view.
+  // Other sources, recovery states and task selection still use the catalogue.
+  const deferCatalogue =
+    Boolean(names.scope && model.vault?.userAuthority && model.configured && model.canWriteState) &&
+    model.sources.length === 1 &&
+    !model.newSource &&
+    !model.error &&
+    !model.preview &&
+    !model.importPreview &&
+    !model.hasPending &&
+    !model.sourceReview &&
+    !model.sourceMutation &&
+    !model.staleSourceMutation &&
+    !model.sourceCreationId &&
+    !model.uploadCancellation &&
+    !model.uploadCancellationReview &&
+    catalogueRequestedFor !== names.scope;
   const recoveryScope = JSON.stringify([
     model.owner,
     model.vault?.vaultId,
@@ -977,7 +998,7 @@ function ResourcesView({
         holdingsVersion={model.content?.data.snapshotId}
         workspaceScope={workspaceScope}
         holdingsPublication={publication}
-        holdingsCatalogueNeeded={Boolean(names.scope)}
+        holdingsCatalogueNeeded={Boolean(names.scope) && !deferCatalogue}
         resumeCatalogueOnNavigation={Boolean(model.vault?.userAuthority)}
         resourceDisplay={model.resourceDisplay}
         active={active}
@@ -993,6 +1014,9 @@ function ResourcesView({
               library={library}
               active={active}
               onCreateTask={onCreateTask}
+              onRequestCatalogue={
+                deferCatalogue ? () => setCatalogueRequestedFor(names.scope) : undefined
+              }
             />
           </div>
         )}

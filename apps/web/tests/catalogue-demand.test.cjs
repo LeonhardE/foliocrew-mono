@@ -189,12 +189,12 @@ function harness({ legacy = false, externalWatchlist = true } = {}) {
       workspace = { ...workspace, ...v };
       return render();
     },
-    unlock() {
+    unlock(vaultExtras = {}) {
       workspace = {
         ...workspace,
         owner,
         phase: "unlocked",
-        vault: { vaultId: "vault_A", rootKeyId: "root_A", version: 1 },
+        vault: { vaultId: "vault_A", rootKeyId: "root_A", version: 1, ...vaultExtras },
         vaultGeneration: 1,
         busy: null,
       };
@@ -277,6 +277,33 @@ test("actual ResourcesView names scope holds catalogue through unknown current a
     h.close();
   }
 });
+test("one transferred holding uses its direct view until task discovery is requested", async () => {
+  const h = harness();
+  try {
+    const source = { resourceRef: ref("holdings"), sourceEpoch: 1 };
+    let reads = 0;
+    h.modelPatch({
+      sources: [source],
+      canWriteState: true,
+      readStored: async () => {
+        reads++;
+      },
+    });
+    h.unlock({ userAuthority: {} });
+    await h.settle();
+    assert.equal(reads, 1);
+    assert.equal(h.cats().length, 0);
+    const workspace = all(h.tree, (n) => typeof n.props?.onRequestCatalogue === "function")[0];
+    assert.ok(workspace);
+    workspace.props.onRequestCatalogue();
+    await h.settle();
+    assert.equal(h.cats().length, 1);
+    assert.ok(h.model.catalogue.data);
+  } finally {
+    h.close();
+  }
+});
+
 test("locked holdings stay unknown while list categories load their own data without task discovery", async () => {
   const h = harness();
   try {

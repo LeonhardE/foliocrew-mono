@@ -499,7 +499,7 @@ function importDraft(
   };
 }
 
-export function useHoldingsWorkspace() {
+export function useHoldingsWorkspace(start = true) {
   const auth = useAuth();
   const owner = auth.status === "authenticated" && auth.profile ? auth.sessionKey : null;
   const requestPrivate = auth.requestPrivate;
@@ -524,10 +524,15 @@ export function useHoldingsWorkspace() {
   const uidRef = useRef(uid);
   uidRef.current = uid;
   const [state, setState] = useState<State>(empty);
+  const [sharedUnlockOwner, setSharedUnlockOwner] = useState<string | null>(null);
   const stateRef = useRef(state);
   stateRef.current = state;
   const serial = useRef(0);
-  const current = useRef<{ serial: number; controller: AbortController } | null>(null);
+  const current = useRef<{
+    serial: number;
+    controller: AbortController;
+    busy: Exclude<Busy, null>;
+  } | null>(null);
   const session = useRef<{ owner: string; instance: EncryptedVaultSession } | null>(null);
   const pending = useRef<PendingSnapshot | null>(null);
   const displayCache = useRef(new WorkspaceDisplayCache());
@@ -611,7 +616,7 @@ export function useHoldingsWorkspace() {
       )
         return;
       const controller = new AbortController();
-      const call = { serial: ++serial.current, controller };
+      const call = { serial: ++serial.current, controller, busy };
       current.current = call;
       const owns = () =>
         ownerRef.current === owner &&
@@ -1789,6 +1794,7 @@ export function useHoldingsWorkspace() {
               return;
             }
             const refreshed = await readCurrent(signal);
+            const checkedAt = Date.now();
             assertActive();
             if (!refreshed.vault) throw new WorkspaceError("invalid_response");
             const privateDisplayVault = resourceDisplaySnapshot(refreshed.vault);
@@ -1807,7 +1813,13 @@ export function useHoldingsWorkspace() {
                   assertActive,
                 )
               : null;
-            vaultCheckedAt.current = Date.now();
+            vaultCheckedAt.current = checkedAt;
+            if (options?.forResults && displayVault.userAuthority)
+              resumedDisplayVault.current = {
+                vault: displayVault,
+                serial: serial.current,
+                checkedAt,
+              };
             setState((previous) => ({
               ...previous,
               phase: "unlocked",
@@ -1957,7 +1969,7 @@ export function useHoldingsWorkspace() {
     current.current = null;
     terminate();
     setState({ ...empty, owner });
-    if (owner && configured) void reload();
+    if (start && owner && configured) void reload();
     return () => {
       ++serial.current;
       current.current?.controller.abort();
@@ -1968,7 +1980,7 @@ export function useHoldingsWorkspace() {
       if (uid && (ownerRef.current !== owner || !capabilitiesRef.current.hub))
         EncryptedVaultSession.lockSharedUnlock?.(uid);
     };
-  }, [owner, uid, configured, auth.portfolioConfigured, reload, terminate]);
+  }, [start, owner, uid, configured, auth.portfolioConfigured, reload, terminate]);
 
   const create = useCallback(
     (options?: Pick<PasskeyOptions, "method">) =>
@@ -3016,6 +3028,11 @@ export function useHoldingsWorkspace() {
 
   const lock = useCallback(() => {
     if (ownerRef.current !== owner) return;
+    if (!start && uid) {
+      setSharedUnlockOwner(null);
+      EncryptedVaultSession.lockSharedUnlock?.(uid);
+      return;
+    }
     ++serial.current;
     current.current?.controller.abort();
     current.current = null;
@@ -3048,12 +3065,13 @@ export function useHoldingsWorkspace() {
       keyRenewalCancellation: false,
       keyRenewalFailure: false,
     }));
-  }, [owner, terminate]);
+  }, [owner, start, uid, terminate]);
 
   sharedHandlers.current = { lock, reload };
   useEffect(() => {
     if (typeof document === "undefined") return;
     let hidden = document.visibilityState === "hidden";
+    let resumeInitialCheck = false;
     const currentSession = () =>
       Boolean(owner && session.current?.owner === owner && stateRef.current.phase === "unlocked");
     const change = () => {
@@ -3061,6 +3079,8 @@ export function useHoldingsWorkspace() {
       if (hidden === nextHidden) return;
       hidden = nextHidden;
       if (hidden) {
+        if (stateRef.current.phase === "checking" && current.current?.busy === "loading")
+          resumeInitialCheck = true;
         const sameSession =
           currentSession() && hasFreshWorkspaceDisplay(vaultCheckedAt.current, Date.now());
         if (sameSession && !current.current) {
@@ -3094,7 +3114,13 @@ export function useHoldingsWorkspace() {
       } else {
         const saved = pausedDisplay.current;
         pausedDisplay.current = null;
-        if (!currentSession() || ownerRef.current !== owner) return;
+        if (ownerRef.current !== owner) return;
+        if (resumeInitialCheck) {
+          resumeInitialCheck = false;
+          if (stateRef.current.phase === "checking" && !current.current)
+            void sharedHandlers.current.reload();
+        }
+        if (!currentSession()) return;
         if (
           saved &&
           saved.generation === vaultGeneration.current &&
@@ -3122,18 +3148,24 @@ export function useHoldingsWorkspace() {
     return () => document.removeEventListener("visibilitychange", change);
   }, [owner]);
   useEffect(() => {
+    setSharedUnlockOwner(null);
     if (!uid || !owner || !configured) return;
     return EncryptedVaultSession.watchUnlock?.(
       uid,
       () => {
-        if (ownerRef.current === owner && stateRef.current.phase === "locked" && !current.current)
+        if (ownerRef.current !== owner) return;
+        // Market can lock a peer session without fetching or opening its vault.
+        if (!start) setSharedUnlockOwner(owner);
+        else if (stateRef.current.phase === "locked" && !current.current)
           void sharedHandlers.current.reload();
       },
       () => {
-        if (ownerRef.current === owner) sharedHandlers.current.lock();
+        if (ownerRef.current !== owner) return;
+        if (!start) setSharedUnlockOwner(null);
+        else sharedHandlers.current.lock();
       },
     );
-  }, [uid, owner, configured]);
+  }, [start, uid, owner, configured]);
   useEffect(() => {
     if (state.owner === owner && state.phase === "unlocked")
       session.current?.instance.publishUnlock?.();
@@ -5582,6 +5614,7 @@ export function useHoldingsWorkspace() {
     authStatus: auth.status,
     configured: holdingsConfigured,
     vaultConfigured: configured,
+    peerUnlocked: Boolean(!start && owner && configured && sharedUnlockOwner === owner),
     vaultGeneration: vaultGeneration.current,
     recoveryExport: ["unlocked", "needs-device"].includes(visible.phase)
       ? visible.recoveryExport

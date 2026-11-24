@@ -492,7 +492,8 @@ export function useTasks(
         live.current.owner !== owner ||
         !configured ||
         !live.current.active ||
-        !live.current.visible
+        !live.current.visible ||
+        live.current.workspace.phase === "checking"
       )
         return;
       const readScope = `${owner}:${scope ?? "locked"}`;
@@ -1700,7 +1701,7 @@ export function useTasks(
   }, [active, scope, visible, operation, summaries, fail]);
   useEffect(() => {
     if (owner && configured && active && visible) void reload(false);
-  }, [owner, configured, active, visible, scope, catalogueNeeded, reload]);
+  }, [owner, configured, active, visible, scope, workspace.phase, catalogueNeeded, reload]);
   useEffect(() => {
     if (!scope || !visible || !active || state.privateScope !== scope) return;
     const metadataReady = () =>
