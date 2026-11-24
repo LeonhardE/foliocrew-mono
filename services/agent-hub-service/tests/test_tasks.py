@@ -265,16 +265,24 @@ class TaskTests(unittest.TestCase):
         client = Mock()
         client.read.return_value = proof("active")
         self.service.user_vaults = ScopedUserVaults(self.store, owner=owner, client=client)
+
+        def discover(uid, initial):
+            self.assertEqual(initial.authority["ownerSubject"], owner)
+            return self.sources.read(uid), self.service.user_vaults.read(uid, vault)
+
+        self.sources.read_for_task_write = Mock(side_effect=discover)
         self.code("registry_conflict", lambda: self.save(stale, task=task, operation=operation))
         data = fixture.body(task=task, operation=operation, resources=[selected])
         client.read.side_effect = [proof("active"), proof("disconnected")]
         self.code("version_conflict", lambda: self.save(data, task=task, operation=operation))
         client.read.side_effect = None
+        client.read.reset_mock()
         with patch(
             "app.tasks.require_current_bindings", side_effect=AssertionError("legacy source")
         ):
             saved, replayed = self.save(data, task=task, operation=operation)
         self.assertFalse(replayed)
+        self.assertEqual(client.read.call_count, 2)
         self.assertEqual(self.service.get(UID, task), saved)
         self.assertEqual(self.service.get(UID, TASK), first)
         self.assertEqual(self.service.operation(UID, TASK, OP), first)

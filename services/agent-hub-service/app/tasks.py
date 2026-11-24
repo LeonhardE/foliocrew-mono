@@ -371,12 +371,15 @@ class TaskService:
             raise StoreUnavailable
         return int(value)
 
-    def _fresh(self, uid, bindings):
+    def _fresh(self, uid, bindings, user_scope=None):
         if not bindings:
-            return
+            return user_scope
         if self.catalogue is None:
             raise ContractError("source_unavailable")
-        catalogue = self.catalogue.read(uid)
+        if user_scope is None:
+            catalogue = self.catalogue.read(uid)
+        else:
+            catalogue, user_scope = self.catalogue.read_for_task_write(uid, user_scope)
         available = {}
         for group in catalogue["groups"]:
             for row in group["items"]:
@@ -384,6 +387,7 @@ class TaskService:
                     available[canonical_json(row["ref"])] = row["sourceEpoch"]
         if any(available.get(canonical_json(row["ref"])) != row["sourceEpoch"] for row in bindings):
             raise ContractError("source_unavailable")
+        return user_scope
 
     def _write(self, uid, task_id, value, operation, author, *, mode):
         identifier(task_id)
@@ -676,15 +680,15 @@ class TaskService:
         initial = self.store.transact(state)
         if initial.get("replayed"):
             return initial["response"], True
-        if initial.get("fresh"):
+        if initial.get("fresh") and resources:
             try:
-                self._fresh(uid, resources)
+                user_scope = self._fresh(uid, resources, user_scope)
             except Exception:
                 recovered = self.store.transact(state)
                 if recovered.get("replayed"):
                     return recovered["response"], True
                 raise
-        if user_scope is not None:
+        elif user_scope is not None:
             user_scope = self.user_vaults.read(uid, context["vaultId"])
         result = self.store.transact(lambda unit: state(unit, commit=True, fresh=True))
         return result["response"], result["replayed"]
