@@ -29,8 +29,6 @@ import {
 import styles from "./HoldingsValuation.module.css";
 
 const quoteRefreshErrors = {
-  daily: "quoteDailyLimit",
-  minute: "quoteMinuteLimit",
   provider: "quoteProviderLimit",
   busy: "quoteRefreshBusy",
   unavailable: "quoteRefreshUnavailable",
@@ -175,6 +173,14 @@ export default function HoldingsValuation({
     locale = useLocale(),
     preferences = useCurrencyPreferences();
   const view = useHoldingsValuation(model, preferences.defaultPortfolioCurrency, active);
+  const quoteLimit = view.prices?.quoteLimit;
+  const quoteWarning =
+    view.error &&
+    (view.manualAttempt ||
+      (quoteLimit !== "daily" &&
+        quoteLimit !== "minute" &&
+        !view.prices?.quotes.some((batch) => batch.items.some((row) => row.price !== null))));
+
   const [chart, setChart] = useState<string | null>(null);
   const [profitMode, setProfitMode] = useState<ProfitLossMode>("percent");
   const identity = model.editScope;
@@ -407,14 +413,14 @@ export default function HoldingsValuation({
           value={view.progress.done}
         />
       )}
-      {view.error && (
-        <InlineError
-          message={t(
-            view.prices?.quoteLimit ? quoteRefreshErrors[view.prices.quoteLimit] : "refreshError",
+      {quoteWarning && (
+        <p className={styles.note} role="status">
+          {t(
+            quoteLimit && quoteLimit !== "daily" && quoteLimit !== "minute"
+              ? quoteRefreshErrors[quoteLimit]
+              : "refreshError",
           )}
-          onRetry={view.refresh}
-          retryLabel={t("retry")}
-        />
+        </p>
       )}
       {typeof view.updatedQuotes === "number" && (
         <p className={styles.note} role="status">

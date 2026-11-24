@@ -8,7 +8,7 @@ import {
   type Currency,
   type PriceSet,
 } from "@/lib/holdings-valuation";
-import { loadHoldingsPrices, type PriceProgress } from "@/lib/holdings-price-loader";
+import { loadHoldingsPrices, quoteCheckDue, type PriceProgress } from "@/lib/holdings-price-loader";
 const ORIGIN = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 type State = {
   key: string;
@@ -17,6 +17,7 @@ type State = {
   error: boolean;
   progress: PriceProgress | null;
   updatedQuotes?: number | null;
+  manualAttempt?: boolean;
 };
 
 export function useHoldingsValuation(
@@ -57,6 +58,7 @@ export function useHoldingsValuation(
   });
   const [refresh, setRefresh] = useState(0);
   const force = useRef<string | null>(null);
+  const running = useRef<AbortController | null>(null);
   const [selection, setSelection] = useState<{
     key: string;
     currency: Currency;
@@ -91,6 +93,7 @@ export function useHoldingsValuation(
     if (!active || !key || !facts || !defaultCurrency) return;
     const controller = new AbortController(),
       cache = model.displayCache;
+    running.current = controller;
     const previous = cache.valuations.get(key) as PriceSet | undefined;
     const owns = () =>
       !controller.signal.aborted &&
@@ -124,13 +127,53 @@ export function useHoldingsValuation(
         if (!owns()) return;
         next = keepSelection(next);
         cache.valuations.set(key, next);
-        setState({ key, prices: next, busy: false, error, progress: null, updatedQuotes });
+        setState({
+          key,
+          prices: next,
+          busy: false,
+          error,
+          progress: null,
+          updatedQuotes,
+          manualAttempt: forced,
+        });
       })
       .catch(() => {
-        if (owns()) setState((s) => ({ ...s, key, busy: false, error: true, progress: null }));
+        if (owns())
+          setState((s) => ({
+            ...s,
+            key,
+            busy: false,
+            error: true,
+            progress: null,
+            manualAttempt: forced,
+          }));
+      })
+      .finally(() => {
+        if (running.current === controller) running.current = null;
       });
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      if (running.current === controller) running.current = null;
+    };
   }, [active, key, defaultCurrency, refresh, model.displayCache, model.refreshMarketQuotes]);
+
+  useEffect(() => {
+    if (!active || !key || !defaultCurrency || typeof document === "undefined") return;
+    let resumedAt: number | null = null;
+    const check = () => {
+      if (document.visibilityState !== "visible" || running.current || live.current !== key) return;
+      const previous = model.displayCache.valuations.get(key) as PriceSet | undefined;
+      if (!previous || previous.readAt === resumedAt || !quoteCheckDue(previous)) return;
+      resumedAt = previous.readAt;
+      setRefresh((value) => value + 1);
+    };
+    document.addEventListener("visibilitychange", check);
+    window.addEventListener("focus", check);
+    return () => {
+      document.removeEventListener("visibilitychange", check);
+      window.removeEventListener("focus", check);
+    };
+  }, [active, key, defaultCurrency, model.displayCache]);
   const valuation = useMemo(
     () => (key && facts && prices && currency ? valuePortfolio(facts, prices, currency) : null),
     [key, facts, prices, currency],
@@ -145,6 +188,7 @@ export function useHoldingsValuation(
     error: current?.error ?? false,
     progress: current?.progress ?? null,
     updatedQuotes: current?.updatedQuotes ?? null,
+    manualAttempt: current?.manualAttempt ?? false,
     select: (next: Currency) => {
       if (key && defaultCurrency && options.includes(next)) {
         const previous = model.displayCache.valuations.get(key) as PriceSet | undefined;
