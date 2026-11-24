@@ -874,7 +874,13 @@ test("shared unlock restoration after an authenticated locked mount verifies cur
       h.workspace.vault = null;
       const locked = await h.ready();
       assert.equal(locked.m.listReady, false);
+      assert.equal(locked.m.listError, "");
       assert.equal(h.opens.length, 0);
+      await locked.m.reload();
+      await locked.m.reloadTasks();
+      await locked.m.reloadCatalogue();
+      assert.equal(h.calls.length, 0, "a locked page has no task or catalogue request");
+      assert.equal(h.render().m.listError, "");
       h.workspace.phase = "unlocked";
       h.workspace.vault = { vaultId: "vault_A", version: 1 };
       const restored = await h.ready();

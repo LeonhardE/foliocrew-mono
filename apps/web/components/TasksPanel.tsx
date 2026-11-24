@@ -98,7 +98,7 @@ export function TasksView({
         bindingIdentity(row.binding) === bindingIdentity(requested),
     ),
   );
-  const failure = model.error || (workspace.phase !== "unlocked" ? workspace.error : "");
+  const failure = unlocked ? model.error : workspace.error;
   const errorKey = `errors.${failure}`;
   const readFailure = (code: string, retry: () => Promise<void>, label: string) => (
     <InlineError
@@ -117,7 +117,7 @@ export function TasksView({
         <div>
           <h1 id="tasks-title">{t("title")}</h1>
         </div>
-        {model.owner && model.configured && (
+        {unlocked && (
           <div className={styles.actions}>
             <button
               className={styles.secondary}
@@ -184,7 +184,14 @@ export function TasksView({
               </div>
             )
           )}
-          {unlocked && !model.canWrite && (
+          {failure && !unlocked && (
+            <InlineError message={t(t.has(errorKey) ? errorKey : "errors.request_failed")} />
+          )}
+        </>
+      )}
+      {unlocked && (
+        <>
+          {!model.canWrite && (
             <div className={styles.banner}>
               <p>{t("readOnlyHelp")}</p>
               <PasskeyHelp

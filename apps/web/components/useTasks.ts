@@ -136,7 +136,11 @@ export function useTasks(
   const owner = auth.status === "authenticated" && auth.profile ? auth.sessionKey : null;
   const configured = auth.agentHubConfigured && workspace.vaultConfigured;
   const unlocked = Boolean(
-    owner && configured && workspace.owner === owner && workspace.phase === "unlocked",
+    owner &&
+    configured &&
+    workspace.owner === owner &&
+    workspace.phase === "unlocked" &&
+    !workspace.needsDeviceApproval,
   );
   const scope = unlocked
     ? `${owner}:${workspace.vault?.vaultId ?? "unavailable"}:${workspace.vaultGeneration}`
@@ -489,14 +493,13 @@ export function useTasks(
     async (region: ReadRegion, force = false) => {
       if (
         !owner ||
-        live.current.owner !== owner ||
-        !configured ||
+        !scope ||
+        live.current.scope !== scope ||
         !live.current.active ||
-        !live.current.visible ||
-        live.current.workspace.phase === "checking"
+        !live.current.visible
       )
         return;
-      const readScope = `${owner}:${scope ?? "locked"}`;
+      const readScope = `${owner}:${scope}`;
       const fresh = freshReads.current[region];
       if (!force && fresh?.scope === readScope && freshRead(fresh.at)) return;
       // A new metadata read owns name backfill until its validated receipt commits.
@@ -513,7 +516,7 @@ export function useTasks(
       }));
       try {
         await operation(
-          false,
+          true,
           async (context) => {
             if (region === "tasks" && force) {
               details.current.clear();
@@ -574,19 +577,13 @@ export function useTasks(
           setState((previous) => ({ ...previous, [loading]: false }));
       }
     },
-    [api, configured, operation, owner, scope, updatePrivate, overviewEnabled],
+    [api, operation, owner, scope, updatePrivate, overviewEnabled],
   );
   const reloadTasks = useCallback(() => loadRead("tasks", true), [loadRead]);
   const reloadCatalogue = useCallback(() => loadRead("catalogue", true), [loadRead]);
   const reload = useCallback(
     async (force = true) => {
-      if (
-        !owner ||
-        live.current.owner !== owner ||
-        !configured ||
-        !live.current.active ||
-        !live.current.visible
-      )
+      if (!scope || live.current.scope !== scope || !live.current.active || !live.current.visible)
         return;
       setState((previous) => ({ ...previous, error: "", notice: "" }));
       await Promise.all([
@@ -594,7 +591,7 @@ export function useTasks(
         ...(live.current.catalogueNeeded ? [loadRead("catalogue", force)] : []),
       ]);
     },
-    [configured, owner, loadRead],
+    [scope, loadRead],
   );
 
   const persistDraft = useCallback(async () => {
@@ -1700,8 +1697,8 @@ export function useTasks(
     } else if (scope && visible) void operation(true, summaries).catch(fail);
   }, [active, scope, visible, operation, summaries, fail]);
   useEffect(() => {
-    if (owner && configured && active && visible) void reload(false);
-  }, [owner, configured, active, visible, scope, workspace.phase, catalogueNeeded, reload]);
+    if (scope && active && visible) void reload(false);
+  }, [scope, active, visible, catalogueNeeded, reload]);
   useEffect(() => {
     if (!scope || !visible || !active || state.privateScope !== scope) return;
     const metadataReady = () =>
@@ -1959,23 +1956,34 @@ export function useTasks(
         conflictCurrent: null,
         busy: false,
       };
-  const catalogueReady = freshReads.current.catalogue?.scope === `${owner}:${scope ?? "locked"}`;
+  const catalogueReady = Boolean(
+    scope && freshReads.current.catalogue?.scope === `${owner}:${scope}`,
+  );
   return {
     ...output,
+    ...(!scope && {
+      items: [],
+      catalogue: [],
+      loading: false,
+      listError: "",
+      catalogueError: "",
+    }),
     overview: overviewEnabled ? overview.current : undefined,
     selectedDetail:
       privateVisible && selectedDetail.current?.current() ? selectedDetail.current : undefined,
     listReady: Boolean(
       privateVisible &&
-      freshReads.current.tasks?.scope === `${owner}:${scope ?? "locked"}` &&
+      freshReads.current.tasks?.scope === `${owner}:${scope}` &&
       freshRead(freshReads.current.tasks.at) &&
       !output.loading &&
       !output.listError,
     ),
     catalogueReady,
-    catalogueLoading:
-      output.catalogueLoading ||
-      Boolean(active && catalogueNeeded && !catalogueReady && !output.catalogueError),
+    catalogueLoading: Boolean(
+      scope &&
+      (output.catalogueLoading ||
+        (active && catalogueNeeded && !catalogueReady && !output.catalogueError)),
+    ),
     nameErrors: Object.fromEntries(
       output.items.flatMap((item) => {
         const failure = nameFailures.current.get(nameKey(item));
