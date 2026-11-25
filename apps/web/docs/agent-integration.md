@@ -83,6 +83,12 @@ resolve unknown outcomes before another approval is attempted.
 
 ## Personal Agent authorization and recovery
 
+From Agent Management, open the setup dialog on the Muse or ChatGPT card. It links to
+the official host in a new tab, shows the configured MCP address, and provides localized
+setup instructions. The address and the optional setup message have separate copy controls.
+Returning from that link rechecks the verified connection display once, including while
+the previous display is still warm.
+
 The Agents page uses the Agent-owned route for Muse and ChatGPT. The Owner signs in,
 unlocks the existing library with their Passkey, reviews the Agent link, and authorizes
 tasks. It displays a connection state, expiry date, seven-day reminder and reauthorization
