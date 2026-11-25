@@ -537,6 +537,62 @@ test("Owner Worker validates a newer revisioned YouTube response before preservi
       f.owner.session.verifySupersededPublicationPending({ ...recovery, newerSource: invalid }),
     );
 });
+test("Owner Worker binds a watchlist revision while retaining the legacy stable operation ID", async (t) => {
+  const f = await fixture(t);
+  const first = await f.owner.session.prepareAgentCredential(f.args);
+  await install(f, first);
+  const state = credential(f, first);
+  const ref = {
+    kind: "watchlist",
+    sourceService: "user",
+    resourceId: "synthetic_watchlist",
+    incarnation: "synthetic_incarnation",
+  };
+  const resources = [{ ref, sourceEpoch: 1, revision: 1, state: "active" }];
+  const common = { actor: f.args.actor, identityState: identityState(state) };
+  const approved = await f.owner.session.preparePersistentConsent({
+    ...common,
+    resourceState: resourceState(state),
+    receipts: [],
+    resources,
+  });
+  const receipt = await consentReceipt(f, approved, resources);
+  const prepare = (source) =>
+    f.owner.session.preparePersistentResource({
+      ...common,
+      resourceState: resourceState(state, [receipt]),
+      receipts: [receipt],
+      source,
+    });
+  const source = {
+    kind: "watchlist",
+    ref,
+    sourceEpoch: 1,
+    revision: 1,
+    fetchedAt: "1970-01-01T00:16:40Z",
+    sourceAsOf: null,
+    response: { items: [], limit: 50 },
+  };
+  const legacy = await prepare(source);
+  const packet = await prepare({ ...source, response: { ...source.response, revision: 1 } });
+  assert.equal(packet.operationId, legacy.operationId);
+  assert.equal(packet.context.ownerEnvelopeFingerprint, legacy.context.ownerEnvelopeFingerprint);
+  const verify = (newerSource) =>
+    f.owner.session.verifySupersededPublicationPending({
+      actor: f.args.actor,
+      packet,
+      newerSource,
+    });
+  await assert.rejects(prepare({ ...source, response: { ...source.response, revision: 2 } }));
+  await assert.rejects(verify({ ...source, revision: 2 }));
+  await assert.rejects(
+    verify({ ...source, revision: 2, response: { ...source.response, revision: 1 } }),
+  );
+  assert.deepEqual(
+    await verify({ ...source, revision: 2, response: { ...source.response, revision: 2 } }),
+    { operationId: packet.operationId, fingerprint: packet.fingerprint, superseded: true },
+  );
+});
 test("Root-verified renewal restores only original continuing scope; latest revocation and source changes prevent revival", async (t) => {
   const f = await fixture(t),
     first = await f.owner.session.prepareAgentCredential(f.args);

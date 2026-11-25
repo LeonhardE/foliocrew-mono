@@ -741,6 +741,12 @@
     "unreadCount": "{count} unread reports"
   },
   "resourceLibrary": {
+    "watchlistSync": {
+      "syncing": "Checking whether authorized Agents need this watchlist update.",
+      "synced": "This watchlist version is available to authorized Agents.",
+      "pending": "Watchlist saved. The update for authorized Agents is still pending.",
+      "retry": "Retry update"
+    },
     "followsSync": {
       "syncing": "Checking whether authorized Agents need this YouTube follows update.",
       "synced": "This YouTube follows version is available to authorized Agents.",

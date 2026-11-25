@@ -741,6 +741,12 @@
     "unreadCount": "{count} 份未讀報告"
   },
   "resourceLibrary": {
+    "watchlistSync": {
+      "syncing": "正在檢查已獲授權的 Agent 是否需要這版自選股。",
+      "synced": "已獲授權的 Agent 可以讀取這版自選股。",
+      "pending": "自選股已儲存，送給已獲授權 Agent 的更新仍在等待。",
+      "retry": "重試更新"
+    },
     "followsSync": {
       "syncing": "正在檢查已獲授權的 Agent 是否需要這版 YouTube 關注。",
       "synced": "已獲授權的 Agent 可以讀取這版 YouTube 關注。",

@@ -61,7 +61,7 @@ const response = (data, status = 200) => ({
 });
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
-function mountWatchlist(enabled = true) {
+function mountWatchlist(enabled = true, sync) {
   let auth = { status: "authenticated", sessionKey: "a:1" };
   const cells = [];
   const pendingEffects = [];
@@ -128,7 +128,7 @@ function mountWatchlist(enabled = true) {
     requests,
     render: (flush = true) => {
       index = 0;
-      const result = useWatchlist(enabled);
+      const result = useWatchlist(enabled, sync);
       if (flush) {
         for (const { slot, effect, dependencies } of pendingEffects.splice(0)) {
           cells[slot]?.cleanup?.();
@@ -161,6 +161,91 @@ function mountWatchlist(enabled = true) {
     unmount: () => cells.forEach((cell) => cell.cleanup?.()),
   };
 }
+
+test("version-aware watchlist saves stage one revision and acknowledge changes without replay", async () => {
+  const staged = [];
+  const saved = [];
+  const hook = mountWatchlist(true, {
+    beforeSave: async (...args) => staged.push(args),
+    onSaved: (...args) => saved.push(args),
+  });
+  hook.render();
+  assert.equal(hook.requests[0].url, "/api/v1/watchlist?includeRevision=true");
+  hook.requests[0].result.resolve(response({ ...body(), revision: null }));
+  await settle();
+  assert.equal(hook.render().revision, null);
+  const add = hook.render().add("NFLX");
+  assert.deepEqual(staged, [[1, "a:1"]]);
+  await settle();
+  assert.equal(hook.requests[1].url, "/api/v1/watchlist/NFLX?includeRevision=true");
+  hook.requests[1].result.resolve(response({ ...body("NFLX"), revision: 1 }));
+  await add;
+  assert.equal(hook.render().revision, 1);
+  assert.deepEqual(saved, [[1, "a:1"]]);
+  const duplicate = hook.render().add("NFLX");
+  hook.requests[2].result.resolve(response({ ...body("NFLX"), revision: 1 }));
+  await duplicate;
+  assert.deepEqual(staged, [[1, "a:1"]]);
+  assert.deepEqual(saved, [[1, "a:1"]]);
+  const remove = hook.render().remove("NFLX");
+  await settle();
+  hook.requests[3].result.resolve(response({ ...body(), revision: 2 }));
+  await remove;
+  assert.equal(hook.render().items.length, 0);
+  assert.deepEqual(staged, [
+    [1, "a:1"],
+    [2, "a:1"],
+  ]);
+  assert.deepEqual(saved, [
+    [1, "a:1"],
+    [2, "a:1"],
+  ]);
+  assert.equal(hook.requests.length, 4);
+});
+
+test("legacy watchlist servers keep add and remove working without scheduling unverifiable data", async () => {
+  const unavailable = () => assert.fail("legacy response must not request publication");
+  const hook = mountWatchlist(true, { beforeSave: unavailable, onSaved: unavailable });
+  hook.render();
+  hook.requests[0].result.resolve(response(body("AAPL")));
+  await settle();
+  assert.equal(hook.render().revision, undefined);
+  const adding = hook.render().add("NFLX");
+  hook.requests[1].result.resolve(response(body("AAPL", "NFLX")));
+  await adding;
+  assert.equal(hook.render().items.length, 2);
+  assert.match(hook.render().message, /NFLX added/);
+  const removing = hook.render().remove("NFLX");
+  hook.requests[2].result.resolve(response(body("AAPL")));
+  await removing;
+  assert.equal(hook.render().items.length, 1);
+  assert.match(hook.render().message, /NFLX removed/);
+  assert.equal(hook.requests.length, 3);
+});
+
+test("a bad or stale watchlist acknowledgement cannot queue an Agent update", async () => {
+  const saved = [];
+  const hook = mountWatchlist(true, {
+    beforeSave: async () => {},
+    onSaved: (...args) => saved.push(args),
+  });
+  hook.render();
+  hook.requests[0].result.resolve(response({ ...body(), revision: 0 }));
+  await settle();
+  const invalid = hook.render().add("AAPL");
+  await settle();
+  hook.requests[1].result.resolve(response({ ...body("AAPL"), revision: 0 }));
+  await invalid;
+  assert.match(hook.render().error, /watchlist is temporarily unavailable/);
+  const adding = hook.render().add("AAPL");
+  await settle();
+  hook.account("b:2");
+  hook.render();
+  hook.requests[2].result.resolve(response({ ...body("AAPL"), revision: 1 }));
+  await adding;
+  assert.deepEqual(saved, []);
+  assert.equal(hook.render().items.length, 0);
+});
 
 test("watchlist waits for a consuming view and keeps the same account's loaded list", async () => {
   const hook = mountWatchlist(false);

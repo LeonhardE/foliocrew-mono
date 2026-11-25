@@ -4,6 +4,7 @@ import {
   channelFollowsAgentSyncKey,
   holdingsAgentSyncPrefix,
   sameEncryptedRecord,
+  watchlistAgentSyncKey,
   type EncryptedStorage,
 } from "./encrypted-storage";
 import type {
@@ -22,6 +23,7 @@ import {
   type ArchiveDeletionPacket,
   type ArchiveDeletionRecord,
   type ChannelFollowsAgentSync,
+  type UserListAgentSync,
   type Vault,
   type PasskeyMaterial,
   type Source,
@@ -2989,13 +2991,21 @@ export class EncryptedVaultSession {
     await this.storage.finishHoldingsAgentSync(this.owner, sync, this.lifetime.signal);
     this.assert(g);
   }
-  async loadChannelFollowsAgentSync(): Promise<ChannelFollowsAgentSync | null> {
+  loadChannelFollowsAgentSync() {
+    return this.loadUserListAgentSync(channelFollowsAgentSyncKey);
+  }
+  loadWatchlistAgentSync() {
+    return this.loadUserListAgentSync(watchlistAgentSyncKey);
+  }
+  private async loadUserListAgentSync(
+    key: (owner: string, vaultId: string) => string,
+  ): Promise<UserListAgentSync | null> {
     if (this.renewalOnly || this.deletionOnly) throw new VaultError("invalid_operation");
     const g = this.generation;
     await this.started;
     this.assert(g);
     if (!this.vaultId) throw new VaultError("locked");
-    const saved = await this.storage.get(channelFollowsAgentSyncKey(this.owner, this.vaultId));
+    const saved = await this.storage.get(key(this.owner, this.vaultId));
     this.assert(g);
     return Number.isSafeInteger(saved?.revision) &&
       saved.revision >= 1 &&
@@ -3003,9 +3013,16 @@ export class EncryptedVaultSession {
       ? { revision: saved.revision, confirmed: saved.confirmed }
       : null;
   }
-  async updateChannelFollowsAgentSync(
+  updateChannelFollowsAgentSync(vaultId: string, marker: ChannelFollowsAgentSync, stage: boolean) {
+    return this.updateUserListAgentSync("updateChannelFollowsAgentSync", vaultId, marker, stage);
+  }
+  updateWatchlistAgentSync(vaultId: string, marker: UserListAgentSync, stage: boolean) {
+    return this.updateUserListAgentSync("updateWatchlistAgentSync", vaultId, marker, stage);
+  }
+  private async updateUserListAgentSync(
+    method: "updateChannelFollowsAgentSync" | "updateWatchlistAgentSync",
     vaultId: string,
-    marker: ChannelFollowsAgentSync,
+    marker: UserListAgentSync,
     stage: boolean,
   ) {
     if (this.renewalOnly || this.deletionOnly) throw new VaultError("invalid_operation");
@@ -3020,14 +3037,9 @@ export class EncryptedVaultSession {
       typeof marker.confirmed !== "boolean"
     )
       throw new VaultError("binding_mismatch");
-    if (!this.storage.updateChannelFollowsAgentSync) throw new VaultError("storage_unavailable");
-    await this.storage.updateChannelFollowsAgentSync(
-      this.owner,
-      vaultId,
-      marker,
-      stage,
-      this.lifetime.signal,
-    );
+    const update = this.storage[method];
+    if (!update) throw new VaultError("storage_unavailable");
+    await update.call(this.storage, this.owner, vaultId, marker, stage, this.lifetime.signal);
     this.assert(g);
   }
   private async renewalHoldingsRow(sourceId: string) {

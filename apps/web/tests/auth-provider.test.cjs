@@ -687,6 +687,35 @@ test("private requests use a fresh SDK token, fixed API route, and no credential
   assert.equal(harness.requests.length, 2);
 });
 
+test("watchlist revisions opt in with one exact query on the User route", async () => {
+  const h = mountProvider();
+  h.emitUser(user("a"));
+  await settle();
+  for (const [method, path] of [
+    ["GET", "/api/v1/watchlist?includeRevision=true"],
+    ["PUT", "/api/v1/watchlist/BRK.B?includeRevision=true"],
+    ["DELETE", "/api/v1/watchlist/BRK.B?includeRevision=true"],
+  ]) {
+    await h.actions.requestPrivate("user", path, "a:1", { method });
+    const [url, request] = h.requests.at(-1);
+    assert.ok(url.endsWith(path));
+    assert.equal(request.method, method);
+  }
+  for (const [service, path] of [
+    ["user", "/api/v1/watchlist?includeRevision=false"],
+    ["user", "/api/v1/watchlist?includeRevision=true&other=true"],
+    ["user", "/api/v1/watchlist?includeRevision=true#different"],
+    ["user", "/api/v1/watchlist/NFLX?includeRevision=true&includeRevision=true"],
+    ["config", "/api/v1/watchlist?includeRevision=true"],
+  ])
+    await assert.rejects(
+      h.actions.requestPrivate(service, path, "a:1"),
+      /Invalid private API path/,
+    );
+  assert.equal(h.requests.length, 4);
+  h.unmount();
+});
+
 test("manual quote refresh sends the workspace token only to the admitted Market route", async () => {
   const market = "https://market-api-630815932903.northamerica-northeast2.run.app";
   const route = "/api/valuation/quotes/manual";

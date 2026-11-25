@@ -59,6 +59,7 @@ import {
 } from "@/lib/encrypted-passkey";
 import type {
   ChannelFollowsAgentSync,
+  UserListAgentSync,
   Json,
   HoldingsAgentSync,
   OpenResultArgs,
@@ -3379,6 +3380,15 @@ export function useHoldingsWorkspace(
       taskCall((instance) => instance.updateChannelFollowsAgentSync(vaultId, marker, stage)),
     [taskCall],
   );
+  const loadWatchlistAgentSync = useCallback(
+    () => taskCall((instance) => instance.loadWatchlistAgentSync()),
+    [taskCall],
+  );
+  const updateWatchlistAgentSync = useCallback(
+    (vaultId: string, marker: UserListAgentSync, stage: boolean) =>
+      taskCall((instance) => instance.updateWatchlistAgentSync(vaultId, marker, stage)),
+    [taskCall],
+  );
   const verifyAgentRestoration = useCallback(
     (args: Parameters<EncryptedVaultSession["verifyAgentRestoration"]>[0]) =>
       taskCall((instance) => instance.verifyAgentRestoration(args)),
@@ -5735,6 +5745,8 @@ export function useHoldingsWorkspace(
     finishHoldingsAgentSync,
     loadChannelFollowsAgentSync,
     updateChannelFollowsAgentSync,
+    loadWatchlistAgentSync,
+    updateWatchlistAgentSync,
     verifyAgentRestoration,
     prepareRestoredConsent,
     prepareRestoredTask,

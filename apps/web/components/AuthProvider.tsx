@@ -1056,7 +1056,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const fxPath = service === "user" && path === FX_FOLLOWS_PATH;
       const jsonPath = preferencesPath || followsPath || fxPath;
       const watchlistPath =
-        /^\/api\/v1\/watchlist(?:\/[A-Z][A-Z0-9]{0,9}(?:[.-][A-Z0-9]{1,3})?)?$/.test(path);
+        /^\/api\/v1\/watchlist(?:\/[A-Z][A-Z0-9]{0,9}(?:[.-][A-Z0-9]{1,3})?)?(?:\?includeRevision=true)?$/.test(
+          path,
+        );
       if (
         (service !== "user" && service !== "config") ||
         (service === "user" && !watchlistPath && !followsPath && !fxPath) ||

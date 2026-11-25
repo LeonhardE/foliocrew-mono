@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
-import { readWatchlist, watchlistError, type WatchlistResponse } from "@/lib/watchlist";
+import { readWatchlistSnapshot, watchlistError, type WatchlistSnapshot } from "@/lib/watchlist";
 
-type WatchlistState = WatchlistResponse & {
+type WatchlistState = WatchlistSnapshot & {
   sessionKey: string | null;
   loading: boolean;
   loaded: boolean;
@@ -26,7 +26,12 @@ const emptyState: WatchlistState = {
   messageId: 0,
 };
 
-export function useWatchlist(enabled = true) {
+type WatchlistSync = {
+  beforeSave: (revision: number, owner: string) => Promise<void>;
+  onSaved: (revision: number, owner: string) => void;
+};
+
+export function useWatchlist(enabled = true, sync?: WatchlistSync) {
   const { status, sessionKey, requestPrivate } = useAuth();
   const owner = status === "authenticated" ? sessionKey : null;
   const ownerRef = useRef(owner);
@@ -36,6 +41,9 @@ export function useWatchlist(enabled = true) {
   const requestRef = useRef<{ id: number; controller: AbortController } | null>(null);
   const generationRef = useRef(0);
   const requestedOwner = useRef<string | null>(null);
+  const latestSnapshot = useRef<{ owner: string; data: WatchlistSnapshot } | null>(null);
+  const currentSync = useRef(sync);
+  currentSync.current = sync;
 
   const loadOrMutate = useCallback(
     async (method: "GET" | "PUT" | "DELETE", symbol?: string) => {
@@ -66,14 +74,35 @@ export function useWatchlist(enabled = true) {
         }));
       }, 20_000);
       try {
+        const callbacks = currentSync.current;
+        const previous =
+          latestSnapshot.current?.owner === owner ? latestSnapshot.current.data : null;
+        const hadSymbol = previous?.items.some((item) => item.symbol === symbol);
+        const expectedChange =
+          method !== "GET" && hadSymbol !== undefined && hadSymbol !== (method === "PUT");
+        if (
+          callbacks &&
+          expectedChange &&
+          previous?.revision !== undefined &&
+          previous.revision !== Number.MAX_SAFE_INTEGER
+        ) {
+          await callbacks.beforeSave((previous.revision ?? 0) + 1, owner).catch(() => {});
+          if (!ownsRequest() || controller.signal.aborted) return;
+        }
         const path = `/api/v1/watchlist${method === "GET" ? "" : `/${encodeURIComponent(symbol!)}`}`;
-        const response = await requestPrivate("user", path, owner, {
-          method,
-          signal: controller.signal,
-        });
+        const response = await requestPrivate(
+          "user",
+          path + (callbacks ? "?includeRevision=true" : ""),
+          owner,
+          {
+            method,
+            signal: controller.signal,
+          },
+        );
         if (!response.ok) throw new Error(watchlistError(response.status));
-        const result = readWatchlist(await response.json());
+        const result = readWatchlistSnapshot(await response.json());
         if (!ownsRequest() || controller.signal.aborted) return;
+        latestSnapshot.current = { owner, data: result };
         setState({
           ...result,
           sessionKey: owner,
@@ -89,6 +118,17 @@ export function useWatchlist(enabled = true) {
                 : "",
           messageId: method === "GET" ? 0 : id,
         });
+        if (
+          callbacks &&
+          method !== "GET" &&
+          typeof result.revision === "number" &&
+          result.revision > 0 &&
+          result.items.some((item) => item.symbol === symbol) === (method === "PUT") &&
+          (previous?.revision !== undefined
+            ? result.revision > (previous.revision ?? 0)
+            : hadSymbol === undefined || expectedChange)
+        )
+          callbacks.onSaved(result.revision, owner);
       } catch (error) {
         if (!ownsRequest() || controller.signal.aborted) return;
         setState((previous) => ({
@@ -112,6 +152,7 @@ export function useWatchlist(enabled = true) {
   useEffect(() => {
     requestRef.current?.controller.abort();
     requestRef.current = null;
+    latestSnapshot.current = null;
     ++generationRef.current;
     setState({ ...emptyState, sessionKey: owner });
     requestedOwner.current = null;

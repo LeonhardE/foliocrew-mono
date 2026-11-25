@@ -1,5 +1,10 @@
 /** Closed owner discovery and manual-list contracts. No content-key or agent authority. */
-import { readWatchlist, type WatchlistResponse } from "./watchlist";
+import {
+  readWatchlist,
+  readWatchlistSnapshot,
+  type WatchlistResponse,
+  type WatchlistSnapshot,
+} from "./watchlist";
 
 export const RESOURCE_CONTRACT = "folioview.agent-workspace.v2.0";
 export type ResourceKind = "holdings" | "watchlist" | "channel_follows";
@@ -311,6 +316,17 @@ export function readResourceWatchlist(value: unknown): WatchlistResponse {
       fail();
   try {
     return readWatchlist(value);
+  } catch {
+    return fail();
+  }
+}
+
+export function readResourceWatchlistSnapshot(value: unknown): WatchlistSnapshot {
+  if (exact(value, ["items", "limit"])) return readResourceWatchlist(value);
+  if (!exact(value, ["items", "limit", "revision"])) return fail();
+  const { items, limit } = readResourceWatchlist({ items: value.items, limit: value.limit });
+  try {
+    return readWatchlistSnapshot({ items, limit, revision: value.revision });
   } catch {
     return fail();
   }

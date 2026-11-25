@@ -929,12 +929,12 @@ test("a missing latest revision remains recoverable and one unavailable Agent do
   assert.deepEqual(recipients, [second]);
 });
 
-function savedChannelFollowsHarness() {
+function savedUserListHarness(kind = "channel_follows") {
   const f = savedHoldingsHarness();
   const { owner, vaultId, revision } = f.saved;
   const item = {
     ref: {
-      kind: "channel_follows",
+      kind,
       sourceService: "user",
       resourceId: "channels_A",
       incarnation: "channels_incarnation",
@@ -945,18 +945,27 @@ function savedChannelFollowsHarness() {
     snapshotId: null,
   };
   const saved = { owner, vaultId, revision, confirmed: true };
+  if (kind === "watchlist") saved.kind = kind;
   f.permission.ref = item.ref;
   f.c.catalogue = async () => ({
     groups: [
-      { kind: "watchlist", items: [{ ref: null, state: "uninitialized" }] },
-      { kind: "channel_follows", items: [{ ...item }] },
+      {
+        kind: kind === "watchlist" ? "channel_follows" : "watchlist",
+        items: [{ ref: null, state: "uninitialized" }],
+      },
+      { kind, items: [{ ...item }] },
     ],
   });
   const api = f.c.api;
-  let response = channels("LATEST_CHANNEL", item.revision);
+  let response =
+    kind === "watchlist"
+      ? { items: [], limit: 50, revision: item.revision }
+      : channels("LATEST_CHANNEL", item.revision);
+  const readPath =
+    kind === "watchlist" ? "/api/v1/watchlist?includeRevision=true" : "/api/v1/channel-follows";
   f.c.api = async (service, path, options) => {
-    if (service === "user" && path === "/api/v1/channel-follows") {
-      f.calls.push("read User follows");
+    if (service === "user" && path === readPath) {
+      f.calls.push(kind === "watchlist" ? "read User watchlist" : "read User follows");
       return response;
     }
     return api(service, path, options);
@@ -975,8 +984,71 @@ function savedChannelFollowsHarness() {
   return { ...f, saved, item, sources, setResponse: (value) => (response = value) };
 }
 
+test("watchlist sync sends the exact current list only to continuing grants", async () => {
+  const f = savedUserListHarness("watchlist");
+  await assert.rejects(
+    f.c.syncSavedWatchlist({ ...f.saved, vaultId: "different_vault" }),
+    /verification_failed/,
+  );
+  assert.deepEqual(f.calls, []);
+  for (const patch of [
+    { status: "revoked" },
+    { versionPolicy: "exact" },
+    { sourceEpoch: 2 },
+    { ref: { ...f.item.ref, incarnation: "different_incarnation" } },
+    { ref: { ...f.item.ref, kind: "channel_follows" } },
+  ]) {
+    const original = { ...f.permission };
+    Object.assign(f.permission, patch);
+    assert.equal(await f.c.syncSavedWatchlist(f.saved), 0);
+    Object.assign(f.permission, original);
+  }
+  assert.ok(!f.calls.includes("read User watchlist"));
+  f.item.state = "empty";
+  assert.equal(await f.c.syncSavedWatchlist(f.saved), 1);
+  assert.equal(f.sources[0].kind, "watchlist");
+  assert.equal(f.sources[0].response.revision, f.item.revision);
+  assert.deepEqual(f.sources[0].response.items, []);
+  assert.equal(f.calls.filter((call) => call === "read User watchlist").length, 1);
+});
+
+test("watchlist sync rejects a legacy or inconsistent read and preserves an unrelated pending operation", async () => {
+  const f = savedUserListHarness("watchlist");
+  for (const data of [
+    { items: [], limit: 50 },
+    { items: [], limit: 50, revision: null },
+    { items: [], limit: 50, revision: 4 },
+  ]) {
+    f.setResponse(data);
+    await assert.rejects(f.c.syncSavedWatchlist(f.saved), /source_unavailable/);
+  }
+  assert.equal(f.sources.length, 0);
+  f.setResponse({ items: [], limit: 50, revision: 5 });
+  const pending = {
+    ...packet,
+    context: {
+      objectType: "channel_follows_evidence",
+      ref: f.item.ref,
+      sourceEpoch: f.item.sourceEpoch,
+      sourceRevision: 4,
+    },
+  };
+  f.w.pending = pending;
+  await assert.rejects(f.c.syncSavedWatchlist(f.saved), /persistent_operation_pending/);
+  assert.equal(f.w.pending, pending);
+  pending.context.objectType = "watchlist_evidence";
+  f.w.archiveSupersededPersistentPublication = async (args) => {
+    assert.equal(args.expectedOperationId, pending.operationId);
+    assert.equal(args.expectedFingerprint, pending.fingerprint);
+    assert.equal(args.newerSource.response.revision, 5);
+    f.w.pending = null;
+    return true;
+  };
+  assert.equal(await f.c.syncSavedWatchlist(f.saved), 1);
+});
+
 test("saved YouTube follows require current grants and share one exact User read across approved recipients", async () => {
-  const f = savedChannelFollowsHarness();
+  const f = savedUserListHarness();
   await assert.rejects(
     f.c.syncSavedChannelFollows({ ...f.saved, owner: "different_owner" }),
     /verification_failed/,
@@ -1001,7 +1073,7 @@ test("saved YouTube follows require current grants and share one exact User read
 });
 
 test("a superseded YouTube follows update can recover its own sealed packet, never another source", async () => {
-  const f = savedChannelFollowsHarness();
+  const f = savedUserListHarness();
   const pending = {
     ...packet,
     context: {
@@ -1028,7 +1100,7 @@ test("a superseded YouTube follows update can recover its own sealed packet, nev
 });
 
 test("YouTube follows must still match the catalogue revision and include newly emptied lists", async () => {
-  const f = savedChannelFollowsHarness();
+  const f = savedUserListHarness();
   f.setResponse(channels("OLDER_CHANNEL", 4));
   await assert.rejects(f.c.syncSavedChannelFollows(f.saved), /source_unavailable/);
   assert.equal(f.sources.length, 0);
@@ -1039,7 +1111,7 @@ test("YouTube follows must still match the catalogue revision and include newly 
 });
 
 test("an interrupted YouTube write stays unconfirmed until a cold read sees the committed revision", async () => {
-  const f = savedChannelFollowsHarness();
+  const f = savedUserListHarness();
   const attempt = { ...f.saved, revision: 6, confirmed: false };
   assert.equal(await f.c.syncSavedChannelFollows(attempt), null);
   assert.ok(!f.calls.includes("read User follows"));
