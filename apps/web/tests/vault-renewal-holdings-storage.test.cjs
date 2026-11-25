@@ -606,3 +606,63 @@ test("a watchlist update pointer survives unlock independently of YouTube follow
     assert.equal(await reopened.loadWatchlistAgentSync(), null);
     assert.deepEqual(await reopened.loadChannelFollowsAgentSync(), follows);
   }));
+
+test("locked Market acknowledgements survive a fresh vault session and keep the highest saved revision", async () =>
+  withStorage(async () => {
+    const { f, store } = await seeded();
+    clock = 1000;
+    f.time(clock);
+    const stage = bridge.EncryptedVaultSession.stageLockedWatchlistAgentSync;
+    const vaultId = f.vault.vaultId;
+    const currentKey = storageModule.watchlistAgentSyncKey(f.owner, vaultId);
+    assert.equal(await stage("other_verified_owner", 9), null);
+    assert.equal(await stage(f.uid, 9, "another_vault"), null);
+    await assert.rejects(stage(f.uid, 0, vaultId), /invalid_data/);
+    const logout = new AbortController();
+    logout.abort();
+    await assert.rejects(stage(f.uid, 50, vaultId, logout.signal), /locked/);
+    assert.deepEqual(await Promise.all([stage(f.uid, 7, vaultId), stage(f.uid, 4)]), [
+      vaultId,
+      vaultId,
+    ]);
+    assert.equal(await store.get(currentKey), null, "the locked write only records an intent");
+
+    const { client } = browser(f, new storageModule.BrowserEncryptedStorage());
+    await assert.rejects(client.loadWatchlistAgentSync(), /locked/);
+    await client.unlock(f.vault, f.material());
+    const known = { revision: 7, confirmed: true };
+    assert.deepEqual(await client.loadWatchlistAgentSync(), known);
+    const inProgress = { revision: 9, confirmed: false };
+    await client.updateWatchlistAgentSync(vaultId, inProgress, true);
+    client.lock();
+
+    assert.equal(await stage(f.uid, 8), vaultId);
+    const { client: reopened } = browser(f, new storageModule.BrowserEncryptedStorage());
+    await reopened.unlock(f.vault, f.material());
+    assert.deepEqual(await reopened.loadWatchlistAgentSync(), inProgress);
+    await reopened.updateWatchlistAgentSync(vaultId, known, false);
+    assert.deepEqual(await reopened.loadWatchlistAgentSync(), inProgress);
+    await reopened.updateWatchlistAgentSync(vaultId, inProgress, false);
+    assert.equal(
+      await reopened.loadWatchlistAgentSync(),
+      null,
+      "promotion cleared both locked hints",
+    );
+  }));
+
+test("a locked Market acknowledgement requires a matching, active owner vault pin", async () =>
+  withStorage(async () => {
+    const { f, store } = await seeded();
+    const stage = bridge.EncryptedVaultSession.stageLockedWatchlistAgentSync;
+    const lifecycleKey = f.owner + ":lifecycle";
+    const lifecycle = await store.get(lifecycleKey);
+    await store.put(lifecycleKey, { ...lifecycle, rootKeyId: "another_root" });
+    assert.equal(await stage(f.uid, 5), null);
+    await store.put(lifecycleKey, lifecycle);
+    await store.put(f.owner + ":archive-binding", { deleted: true });
+    assert.equal(await stage(f.uid, 5), null);
+    assert.equal(
+      await store.get(storageModule.watchlistAgentSyncKey(f.owner, f.vault.vaultId)),
+      null,
+    );
+  }));

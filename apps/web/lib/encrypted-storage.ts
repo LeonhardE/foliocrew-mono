@@ -75,6 +75,11 @@ export interface EncryptedStorage {
     stage: boolean,
     signal?: AbortSignal,
   ): Promise<void>;
+  recoverWatchlistAgentSync?(
+    owner: string,
+    vaultId: string,
+    signal?: AbortSignal,
+  ): Promise<UserListAgentSync | null>;
   finishSourceCreation?(key: string, expected: any, signal?: AbortSignal): Promise<boolean>;
   finishSourceMutation?(key: string, expected: any, signal?: AbortSignal): Promise<boolean>;
   stageDevice(key: string, record: any, expected: any, blockedByKey?: string): Promise<boolean>;
@@ -91,6 +96,12 @@ export const channelFollowsAgentSyncKey = (owner: string, vaultId: string) =>
   `${owner}:channel-follows-agent-sync:${vaultId}`;
 export const watchlistAgentSyncKey = (owner: string, vaultId: string) =>
   `${owner}:watchlist-agent-sync:${vaultId}`;
+const lockedWatchlistAgentSyncKey = (owner: string, vaultId: string) =>
+  `${owner}:locked-watchlist-agent-sync:${vaultId}`;
+const validRevision = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+const validVaultId = (value: unknown): value is string =>
+  typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value);
 const same = (a: any, b: any) => JSON.stringify(a) === JSON.stringify(b);
 // Unlike serialization equality, preserve every own field when comparing a saved row.
 export const sameEncryptedRecord = (a: any, b: any): boolean => {
@@ -1102,6 +1113,103 @@ export class BrowserEncryptedStorage implements EncryptedStorage {
       watchlistAgentSyncKey(owner, vaultId),
       marker,
       stage,
+      signal,
+    );
+  }
+  // A Market save may finish without loading or unlocking the private workspace.
+  // This slot can carry a server-confirmed revision for a previously pinned vault.
+  stageLockedWatchlistAgentSync(
+    owner: string,
+    revision: number,
+    expectedVaultId?: string,
+    signal?: AbortSignal,
+  ): Promise<string | null> {
+    if (!/^[a-f0-9]{64}$/.test(owner) || !validRevision(revision))
+      return Promise.reject(new VaultError("invalid_data"));
+    return this.atomic<string | null>((store, done) => {
+      const pin = store.get(owner + ":pin");
+      const lifecycle = store.get(owner + ":lifecycle");
+      const binding = store.get(owner + ":archive-binding");
+      const pending = store.get(owner + ":archive-change");
+      pending.onsuccess = () => {
+        const verified = pin.result;
+        const known = lifecycle.result;
+        const vaultId = verified?.vaultId;
+        if (
+          verified?.ownerSubject !== owner ||
+          !validVaultId(vaultId) ||
+          typeof verified.rootKeyId !== "string" ||
+          !verified.rootKeyId ||
+          (expectedVaultId !== undefined && vaultId !== expectedVaultId) ||
+          binding.result?.deleted === true ||
+          pending.result ||
+          (known &&
+            (known.ownerSubject !== owner ||
+              known.vaultId !== vaultId ||
+              known.rootKeyId !== verified.rootKeyId))
+        ) {
+          done(null);
+          return;
+        }
+        const key = lockedWatchlistAgentSyncKey(owner, vaultId);
+        const read = store.get(key);
+        read.onsuccess = () => {
+          const previous = read.result;
+          if (
+            previous?.rootKeyId !== verified.rootKeyId ||
+            !validRevision(previous.revision) ||
+            previous.revision < revision
+          )
+            store.put({ rootKeyId: verified.rootKeyId, revision }, key);
+          done(vaultId);
+        };
+      };
+    }, signal);
+  }
+  recoverWatchlistAgentSync(owner: string, vaultId: string, signal?: AbortSignal) {
+    const context = this.archiveContext;
+    if (!context || owner !== context.owner || !validVaultId(vaultId))
+      return Promise.reject(new VaultError("wrong_account"));
+    const key = watchlistAgentSyncKey(owner, vaultId);
+    const lockedKey = lockedWatchlistAgentSyncKey(owner, vaultId);
+    return this.guarded<UserListAgentSync | null>(
+      key,
+      (store, done, fail) => {
+        const stored = store.get(key);
+        const pin = store.get(owner + ":pin");
+        const staged = store.get(lockedKey);
+        staged.onsuccess = () => {
+          if (this.archiveContext !== context) {
+            fail(new VaultError("archive_session_stale"));
+            return;
+          }
+          const current = stored.result;
+          const marker: UserListAgentSync | null =
+            validRevision(current?.revision) && typeof current.confirmed === "boolean"
+              ? { revision: current.revision, confirmed: current.confirmed }
+              : null;
+          const deferred = staged.result;
+          if (
+            !validRevision(deferred?.revision) ||
+            typeof deferred.rootKeyId !== "string" ||
+            pin.result?.ownerSubject !== owner ||
+            pin.result.vaultId !== vaultId ||
+            pin.result.rootKeyId !== deferred.rootKeyId
+          ) {
+            done(marker);
+            return;
+          }
+          // Merge and clear in the same transaction so a second tab's save cannot be lost.
+          store.delete(lockedKey);
+          if (marker && marker.revision > deferred.revision) {
+            done(marker);
+            return;
+          }
+          const confirmed = { revision: deferred.revision, confirmed: true };
+          store.put(confirmed, key);
+          done(confirmed);
+        };
+      },
       signal,
     );
   }

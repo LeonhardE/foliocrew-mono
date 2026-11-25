@@ -203,6 +203,7 @@ function flow({
     vaultGeneration: 1,
     vaultConfigured: true,
     canWriteState: false,
+    stageLockedWatchlistAgentSync: async () => null,
     busy: null,
     error: "",
     lock() {
@@ -524,6 +525,82 @@ test("Market and Resources hand the same versioned watchlist to the existing vau
     ["vault_A", { revision: 3, confirmed: true }, true],
   ]);
   assert.equal(h.panel("watchlist").watchlist.revision, 3);
+  h.close();
+});
+
+test("locked Market saves only an acknowledgement and cannot attach it to a different vault", async () => {
+  const h = flow({
+    versionedWatchlist: true,
+    access: {
+      agentHubConfigured: true,
+      ownerConfigStatus: "ready",
+      status: "authenticated",
+      sessionKey: "A:1",
+    },
+  });
+  const staged = [];
+  const promoted = [];
+  h.shared.vault = { vaultId: "vault_A" };
+  h.shared.phase = "locked";
+  h.shared.stageLockedWatchlistAgentSync = async (owner, revision, vault, signal) => {
+    staged.push([owner, revision, vault]);
+    assert.equal(signal.aborted, false);
+    return null;
+  };
+  h.shared.loadHoldingsAgentSync = async () => [];
+  h.shared.loadChannelFollowsAgentSync = async () => null;
+  h.shared.loadWatchlistAgentSync = async () => null;
+  h.shared.updateWatchlistAgentSync = async (...args) => promoted.push(args);
+  await h.ready();
+  await h.panel("watchlist").watchlist.add("ADDED");
+  await h.settle();
+  assert.deepEqual(staged, [["A:1", 2, "vault_A"]]);
+  assert.deepEqual(promoted, []);
+  assert.deepEqual(
+    h.calls.map(({ route }) => route),
+    ["/api/v1/watchlist?includeRevision=true", "/api/v1/watchlist/ADDED?includeRevision=true"],
+  );
+  h.shared.vault = { vaultId: "vault_B" };
+  h.shared.phase = "unlocked";
+  h.shared.vaultGeneration++;
+  h.navigate("resources");
+  await h.settle();
+  assert.deepEqual(promoted, []);
+  h.close();
+});
+
+test("Market persists the acknowledged revision when the vault locks during a save", async () => {
+  const h = flow({
+    versionedWatchlist: true,
+    access: {
+      agentHubConfigured: true,
+      ownerConfigStatus: "ready",
+      status: "authenticated",
+      sessionKey: "A:1",
+    },
+  });
+  const staged = [];
+  h.shared.vault = { vaultId: "vault_A" };
+  h.shared.stageLockedWatchlistAgentSync = async (owner, revision, vault) => {
+    staged.push([owner, revision, vault]);
+    return vault;
+  };
+  h.shared.loadHoldingsAgentSync = async () => [];
+  h.shared.loadChannelFollowsAgentSync = async () => null;
+  h.shared.loadWatchlistAgentSync = async () => null;
+  h.shared.updateWatchlistAgentSync = async (_vault, marker) => {
+    if (!marker.confirmed) return;
+    h.shared.lock();
+    throw new Error("locked");
+  };
+  await h.ready();
+  await h.panel("watchlist").watchlist.add("ADDED");
+  await h.settle();
+  assert.deepEqual(staged, [["A:1", 2, "vault_A"]]);
+  assert.deepEqual(
+    h.calls.map(({ route }) => route),
+    ["/api/v1/watchlist?includeRevision=true", "/api/v1/watchlist/ADDED?includeRevision=true"],
+  );
   h.close();
 });
 
