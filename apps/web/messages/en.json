@@ -288,6 +288,12 @@
     "index": "Company valuation and share volume do not apply to this index."
   },
   "resources": {
+    "taskSync": {
+      "syncing": "Checking whether authorized Agents need this holdings update.",
+      "synced": "This holdings version is available to authorized Agents.",
+      "pending": "Holdings saved. The update for authorized Agents is still pending.",
+      "retry": "Retry update"
+    },
     "eyebrow": "YOUR RESOURCES",
     "title": "Resources",
     "description": "Manage your holdings, watchlist and creator lists in one place.",

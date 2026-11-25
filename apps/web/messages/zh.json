@@ -288,6 +288,12 @@
     "index": "指数不适用企业估值与股票成交量指标。"
   },
   "resources": {
+    "taskSync": {
+      "syncing": "正在检查已获授权的 Agent 是否需要这版持仓。",
+      "synced": "已获授权的 Agent 可以读取这版持仓。",
+      "pending": "持仓已保存，Agent 资料同步尚未完成。",
+      "retry": "重试同步"
+    },
     "eyebrow": "你的投资资源",
     "title": "资源库",
     "description": "在一个地方管理持仓、自选股和创作者名单。",

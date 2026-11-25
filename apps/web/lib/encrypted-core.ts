@@ -6308,6 +6308,31 @@ export class VaultCore {
     return (await this.persistentOwner(actor, false)).inspectCredentialSetup(value);
   }
   async verifySupersededPublicationPending(args: Json) {
+    if (Object.hasOwn(args, "newerSource")) {
+      exact(args, ["actor", "newerSource", "packet"]);
+      const { actor, newerSource, packet } = args;
+      const context = packet.context;
+      if (
+        packet.kind !== "publication" ||
+        packet.connectionId !== actor.connectionId ||
+        context?.objectType !== "holdings_snapshot" ||
+        context.connectionId !== actor.connectionId ||
+        context.clientId !== actor.clientId ||
+        context.stableOperationId !== packet.operationId ||
+        newerSource.kind !== "holdings" ||
+        !equal(context.ref, newerSource.ref) ||
+        context.sourceEpoch !== newerSource.sourceEpoch ||
+        !Number.isSafeInteger(context.sourceRevision) ||
+        context.sourceRevision < 1 ||
+        context.sourceRevision >= newerSource.revision
+      )
+        throw new VaultError("binding_mismatch");
+      // The original comes from the authenticated local outbox. A newer
+      // owner-signed producer snapshot prevents an uncommitted older write.
+      const snapshotId = newerSource.snapshot.receipt.snapshotId;
+      await this.agentResourceContent(newerSource, snapshotId);
+      return { operationId: packet.operationId, fingerprint: packet.fingerprint, superseded: true };
+    }
     exact(args, ["actor", "current", "hubOrigin", "packet"]);
     const { actor, ...value } = args;
     return (await this.persistentOwner(actor, false)).supersededPublicationPending(value);

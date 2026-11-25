@@ -305,6 +305,8 @@ function Workspace({
   library,
   onCreateTask,
   onRequestCatalogue,
+  holdingsSyncStatus,
+  onRetryHoldingsSync,
   active = true,
 }: {
   model: HoldingsWorkspace;
@@ -312,6 +314,8 @@ function Workspace({
   library: ResourceLibraryModel;
   onCreateTask?: (selection: ResourceSelection) => void;
   onRequestCatalogue?: () => void;
+  holdingsSyncStatus?: ResourcesProps["holdingsSyncStatus"];
+  onRetryHoldingsSync?: () => void;
   active?: boolean;
 }) {
   const t = useTranslations("resources");
@@ -889,6 +893,16 @@ function Workspace({
             )}
           </div>
         )}
+        {holdingsSyncStatus && (
+          <div className={styles.note} role="status">
+            <p>{t(`taskSync.${holdingsSyncStatus}`)}</p>
+            {holdingsSyncStatus === "pending" && onRetryHoldingsSync && (
+              <button type="button" className={styles.secondary} onClick={onRetryHoldingsSync}>
+                {t("taskSync.retry")}
+              </button>
+            )}
+          </div>
+        )}
         {model.notice && (
           <p className={styles.success} role="status">
             {t.has(`notices.${model.notice}`) ? t(`notices.${model.notice}`) : t("notices.saved")}
@@ -904,6 +918,8 @@ function ResourcesView({
   active = true,
   onCreateTask,
   watchlist,
+  holdingsSyncStatus,
+  onRetryHoldingsSync,
 }: ResourcesProps & { model: HoldingsWorkspace }) {
   const t = useTranslations("resources"),
     names = useDisplayNames(model, active);
@@ -1014,6 +1030,8 @@ function ResourcesView({
               library={library}
               active={active}
               onCreateTask={onCreateTask}
+              holdingsSyncStatus={holdingsSyncStatus}
+              onRetryHoldingsSync={onRetryHoldingsSync}
               onRequestCatalogue={
                 deferCatalogue ? () => setCatalogueRequestedFor(names.scope) : undefined
               }
@@ -1026,6 +1044,8 @@ function ResourcesView({
 }
 
 type ResourcesProps = {
+  holdingsSyncStatus?: "syncing" | "synced" | "pending";
+  onRetryHoldingsSync?: () => void;
   watchlist?: WatchlistModel;
   active?: boolean;
   onOpenWatchlist?: () => void;

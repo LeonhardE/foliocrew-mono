@@ -31,6 +31,8 @@ function compile(file, imports = {}, globals = {}) {
       if (name === "@/lib/report-provider-attribution")
         return compile("../lib/report-provider-attribution.ts");
       if (name === "./task-types") return compile("../lib/task-types.ts");
+      if (name === "./connection-summary" && !Object.hasOwn(imports, name))
+        return compile("../lib/connection-summary.ts");
       if (name === "./resource-library") return contracts;
       if (
         !Object.hasOwn(imports, name) &&

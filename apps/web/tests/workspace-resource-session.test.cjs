@@ -133,6 +133,9 @@ test("workspace navigation keeps one owner session without server transitions af
           return sharedWorkspace;
         },
       },
+      "@/lib/holdings-publication": require("./resource-library-helpers.cjs").compile(
+        "../lib/holdings-publication.ts",
+      ),
       "@/lib/ui-messages": { localizeMessage: (message) => message ?? "" },
       "@/lib/inbox-link": {
         clearInboxResultLink() {},

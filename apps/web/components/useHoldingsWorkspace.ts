@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MANUAL_QUOTES_PATH, useAuth } from "@/components/AuthProvider";
+import type { SavedHoldingsRevision } from "@/lib/persistent-experience-controller";
 import type { Instrument } from "@/lib/holdings-valuation";
 import {
   HOLDINGS_CSV_MAX_BYTES,
@@ -58,6 +59,7 @@ import {
 } from "@/lib/encrypted-passkey";
 import type {
   Json,
+  HoldingsAgentSync,
   OpenResultArgs,
   PendingSnapshot,
   SnapshotResponse,
@@ -499,7 +501,10 @@ function importDraft(
   };
 }
 
-export function useHoldingsWorkspace(start = true) {
+export function useHoldingsWorkspace(
+  start = true,
+  onSavedHoldings?: (saved: SavedHoldingsRevision) => void,
+) {
   const auth = useAuth();
   const owner = auth.status === "authenticated" && auth.profile ? auth.sessionKey : null;
   const requestPrivate = auth.requestPrivate;
@@ -2227,6 +2232,37 @@ export function useHoldingsWorkspace(start = true) {
     [owner],
   );
 
+  const recordSavedHoldings = useCallback(
+    (upload: PendingSnapshot) => {
+      const vaultId = stateRef.current.vault?.vaultId;
+      if (owner && vaultId)
+        onSavedHoldings?.({
+          owner,
+          vaultId,
+          source: upload.source,
+          revision: upload.expectedRevision + 1,
+        });
+    },
+    [owner, onSavedHoldings],
+  );
+  const finishHoldingsSave = useCallback(
+    async (
+      instance: EncryptedVaultSession,
+      upload: PendingSnapshot,
+      receipt: unknown,
+      assertActive: () => void,
+    ) => {
+      if (onSavedHoldings) {
+        await instance.finishHoldingsSaveForAgents(upload, receipt);
+      } else {
+        await instance.verifyReceipt(upload, receipt);
+        assertActive();
+        await instance.clearOutbox(upload.source.resourceRef.resourceId, upload.operationId);
+      }
+      assertActive();
+    },
+    [onSavedHoldings],
+  );
   const save = useCallback(
     (onSourceReady?: (source: Source) => Promise<void>) =>
       perform("saving", async ({ assertActive, signal }) => {
@@ -2418,11 +2454,9 @@ export function useHoldingsWorkspace(start = true) {
           },
         );
         assertActive();
-        await instance.verifyReceipt(upload, receipt);
-        assertActive();
-        await instance.clearOutbox(source.resourceRef.resourceId, upload.operationId);
-        assertActive();
+        await finishHoldingsSave(instance, upload, receipt, assertActive);
         pending.current = null;
+        recordSavedHoldings(upload);
         setState((previous) => ({
           ...previous,
           preview: null,
@@ -2435,7 +2469,18 @@ export function useHoldingsWorkspace(start = true) {
         await readSaved(source, signal, assertActive);
         setState((previous) => ({ ...previous, notice: "saved" }));
       }),
-    [api, liveSession, owner, perform, readCurrent, readSaved, registerSource, sync],
+    [
+      api,
+      finishHoldingsSave,
+      liveSession,
+      owner,
+      perform,
+      readCurrent,
+      readSaved,
+      recordSavedHoldings,
+      registerSource,
+      sync,
+    ],
   );
 
   const checkPending = useCallback(
@@ -2466,11 +2511,9 @@ export function useHoldingsWorkspace(start = true) {
         );
         assertActive();
         if (receipt !== null) {
-          await instance.verifyReceipt(upload, receipt);
-          assertActive();
-          await instance.clearOutbox(source.resourceRef.resourceId, upload.operationId);
-          assertActive();
+          await finishHoldingsSave(instance, upload, receipt, assertActive);
           pending.current = null;
+          recordSavedHoldings(upload);
           setState((previous) => ({
             ...previous,
             hasPending: false,
@@ -2509,7 +2552,7 @@ export function useHoldingsWorkspace(start = true) {
         await readSaved(source, signal, assertActive);
         setState((previous) => ({ ...previous, notice: "retry_discarded" }));
       }),
-    [api, liveSession, perform, readSaved],
+    [api, finishHoldingsSave, liveSession, perform, readSaved, recordSavedHoldings],
   );
 
   const freshSource = useCallback(
@@ -3317,6 +3360,14 @@ export function useHoldingsWorkspace(start = true) {
       return value;
     },
     [assertInboxSession, liveSession, taskGeneration],
+  );
+  const loadHoldingsAgentSync = useCallback(
+    () => taskCall((instance) => instance.loadHoldingsAgentSync()),
+    [taskCall],
+  );
+  const finishHoldingsAgentSync = useCallback(
+    (sync: HoldingsAgentSync) => taskCall((instance) => instance.finishHoldingsAgentSync(sync)),
+    [taskCall],
   );
   const verifyAgentRestoration = useCallback(
     (args: Parameters<EncryptedVaultSession["verifyAgentRestoration"]>[0]) =>
@@ -5670,6 +5721,8 @@ export function useHoldingsWorkspace(start = true) {
     refreshVault,
     advanceRegistry,
     synchronizeHoldingAuthority: sync,
+    loadHoldingsAgentSync,
+    finishHoldingsAgentSync,
     verifyAgentRestoration,
     prepareRestoredConsent,
     prepareRestoredTask,

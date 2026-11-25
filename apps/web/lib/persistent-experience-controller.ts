@@ -5,7 +5,8 @@ import {
   readChannelFollows,
 } from "./resource-library";
 import { taskMetadata, taskPage } from "./task-types";
-import type { TaskMetadata } from "./encrypted-types";
+import type { AgentPreparationSource, HoldingsAgentSync, TaskMetadata } from "./encrypted-types";
+import { connectionSummary } from "./connection-summary";
 import type { HoldingsWorkspace } from "../components/useHoldingsWorkspace";
 export const PERSISTENT_CONTRACT = "folioview.agent-workspace.v2.0";
 export const DEFAULT_CONNECTION_SECONDS = 7776000;
@@ -19,6 +20,7 @@ function credentialLifetime(packet: Json) {
   return seconds as number;
 }
 type Json = Record<string, any>;
+export type SavedHoldingsRevision = HoldingsAgentSync & { owner: string };
 export type PersistentConnection = {
   connectionId: string;
   clientId: string;
@@ -922,6 +924,127 @@ export class PersistentExperienceController {
     this.assert();
     await this.send(connection, packet);
   }
+  async syncSavedHoldings(saved: SavedHoldingsRevision) {
+    const vaultId = this.vault().vaultId;
+    if (saved.vaultId !== vaultId || saved.owner !== this.workspace().owner)
+      fail("verification_failed");
+    const summary = await this.request(`/api/v3/provider-connections/${vaultId}/summary`);
+    if (!connectionSummary(summary, vaultId)) return fail("invalid_response");
+    const connections = (["muse", "chatgpt"] as const).flatMap((provider) => {
+      const slot = summary.providers[provider].slot;
+      const candidates = summary.connections.filter(
+        (connection) =>
+          connection.provider === provider &&
+          connection.vaultId === vaultId &&
+          connection.status === "active" &&
+          (!slot ||
+            (slot.currentCredential?.connectionId === connection.connectionId &&
+              slot.currentCredential.clientId === connection.clientId)),
+      );
+      return candidates.length === 1 ? candidates : [];
+    });
+    if (!connections.length) return 0;
+    const catalogue = await this.catalogue();
+    const item = catalogue.groups
+      .flatMap((group) => group.items)
+      .find((entry) => same(entry.ref, saved.source.resourceRef));
+    if (!item) return fail("source_unavailable");
+    if (item.sourceEpoch !== saved.source.sourceEpoch || item.state !== "active") return 0;
+    if (item.revision === null || item.revision < saved.revision || !item.snapshotId)
+      return fail("source_unavailable");
+
+    let published = 0;
+    let pendingError: unknown;
+    for (const connection of connections) {
+      try {
+        const context = await this.context(connection);
+        const permission = context.policy?.permissions.find(
+          (permission: Json) =>
+            permission.status === "active" &&
+            permission.versionPolicy === "current_and_future" &&
+            permission.sourceEpoch === item.sourceEpoch &&
+            permission.fromRevision <= item.revision! &&
+            same(permission.ref, item.ref),
+        );
+        if (!permission) continue;
+        const credential = summary.credentials.find(
+          (entry) => entry.connectionId === connection.connectionId,
+        );
+        if (!credential) return fail("connection_unavailable");
+        const { verified } = await this.inspectCredential(connection, credential.state);
+        if (!["active", "expiring"].includes(verified.status))
+          return fail("connection_unavailable");
+
+        const pending = await this.workspace().loadPersistentPending(context.actor);
+        this.assert();
+        if (pending) {
+          if (
+            pending.kind !== "publication" ||
+            pending.context?.objectType !== "holdings_snapshot" ||
+            !same(pending.context.ref, item.ref) ||
+            pending.context.sourceEpoch !== item.sourceEpoch ||
+            pending.context.sourceRevision > item.revision
+          )
+            return fail("persistent_operation_pending");
+          if (pending.context.sourceRevision < item.revision) {
+            await this.settleOlderHoldingsPublication(connection, context.actor, pending, {
+              kind: "holdings",
+              ref: saved.source.resourceRef,
+              sourceEpoch: item.sourceEpoch!,
+              revision: item.revision,
+              snapshot: await this.api(
+                "portfolio",
+                `/api/v2/holdings/sources/${saved.source.resourceRef.resourceId}/snapshots/${item.snapshotId}`,
+              ),
+            });
+          } else {
+            if (
+              pending.context.permissionId !== permission.permissionId ||
+              pending.context.permissionEpoch !== permission.permissionEpoch
+            )
+              return fail("persistent_operation_pending");
+            await this.resume(connection);
+            if (pending.context.registrySequence >= this.vault().registryHistory.length) {
+              published++;
+              continue;
+            }
+          }
+        }
+        await this.publishResource(connection, context, item, catalogue);
+        published++;
+      } catch (error) {
+        this.assert();
+        pendingError ??= error;
+      }
+    }
+    if (pendingError) throw pendingError;
+    return published;
+  }
+
+  private async settleOlderHoldingsPublication(
+    connection: PersistentConnection,
+    actor: { connectionId: string; clientId: string },
+    pending: Json,
+    newerSource: Extract<AgentPreparationSource, { kind: "holdings" }>,
+  ) {
+    try {
+      const receipt = await this.request(
+        `/api/v2/persistent-content/${connection.vaultId}/connections/${connection.connectionId}/operations/${pending.operationId}`,
+      );
+      await this.workspace().finishPersistentPending(actor, receipt);
+    } catch (error) {
+      if (!(error instanceof PersistentExperienceError) || error.code !== "not_found") throw error;
+      const archived = await this.workspace().archiveSupersededPersistentPublication({
+        actor,
+        newerSource,
+        expectedOperationId: pending.operationId,
+        expectedFingerprint: pending.fingerprint,
+      });
+      if (!archived) fail("persistent_operation_pending");
+    }
+    this.assert();
+  }
+
   async synchronize(connection: PersistentConnection, includeTasks = true) {
     await this.resume(connection);
     const context = await this.context(connection),

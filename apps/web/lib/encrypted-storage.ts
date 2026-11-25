@@ -1,5 +1,5 @@
 /** Browser-owned ciphertext and public pins only; every shared mutation is atomic. */
-import { VaultError } from "./encrypted-types";
+import { VaultError, type HoldingsAgentSync } from "./encrypted-types";
 export interface EncryptedStorage {
   setArchiveContext?(
     owner: string,
@@ -45,7 +45,17 @@ export interface EncryptedStorage {
     fingerprint: string,
     signal?: AbortSignal,
   ): Promise<boolean>;
-  reconcileHoldingsOutbox?(key: string, expected: any, signal?: AbortSignal): Promise<boolean>;
+  reconcileHoldingsOutbox?(
+    key: string,
+    expected: any,
+    signal?: AbortSignal,
+    queueAgentSync?: boolean,
+  ): Promise<boolean>;
+  finishHoldingsAgentSync?(
+    owner: string,
+    sync: HoldingsAgentSync,
+    signal?: AbortSignal,
+  ): Promise<void>;
   finishSourceCreation?(key: string, expected: any, signal?: AbortSignal): Promise<boolean>;
   finishSourceMutation?(key: string, expected: any, signal?: AbortSignal): Promise<boolean>;
   stageDevice(key: string, record: any, expected: any, blockedByKey?: string): Promise<boolean>;
@@ -56,6 +66,8 @@ export interface EncryptedStorage {
   stageUploadCancellation?(key: string, record: any, signal?: AbortSignal): Promise<boolean>;
   finishUploadCancellation?(key: string, expected: any, signal?: AbortSignal): Promise<boolean>;
 }
+export const holdingsAgentSyncPrefix = (owner: string, vaultId: string) =>
+  `${owner}:holdings-agent-sync:${vaultId}:`;
 const same = (a: any, b: any) => JSON.stringify(a) === JSON.stringify(b);
 // Unlike serialization equality, preserve every own field when comparing a saved row.
 export const sameEncryptedRecord = (a: any, b: any): boolean => {
@@ -930,7 +942,12 @@ export class BrowserEncryptedStorage implements EncryptedStorage {
       signal,
     );
   }
-  reconcileHoldingsOutbox(key: string, expected: any, signal?: AbortSignal) {
+  reconcileHoldingsOutbox(
+    key: string,
+    expected: any,
+    signal?: AbortSignal,
+    queueAgentSync = false,
+  ) {
     const context = this.archiveContext,
       source = expected?.pending?.source?.resourceRef;
     if (
@@ -961,11 +978,75 @@ export class BrowserEncryptedStorage implements EncryptedStorage {
               done(false);
               return;
             }
-            s.delete(key);
-            done(true);
+            if (!queueAgentSync) {
+              s.delete(key);
+              done(true);
+              return;
+            }
+            // The source is already committed. Keep a public revision pointer and remove
+            // the upload ciphertext in the same archive-fenced IndexedDB transaction.
+            const cancel = s.get(
+              `${context.owner}:upload-cancellation:${expected.vaultId}:holdings:${source.resourceId}`,
+            );
+            cancel.onsuccess = () => {
+              if (this.archiveContext !== context) {
+                fail(new VaultError("archive_session_stale"));
+                return;
+              }
+              if (cancel.result) {
+                fail(new VaultError("upload_cancellation_pending"));
+                return;
+              }
+              const marker: HoldingsAgentSync = {
+                vaultId: expected.vaultId,
+                source: expected.pending.source,
+                revision: expected.pending.expectedRevision + 1,
+              };
+              const markerKey =
+                holdingsAgentSyncPrefix(context.owner, marker.vaultId) + source.resourceId;
+              const previous = s.get(markerKey);
+              previous.onsuccess = () => {
+                if (this.archiveContext !== context) {
+                  fail(new VaultError("archive_session_stale"));
+                  return;
+                }
+                const existing = previous.result;
+                if (
+                  existing?.source?.resourceRef?.incarnation !== source.incarnation ||
+                  existing.source.sourceEpoch < marker.source.sourceEpoch ||
+                  (existing.source.sourceEpoch === marker.source.sourceEpoch &&
+                    existing.revision <= marker.revision)
+                ) {
+                  s.put(marker, markerKey);
+                }
+                s.delete(key);
+                done(true);
+              };
+            };
           } catch (error) {
             fail(error);
           }
+        };
+      },
+      signal,
+    );
+  }
+  finishHoldingsAgentSync(owner: string, expected: HoldingsAgentSync, signal?: AbortSignal) {
+    const context = this.archiveContext;
+    if (!context || owner !== context.owner) return Promise.reject(new VaultError("wrong_account"));
+    const key =
+      holdingsAgentSyncPrefix(owner, expected.vaultId) + expected.source.resourceRef.resourceId;
+    return this.guarded<void>(
+      key,
+      (store, done, fail) => {
+        const read = store.get(key);
+        read.onsuccess = () => {
+          if (this.archiveContext !== context) {
+            fail(new VaultError("archive_session_stale"));
+            return;
+          }
+          if (sameEncryptedRecord(read.result, expected)) store.delete(key);
+          done();
         };
       },
       signal,
