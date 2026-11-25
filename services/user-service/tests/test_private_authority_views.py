@@ -5,6 +5,9 @@ from unittest.mock import Mock, patch
 
 import test_registry_transition as fixture
 from fastapi.testclient import TestClient
+from google.auth.credentials import AnonymousCredentials
+from google.cloud import firestore
+from test_firestore_batch_reads import MemoryRpc
 
 from app.main import app
 from app.private_resources.api import (
@@ -12,15 +15,19 @@ from app.private_resources.api import (
     PORTFOLIO_AUTHORITY_PATH,
     live_authority_views,
 )
-from app.private_resources.authority_cutover import UserAuthorityCutover
+from app.private_resources.authority_cutover import HANDOVERS, UserAuthorityCutover
 from app.private_resources.authority_views import OWNER_CURRENT_PROFILE, PrivateAuthorityViews
 from app.private_resources.directory import PrivateResourceDirectory
+from app.private_resources.legacy_baselines import COLLECTION as BASELINES
 from app.private_resources.recovery import COLLECTION as HEADS
+from app.private_resources.registry_pages import COLLECTION as HISTORY
 from app.private_resources.report_sources import HOLDINGS_FENCES, holdings_fence_key
 from app.private_resources.source_invalidations import SOURCE_INDEX, SourceInvalidations
+from app.resources import FirestoreUserResourceStore
+from folioview_shared.encrypted import private_resources
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
 from folioview_shared.encrypted.errors import ContractError
-from folioview_shared.encrypted.jsonutil import canonical_json
+from folioview_shared.encrypted.jsonutil import canonical_json, strict_json_loads
 from folioview_shared.encrypted.private_resources import (
     PRIVATE_AUTHORITY_PROFILE,
     source_index_digest,
@@ -78,6 +85,61 @@ class AuthorityViewTests(unittest.TestCase):
         self.assertEqual(result["proof"]["sources"], [])
         with self.assertRaisesRegex(ContractError, "not_found"):
             self.viewer.owner_current("unrelated-synthetic-owner", nonce, now=1000)
+
+    def test_owner_firestore_read_uses_validated_start_and_rechecks_current_head(self):
+        client = firestore.Client(
+            project="synthetic-user", database="user-data", credentials=AnonymousCredentials()
+        )
+        self.addCleanup(client.close)
+        rpc = MemoryRpc(client)
+        client._firestore_api_internal = rpc
+        with patch("app.resources.firestore.Client", return_value=client):
+            viewer = PrivateAuthorityViews(
+                FirestoreUserResourceStore("synthetic-user", "user-data")
+            )
+        with self.store.connection() as db:
+            for table, columns, field in (
+                (HEADS, "owner,value", "view"),
+                (HANDOVERS, "owner,value", "record"),
+                (HISTORY, "entry,value", "entry"),
+                (SOURCE_INDEX, "owner,value", None),
+                (BASELINES, "key,body", "body"),
+            ):
+                for key, value in db.execute(f"SELECT {columns} FROM {table}"):
+                    reference = client.collection(table).document(key)
+                    rpc.documents[reference._document_path] = (
+                        {field: value.encode() if type(value) is str else value}
+                        if field is not None
+                        else strict_json_loads(value)
+                    )
+        nonce = self.request["nonce"]
+        expected = self.viewer.owner_current(fixture.UID, nonce, now=1000)
+        with patch.object(
+            private_resources, "verify_registry", wraps=private_resources.verify_registry
+        ) as verify_registry:
+            self.assertEqual(viewer.owner_current(fixture.UID, nonce, now=1000), expected)
+        self.assertEqual(verify_registry.call_count, 1)
+        reads = [
+            {name.split("/documents/")[1].split("/")[0] for name in kwargs["request"]["documents"]}
+            for kind, kwargs in rpc.calls
+            if kind == "get"
+        ]
+        self.assertEqual(reads, [{HANDOVERS, HEADS}, {HISTORY}, {HEADS, SOURCE_INDEX}, {BASELINES}])
+
+        read = rpc.batch_get_documents
+        head = client.collection(HEADS).document(fixture.OWNER)
+
+        def concurrent_change(**kwargs):
+            if any(f"/{SOURCE_INDEX}/" in name for name in kwargs["request"]["documents"]):
+                row = rpc.documents[head._document_path]
+                updated = strict_json_loads(row["view"])
+                updated["vaultVersion"] += 1
+                row["view"] = canonical_json(updated)
+            return read(**kwargs)
+
+        with patch.object(rpc, "batch_get_documents", concurrent_change):
+            with self.assertRaisesRegex(ContractError, "version_conflict"):
+                viewer.owner_current(fixture.UID, nonce, now=1000)
 
     def test_portfolio_selected_incarnation_is_unavailable_after_invalidation(self):
         source = "synthetic_holdings"
