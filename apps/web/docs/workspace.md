@@ -197,10 +197,12 @@ holdings quantities, valuations or portfolio weights, and need no connected brok
 
 When Agent Hub is configured, the shared editor requests the optional User watchlist revision.
 A saved revision queues an encrypted resource update for existing continuing grants. The owner
-can see the sync status in Resources. Market can save while the workspace is locked. That tab
-carries the saved revision until the same owner unlocks, then stores it with the vault for retry
-after a reload. Older User deployments keep watchlist editing available through the legacy
-response and cannot supply a verified revision for this automatic update.
+can see the sync status in Resources. Market can save while the workspace is locked. If the browser
+has a verified local record for that owner's vault, it keeps the acknowledged revision scoped to that
+vault across reloads. After the same vault unlocks, the normal retry process rechecks the current
+source revision and active grants. On a browser without a matching local record, the pending update
+is kept only for the current signed-in tab. Older User deployments keep watchlist editing available
+through the legacy response and cannot supply a verified revision for this automatic update.
 
 Creator add/edit/remove uses only User's exact `/api/v1/channel-follows` GET/PUT. Whole-list writes
 carry `expectedRevision`, at most 50 closed entries, strict YouTube handle locators and a 128 KiB

@@ -191,17 +191,32 @@ function sharedOwnerWorker(uid: string): OwnerWorker | null {
     return null;
   }
 }
+async function ownerSubjectForUid(uid: string) {
+  if (!uid || uid.length > 128) throw new VaultError("wrong_account");
+  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(uid));
+  return [...new Uint8Array(hash)].map((value) => value.toString(16).padStart(2, "0")).join("");
+}
 export class EncryptedVaultSession {
   static async hasArchiveDeletion(uid: string) {
-    if (!uid || uid.length > 128) throw new VaultError("wrong_account");
-    const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(uid));
-    const owner = [...new Uint8Array(hash)]
-      .map((value) => value.toString(16).padStart(2, "0"))
-      .join("");
+    const owner = await ownerSubjectForUid(uid);
     const storage = new BrowserEncryptedStorage();
     try {
       const pending = await storage.get(owner + ":archive-change");
       return pending?.profile === "folioview.archive-deletion-candidate.v1";
+    } finally {
+      await storage.close();
+    }
+  }
+  static async stageLockedWatchlistAgentSync(
+    uid: string,
+    revision: number,
+    expectedVaultId?: string,
+    signal?: AbortSignal,
+  ) {
+    const owner = await ownerSubjectForUid(uid);
+    const storage = new BrowserEncryptedStorage();
+    try {
+      return await storage.stageLockedWatchlistAgentSync(owner, revision, expectedVaultId, signal);
     } finally {
       await storage.close();
     }
@@ -2994,8 +3009,21 @@ export class EncryptedVaultSession {
   loadChannelFollowsAgentSync() {
     return this.loadUserListAgentSync(channelFollowsAgentSyncKey);
   }
-  loadWatchlistAgentSync() {
-    return this.loadUserListAgentSync(watchlistAgentSyncKey);
+  async loadWatchlistAgentSync() {
+    if (!this.storage.recoverWatchlistAgentSync)
+      return this.loadUserListAgentSync(watchlistAgentSyncKey);
+    if (this.renewalOnly || this.deletionOnly) throw new VaultError("invalid_operation");
+    const g = this.generation;
+    await this.started;
+    this.assert(g);
+    if (!this.vaultId) throw new VaultError("locked");
+    const saved = await this.storage.recoverWatchlistAgentSync(
+      this.owner,
+      this.vaultId,
+      this.lifetime.signal,
+    );
+    this.assert(g);
+    return saved;
   }
   private async loadUserListAgentSync(
     key: (owner: string, vaultId: string) => string,

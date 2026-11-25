@@ -3384,6 +3384,19 @@ export function useHoldingsWorkspace(
     () => taskCall((instance) => instance.loadWatchlistAgentSync()),
     [taskCall],
   );
+  const stageLockedWatchlistAgentSync = useCallback(
+    async (owner: string, revision: number, vaultId?: string, signal?: AbortSignal) => {
+      if (auth.status !== "authenticated" || !auth.profile?.uid || auth.sessionKey !== owner)
+        throw new WorkspaceError("unlock_required");
+      return EncryptedVaultSession.stageLockedWatchlistAgentSync(
+        auth.profile.uid,
+        revision,
+        vaultId,
+        signal,
+      );
+    },
+    [auth.profile?.uid, auth.sessionKey, auth.status],
+  );
   const updateWatchlistAgentSync = useCallback(
     (vaultId: string, marker: UserListAgentSync, stage: boolean) =>
       taskCall((instance) => instance.updateWatchlistAgentSync(vaultId, marker, stage)),
@@ -5746,6 +5759,7 @@ export function useHoldingsWorkspace(
     loadChannelFollowsAgentSync,
     updateChannelFollowsAgentSync,
     loadWatchlistAgentSync,
+    stageLockedWatchlistAgentSync,
     updateWatchlistAgentSync,
     verifyAgentRestoration,
     prepareRestoredConsent,

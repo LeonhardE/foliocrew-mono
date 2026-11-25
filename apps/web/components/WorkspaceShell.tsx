@@ -130,7 +130,10 @@ export default function WorkspaceShell() {
   const [marketWatchlistSave, setMarketWatchlistSave] = useState<{
     owner: string;
     revision: number;
+    vaultId?: string;
+    persisted: boolean;
   } | null>(null);
+  const watchlistSaveLifetime = useRef<AbortController | null>(null);
   const [retryAgentConfiguration, setRetryAgentConfiguration] = useState(0);
   const syncInFlight = useRef(false);
   const enqueueResourceSync = useCallback(
@@ -166,6 +169,13 @@ export default function WorkspaceShell() {
       return scoped.length === entries.length ? entries : scoped;
     });
     setMarketWatchlistSave((saved) => (saved?.owner === signedInOwner ? saved : null));
+    if (!signedInOwner) return;
+    const lifetime = new AbortController();
+    watchlistSaveLifetime.current = lifetime;
+    return () => {
+      lifetime.abort();
+      if (watchlistSaveLifetime.current === lifetime) watchlistSaveLifetime.current = null;
+    };
   }, [signedInOwner]);
   const encryptedWorkspace = useHoldingsWorkspace(
     Boolean(signedInOwner && signedInOwner === privateOwner.current),
@@ -177,6 +187,7 @@ export default function WorkspaceShell() {
     loadChannelFollowsAgentSync,
     updateChannelFollowsAgentSync,
     loadWatchlistAgentSync,
+    stageLockedWatchlistAgentSync,
     updateWatchlistAgentSync,
     phase: holdingsPhase,
     needsDeviceApproval: needsHoldingsDeviceApproval,
@@ -216,28 +227,50 @@ export default function WorkspaceShell() {
     [currentVaultId, holdingsOwner, holdingsPhase, updateWatchlistAgentSync],
   );
   const stageSavedWatchlist = useCallback(
-    (revision: number, owner: string, vaultId: string) => {
+    (revision: number, owner: string, vaultId: string, retryAfterLock?: () => void) => {
       const marker = { revision, confirmed: true };
       const saved = { ...marker, kind: "watchlist" as const, owner, vaultId };
       const enqueue = () => enqueueResourceSync(saved);
-      void updateWatchlistAgentSync(vaultId, marker, true).then(enqueue, enqueue);
+      void updateWatchlistAgentSync(vaultId, marker, true).then(enqueue, () => {
+        if (retryAfterLock) retryAfterLock();
+        else enqueue();
+      });
     },
     [enqueueResourceSync, updateWatchlistAgentSync],
   );
   const onSavedWatchlist = useCallback(
     (revision: number, owner: string) => {
       if (!agentHubConfigured || owner !== liveSyncOwner.current) return;
-      if (currentVaultId && owner === holdingsOwner && holdingsPhase === "unlocked") {
-        stageSavedWatchlist(revision, owner, currentVaultId);
-        return;
-      }
-      // Markets may be active before the private vault has been loaded.
-      // Carry only the acknowledged revision through same-owner navigation.
-      setMarketWatchlistSave((saved) =>
-        saved?.owner === owner && saved.revision >= revision ? saved : { owner, revision },
-      );
+      const vaultId = owner === holdingsOwner ? currentVaultId : undefined;
+      const signal = watchlistSaveLifetime.current?.signal;
+      const remember = (vaultId: string | undefined, persisted: boolean) => {
+        if (owner !== liveSyncOwner.current || signal?.aborted) return;
+        setMarketWatchlistSave((saved) =>
+          saved?.owner === owner && saved.revision >= revision
+            ? saved
+            : { owner, revision, vaultId, persisted },
+        );
+      };
+      const deferUntilUnlock = () => {
+        if (owner !== liveSyncOwner.current || signal?.aborted) return;
+        void stageLockedWatchlistAgentSync(owner, revision, vaultId, signal).then(
+          (pinnedVaultId) => remember(pinnedVaultId ?? vaultId, pinnedVaultId !== null),
+          () => remember(vaultId, false),
+        );
+      };
+      if (vaultId && holdingsPhase === "unlocked" && !needsHoldingsDeviceApproval)
+        stageSavedWatchlist(revision, owner, vaultId, deferUntilUnlock);
+      else deferUntilUnlock();
     },
-    [agentHubConfigured, currentVaultId, holdingsOwner, holdingsPhase, stageSavedWatchlist],
+    [
+      agentHubConfigured,
+      currentVaultId,
+      holdingsOwner,
+      holdingsPhase,
+      needsHoldingsDeviceApproval,
+      stageLockedWatchlistAgentSync,
+      stageSavedWatchlist,
+    ],
   );
   useEffect(() => {
     if (
@@ -264,19 +297,6 @@ export default function WorkspaceShell() {
         },
         () => {},
       );
-    if (currentVaultId && loadWatchlistAgentSync)
-      void loadWatchlistAgentSync().then(
-        (marker) => {
-          if (current && marker)
-            enqueueResourceSync({
-              ...marker,
-              kind: "watchlist",
-              vaultId: currentVaultId,
-              owner: signedInOwner,
-            });
-        },
-        () => {},
-      );
     return () => {
       current = false;
     };
@@ -288,7 +308,6 @@ export default function WorkspaceShell() {
     needsHoldingsDeviceApproval,
     loadHoldingsAgentSync,
     loadChannelFollowsAgentSync,
-    loadWatchlistAgentSync,
     currentVaultId,
     enqueueResourceSync,
   ]);
@@ -296,24 +315,43 @@ export default function WorkspaceShell() {
     if (
       !agentHubConfigured ||
       !currentVaultId ||
+      !signedInOwner ||
       holdingsPhase !== "unlocked" ||
       needsHoldingsDeviceApproval ||
-      !marketWatchlistSave ||
-      marketWatchlistSave.owner !== signedInOwner ||
-      marketWatchlistSave.owner !== holdingsOwner
+      holdingsOwner !== signedInOwner
     )
       return;
-    stageSavedWatchlist(marketWatchlistSave.revision, marketWatchlistSave.owner, currentVaultId);
-    setMarketWatchlistSave((saved) => (saved === marketWatchlistSave ? null : saved));
+    let current = true;
+    const pending = marketWatchlistSave?.owner === signedInOwner ? marketWatchlistSave : null;
+    if (pending && !pending.persisted && (!pending.vaultId || pending.vaultId === currentVaultId))
+      stageSavedWatchlist(pending.revision, signedInOwner, currentVaultId);
+    const clear = () => {
+      if (current && pending) setMarketWatchlistSave((saved) => (saved === pending ? null : saved));
+    };
+    void loadWatchlistAgentSync?.().then((marker) => {
+      if (current && marker)
+        enqueueResourceSync({
+          ...marker,
+          kind: "watchlist",
+          vaultId: currentVaultId,
+          owner: signedInOwner,
+        });
+      clear();
+    }, clear);
+    return () => {
+      current = false;
+    };
   }, [
     agentHubConfigured,
     currentVaultId,
     holdingsOwner,
     holdingsPhase,
+    loadWatchlistAgentSync,
     marketWatchlistSave,
     needsHoldingsDeviceApproval,
     signedInOwner,
     stageSavedWatchlist,
+    enqueueResourceSync,
   ]);
   const agentScope = JSON.stringify([
     encryptedWorkspace.owner,
