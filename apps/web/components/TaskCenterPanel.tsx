@@ -19,6 +19,17 @@ type Schedule = {
   localTime: string;
   timeZone: string;
 };
+function taskSchedule(
+  rules: { schedule: Schedule | null } | undefined,
+  expectation: NonNullable<TaskModel["form"]>["deliveryExpectation"] | undefined,
+): Schedule | null {
+  if (rules) return rules.schedule;
+  if (!expectation) return null;
+  const { cadence, weekday, localTime, timeZone } = expectation;
+  const days =
+    cadence === "weekdays" ? [1, 2, 3, 4, 5] : cadence === "weekly" ? [weekday || 7] : [];
+  return { frequency: cadence === "daily" ? "daily" : "weekly", days, localTime, timeZone };
+}
 const providerName = (p: string) => (p === "muse" ? "Muse" : p === "chatgpt" ? "ChatGPT" : "Agent");
 export function TaskRunningMark({ label }: { label: string }) {
   return <span className={styles.spinner} role="img" aria-label={label} />;
@@ -96,6 +107,10 @@ export function TaskCenterView({
     record = center.selectedRecord;
   const assignments: J[] = record?.assignments ?? [];
   const currentAssignments = center.currentAssignments;
+  const expectation = form?.deliveryExpectation;
+  const savedRules = record?.rules?.definition;
+  const savedSchedule = taskSchedule(savedRules, expectation);
+  const hasReportedPlan = currentAssignments.some(({ plan }) => plan?.status === "enabled");
   const requests = task ? (center.manual[task] ?? []) : [],
     currentRequest = requests.find((r) => r.aggregate?.hasActiveExecutors) ?? requests.at(-1),
     running = Boolean(currentRequest?.aggregate?.hasActiveExecutors);
@@ -153,30 +168,10 @@ export function TaskCenterView({
   }, [center.scope]);
   useEffect(() => {
     if (mode !== "browse" || !selected) return;
-    const d = record?.rules?.definition;
-    setScheduled(Boolean(d?.schedule ?? form?.deliveryExpectation));
-    if (d?.schedule)
-      setSchedule({
-        frequency: d.schedule.frequency,
-        days: d.schedule.days,
-        localTime: d.schedule.localTime,
-        timeZone: d.schedule.timeZone,
-      });
-    else if (form?.deliveryExpectation) {
-      const v = form.deliveryExpectation;
-      setSchedule({
-        frequency: v.cadence === "daily" ? "daily" : "weekly",
-        days:
-          v.cadence === "weekdays"
-            ? [1, 2, 3, 4, 5]
-            : v.cadence === "weekly"
-              ? [v.weekday === 0 ? 7 : v.weekday!]
-              : [],
-        localTime: v.localTime,
-        timeZone: v.timeZone,
-      });
-    }
-  }, [mode, selected?.taskId, record, form?.deliveryExpectation]);
+    const rule = taskSchedule(savedRules, expectation);
+    setScheduled(Boolean(rule));
+    if (rule) setSchedule(rule);
+  }, [mode, selected?.taskId, savedRules, expectation]);
   useEffect(() => {
     if (reopen.current && !model.form && !model.dirty && !model.busy) {
       const id = reopen.current;
@@ -452,10 +447,11 @@ export function TaskCenterView({
       : t("errors.request_failed")
     : "";
   const modeLabel = scheduled ? t("scheduled") : t("manual");
-  const nextOccurrence = scheduled ? nextCenterOccurrence(schedule) : null;
-  const scheduleLabel = scheduled
-    ? `${schedule.frequency === "weekly" ? schedule.days.map((d) => t(`days.${d}`)).join("、") : t("daily")} ${schedule.localTime} · ${schedule.timeZone}`
-    : t("manual");
+  const formatSchedule = (rule: Schedule | null) =>
+    rule
+      ? `${rule.frequency === "weekly" ? rule.days.map((d) => t(`days.${d}`)).join("、") : t("daily")} ${rule.localTime} · ${rule.timeZone}`
+      : t("manual");
+  const nextPreview = savedSchedule && hasReportedPlan ? nextCenterOccurrence(savedSchedule) : null;
   const home =
     mode === "browse" &&
     !selected &&
@@ -1022,7 +1018,7 @@ export function TaskCenterView({
                       <dt>{t("executors")}</dt>
                       <dd>{providers.map(providerName).join("、") || t("noExecutor")}</dd>
                       <dt>{t("runMode")}</dt>
-                      <dd>{scheduleLabel}</dd>
+                      <dd>{formatSchedule(scheduled ? schedule : null)}</dd>
                     </dl>
                     {model.preview && !model.preview.valid && (
                       <InlineError message={t("errors.validation_failed")} />
@@ -1147,26 +1143,21 @@ export function TaskCenterView({
                       </dd>
                       <dt>{t("runMode")}</dt>
                       <dd>
-                        {scheduleLabel}
-                        {scheduled && (
+                        {formatSchedule(savedSchedule)}
+                        {savedSchedule && (
                           <small className={styles.hint}>
-                            {nextOccurrence
-                              ? t("nextExpected", {
-                                  date: new Intl.DateTimeFormat(locale, {
-                                    dateStyle: "medium",
-                                    timeStyle: "short",
-                                    timeZone: schedule.timeZone,
-                                  }).format(new Date(nextOccurrence)),
-                                })
-                              : ""}{" "}
-                            · {t("dstHint")}
+                            {hasReportedPlan ? t("agentReportedPlan") : t("planUnconfirmed")}
                           </small>
                         )}
-                        {scheduled && (
+                        {savedSchedule && nextPreview && (
                           <small className={styles.hint}>
-                            {currentAssignments.some((r) => r.plan?.status === "enabled")
-                              ? t("agentReportedPlan")
-                              : t("planUnconfirmed")}
+                            {t("schedulePreview", {
+                              date: new Intl.DateTimeFormat(locale, {
+                                dateStyle: "medium",
+                                timeStyle: "short",
+                                timeZone: savedSchedule.timeZone,
+                              }).format(new Date(nextPreview)),
+                            })}
                           </small>
                         )}
                       </dd>
@@ -1219,7 +1210,7 @@ export function TaskCenterView({
                           }
                         }}
                       >
-                        {running ? t("viewProgress") : t("runNow")}
+                        {running ? t("viewProgress") : t("requestRun")}
                       </button>
                     </footer>
                   </div>
@@ -1243,11 +1234,12 @@ export function TaskCenterView({
         id="task-run-choice"
         identity={`${center.scope}:${task}:choose`}
         open={choosingRun && Boolean(center.scope) && Boolean(task)}
-        title={t("runNow")}
+        title={t("requestRun")}
         closeLabel={t("close")}
         onClose={() => setChoosingRun(false)}
       >
         <div className={styles.form}>
+          <p className={styles.hint}>{t("requestRunHint")}</p>
           <fieldset>
             <legend>{t("executors")}</legend>
             {currentAssignments.map((a) => (
@@ -1272,7 +1264,7 @@ export function TaskCenterView({
             disabled={busy || !canStartRun || !chosenAgentsCurrent}
             onClick={() => void run()}
           >
-            {t("runNow")}
+            {t("requestRun")}
           </button>
         </div>
       </ReportDialog>
