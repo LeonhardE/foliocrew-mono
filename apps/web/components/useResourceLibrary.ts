@@ -85,6 +85,8 @@ export function useResourceLibrary({
   resourceDisplay,
   workspaceScope = null,
   holdingsPublication = null,
+  beforeSaveFollows,
+  onSavedFollows,
 }: {
   active?: boolean;
   externalWatchlist?: boolean;
@@ -94,6 +96,8 @@ export function useResourceLibrary({
   resourceDisplay?: ResourceDisplayAccess;
   workspaceScope?: string | null;
   holdingsPublication?: HoldingsPublication | null;
+  beforeSaveFollows?: (revision: number, owner: string) => Promise<void>;
+  onSavedFollows?: (revision: number, owner: string) => void;
 } = {}) {
   const auth = useAuth();
   const owner = auth.status === "authenticated" && auth.profile ? auth.sessionKey : null;
@@ -523,12 +527,20 @@ export function useResourceLibrary({
         },
       }));
       try {
-        const data = (await operation("write", false, (signal, assert) =>
-          api("follows", signal, assert, {
-            expectedRevision: before.follows.data!.revision,
-            items,
-          }),
-        )) as ChannelFollows;
+        const current = before.follows.data;
+        const data = (await operation("write", false, async (signal, assert) => {
+          if (beforeSaveFollows && current.revision < Number.MAX_SAFE_INTEGER) {
+            const existing = new Map(current.items.map((row) => [row.handleOrUrl, row]));
+            const changed =
+              items.length !== existing.size ||
+              items.some((item) => {
+                const row = existing.get(item.handleOrUrl);
+                return !row || item.name !== row.name || item.note !== row.note;
+              });
+            if (changed) await beforeSaveFollows(current.revision + 1, owner).catch(() => {});
+          }
+          return api("follows", signal, assert, { expectedRevision: current.revision, items });
+        })) as ChannelFollows;
         if (
           live.current.owner !== owner ||
           live.current.scope !== scope ||
@@ -543,6 +555,7 @@ export function useResourceLibrary({
           writeError: "",
         }));
         void reload("catalogue");
+        if (data.revision > before.follows.data.revision) onSavedFollows?.(data.revision, owner);
         return true;
       } catch (error) {
         if (freshness.current.scope === scope) delete freshness.current.at.follows;
@@ -562,7 +575,7 @@ export function useResourceLibrary({
         if (writing.current === token) writing.current = null;
       }
     },
-    [owner, scope, api, operation, reload],
+    [owner, scope, api, operation, reload, beforeSaveFollows, onSavedFollows],
   );
 
   useEffect(() => {

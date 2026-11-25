@@ -1,6 +1,6 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { compile, contracts: resources } = require("./resource-library-helpers.cjs");
+const { compile, contracts: resources, channels } = require("./resource-library-helpers.cjs");
 const tasks = compile("../lib/task-types.ts");
 const { PersistentExperienceController: Controller, PersistentExperienceError: ErrorType } =
   compile(
@@ -927,4 +927,124 @@ test("a missing latest revision remains recoverable and one unavailable Agent do
   f.c.publishResource = async (target) => recipients.push(target);
   await assert.rejects(f.c.syncSavedHoldings(f.saved), /connection_unavailable/);
   assert.deepEqual(recipients, [second]);
+});
+
+function savedChannelFollowsHarness() {
+  const f = savedHoldingsHarness();
+  const { owner, vaultId, revision } = f.saved;
+  const item = {
+    ref: {
+      kind: "channel_follows",
+      sourceService: "user",
+      resourceId: "channels_A",
+      incarnation: "channels_incarnation",
+    },
+    sourceEpoch: 3,
+    revision: 5,
+    state: "ready",
+    snapshotId: null,
+  };
+  const saved = { owner, vaultId, revision, confirmed: true };
+  f.permission.ref = item.ref;
+  f.c.catalogue = async () => ({
+    groups: [
+      { kind: "watchlist", items: [{ ref: null, state: "uninitialized" }] },
+      { kind: "channel_follows", items: [{ ...item }] },
+    ],
+  });
+  const api = f.c.api;
+  let response = channels("LATEST_CHANNEL", item.revision);
+  f.c.api = async (service, path, options) => {
+    if (service === "user" && path === "/api/v1/channel-follows") {
+      f.calls.push("read User follows");
+      return response;
+    }
+    return api(service, path, options);
+  };
+  f.c.publishResource = Controller.prototype.publishResource;
+  f.c.control = () => ({});
+  const sources = [];
+  f.w.preparePersistentResource = async ({ source }) => {
+    sources.push(source);
+    return packet;
+  };
+  f.c.send = async (target, original) => {
+    assert.equal(original, packet);
+    f.calls.push(target.connectionId);
+  };
+  return { ...f, saved, item, sources, setResponse: (value) => (response = value) };
+}
+
+test("saved YouTube follows require current grants and share one exact User read across approved recipients", async () => {
+  const f = savedChannelFollowsHarness();
+  await assert.rejects(
+    f.c.syncSavedChannelFollows({ ...f.saved, owner: "different_owner" }),
+    /verification_failed/,
+  );
+  assert.deepEqual(f.calls, []);
+  f.permission.versionPolicy = "exact";
+  assert.equal(await f.c.syncSavedChannelFollows(f.saved), 0);
+  assert.ok(!f.calls.includes("read User follows"));
+  f.permission.versionPolicy = "current_and_future";
+  const second = { ...connection, provider: "chatgpt", connectionId: "connection_B" };
+  f.summary.connections.push(second);
+  f.summary.credentials.push({ ...f.summary.credentials[0], connectionId: second.connectionId });
+  assert.equal(await f.c.syncSavedChannelFollows(f.saved), 2);
+  assert.equal(f.calls.filter((call) => call === "read User follows").length, 1);
+  assert.deepEqual(f.calls.slice(-2), [connection.connectionId, second.connectionId]);
+  for (const source of f.sources) {
+    assert.equal(source.kind, "channel_follows");
+    assert.equal(source.revision, 5);
+    assert.equal(source.response.revision, 5);
+    assert.equal(source.response.items[0].name, "LATEST_CHANNEL");
+  }
+});
+
+test("a superseded YouTube follows update can recover its own sealed packet, never another source", async () => {
+  const f = savedChannelFollowsHarness();
+  const pending = {
+    ...packet,
+    context: {
+      objectType: "channel_follows_evidence",
+      ref: { ...f.item.ref, incarnation: "other_incarnation" },
+      sourceEpoch: f.item.sourceEpoch,
+      sourceRevision: 4,
+    },
+  };
+  f.w.pending = pending;
+  await assert.rejects(f.c.syncSavedChannelFollows(f.saved), /persistent_operation_pending/);
+  assert.ok(!f.calls.includes("read User follows"));
+  pending.context.ref = f.item.ref;
+  f.w.archiveSupersededPersistentPublication = async (args) => {
+    assert.equal(args.expectedFingerprint, pending.fingerprint);
+    assert.equal(args.expectedOperationId, pending.operationId);
+    assert.equal(args.newerSource.kind, "channel_follows");
+    assert.equal(args.newerSource.response.revision, 5);
+    f.w.pending = null;
+    return true;
+  };
+  assert.equal(await f.c.syncSavedChannelFollows(f.saved), 1);
+  assert.equal(f.calls.filter((call) => call === "read User follows").length, 1);
+});
+
+test("YouTube follows must still match the catalogue revision and include newly emptied lists", async () => {
+  const f = savedChannelFollowsHarness();
+  f.setResponse(channels("OLDER_CHANNEL", 4));
+  await assert.rejects(f.c.syncSavedChannelFollows(f.saved), /source_unavailable/);
+  assert.equal(f.sources.length, 0);
+  f.setResponse({ revision: 5, items: [], limit: 50 });
+  f.item.state = "empty";
+  assert.equal(await f.c.syncSavedChannelFollows(f.saved), 1);
+  assert.deepEqual(f.sources[0].response.items, []);
+});
+
+test("an interrupted YouTube write stays unconfirmed until a cold read sees the committed revision", async () => {
+  const f = savedChannelFollowsHarness();
+  const attempt = { ...f.saved, revision: 6, confirmed: false };
+  assert.equal(await f.c.syncSavedChannelFollows(attempt), null);
+  assert.ok(!f.calls.includes("read User follows"));
+  f.item.revision = 6;
+  f.setResponse(channels("AFTER_REOPEN", 6));
+  assert.equal(await f.c.syncSavedChannelFollows(attempt), 1);
+  assert.equal(f.sources[0].response.revision, 6);
 });

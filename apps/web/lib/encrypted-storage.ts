@@ -1,5 +1,9 @@
 /** Browser-owned ciphertext and public pins only; every shared mutation is atomic. */
-import { VaultError, type HoldingsAgentSync } from "./encrypted-types";
+import {
+  VaultError,
+  type ChannelFollowsAgentSync,
+  type HoldingsAgentSync,
+} from "./encrypted-types";
 export interface EncryptedStorage {
   setArchiveContext?(
     owner: string,
@@ -56,6 +60,13 @@ export interface EncryptedStorage {
     sync: HoldingsAgentSync,
     signal?: AbortSignal,
   ): Promise<void>;
+  updateChannelFollowsAgentSync?(
+    owner: string,
+    vaultId: string,
+    marker: ChannelFollowsAgentSync,
+    stage: boolean,
+    signal?: AbortSignal,
+  ): Promise<void>;
   finishSourceCreation?(key: string, expected: any, signal?: AbortSignal): Promise<boolean>;
   finishSourceMutation?(key: string, expected: any, signal?: AbortSignal): Promise<boolean>;
   stageDevice(key: string, record: any, expected: any, blockedByKey?: string): Promise<boolean>;
@@ -68,6 +79,8 @@ export interface EncryptedStorage {
 }
 export const holdingsAgentSyncPrefix = (owner: string, vaultId: string) =>
   `${owner}:holdings-agent-sync:${vaultId}:`;
+export const channelFollowsAgentSyncKey = (owner: string, vaultId: string) =>
+  `${owner}:channel-follows-agent-sync:${vaultId}`;
 const same = (a: any, b: any) => JSON.stringify(a) === JSON.stringify(b);
 // Unlike serialization equality, preserve every own field when comparing a saved row.
 export const sameEncryptedRecord = (a: any, b: any): boolean => {
@@ -1046,6 +1059,41 @@ export class BrowserEncryptedStorage implements EncryptedStorage {
             return;
           }
           if (sameEncryptedRecord(read.result, expected)) store.delete(key);
+          done();
+        };
+      },
+      signal,
+    );
+  }
+  updateChannelFollowsAgentSync(
+    owner: string,
+    vaultId: string,
+    marker: ChannelFollowsAgentSync,
+    stage: boolean,
+    signal?: AbortSignal,
+  ) {
+    const context = this.archiveContext;
+    if (!context || owner !== context.owner) return Promise.reject(new VaultError("wrong_account"));
+    const key = channelFollowsAgentSyncKey(owner, vaultId);
+    return this.guarded<void>(
+      key,
+      (store, done, fail) => {
+        const read = store.get(key);
+        read.onsuccess = () => {
+          if (this.archiveContext !== context) {
+            fail(new VaultError("archive_session_stale"));
+            return;
+          }
+          const stored = read.result;
+          const storedRevision = stored?.revision;
+          if (
+            stage &&
+            (!Number.isSafeInteger(storedRevision) ||
+              storedRevision < marker.revision ||
+              (storedRevision === marker.revision && !stored.confirmed && marker.confirmed))
+          )
+            store.put(marker, key);
+          if (!stage && sameEncryptedRecord(stored, marker)) store.delete(key);
           done();
         };
       },

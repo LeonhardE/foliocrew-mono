@@ -1,6 +1,7 @@
 /** Public worker bridge: returned objects contain public controls/ciphertext only. */
 import {
   BrowserEncryptedStorage,
+  channelFollowsAgentSyncKey,
   holdingsAgentSyncPrefix,
   sameEncryptedRecord,
   type EncryptedStorage,
@@ -20,6 +21,7 @@ import {
   requireArchive,
   type ArchiveDeletionPacket,
   type ArchiveDeletionRecord,
+  type ChannelFollowsAgentSync,
   type Vault,
   type PasskeyMaterial,
   type Source,
@@ -2985,6 +2987,47 @@ export class EncryptedVaultSession {
     if (!this.vaultId || sync.vaultId !== this.vaultId || !this.storage.finishHoldingsAgentSync)
       throw new VaultError("wrong_account");
     await this.storage.finishHoldingsAgentSync(this.owner, sync, this.lifetime.signal);
+    this.assert(g);
+  }
+  async loadChannelFollowsAgentSync(): Promise<ChannelFollowsAgentSync | null> {
+    if (this.renewalOnly || this.deletionOnly) throw new VaultError("invalid_operation");
+    const g = this.generation;
+    await this.started;
+    this.assert(g);
+    if (!this.vaultId) throw new VaultError("locked");
+    const saved = await this.storage.get(channelFollowsAgentSyncKey(this.owner, this.vaultId));
+    this.assert(g);
+    return Number.isSafeInteger(saved?.revision) &&
+      saved.revision >= 1 &&
+      typeof saved.confirmed === "boolean"
+      ? { revision: saved.revision, confirmed: saved.confirmed }
+      : null;
+  }
+  async updateChannelFollowsAgentSync(
+    vaultId: string,
+    marker: ChannelFollowsAgentSync,
+    stage: boolean,
+  ) {
+    if (this.renewalOnly || this.deletionOnly) throw new VaultError("invalid_operation");
+    const g = this.generation;
+    await this.started;
+    this.assert(g);
+    if (
+      !this.vaultId ||
+      vaultId !== this.vaultId ||
+      !Number.isSafeInteger(marker.revision) ||
+      marker.revision < 1 ||
+      typeof marker.confirmed !== "boolean"
+    )
+      throw new VaultError("binding_mismatch");
+    if (!this.storage.updateChannelFollowsAgentSync) throw new VaultError("storage_unavailable");
+    await this.storage.updateChannelFollowsAgentSync(
+      this.owner,
+      vaultId,
+      marker,
+      stage,
+      this.lifetime.signal,
+    );
     this.assert(g);
   }
   private async renewalHoldingsRow(sourceId: string) {
