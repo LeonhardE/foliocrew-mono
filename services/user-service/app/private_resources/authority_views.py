@@ -21,7 +21,7 @@ from .legacy_baselines import _sha
 from .recovery import COLLECTION as HEADS
 from .report_sources import HOLDINGS_FENCES, HoldingsFence, holdings_fence_key
 from .source_invalidations import SOURCE_INDEX
-from .source_registrations import _matches_current, current_registry
+from .source_registrations import _matches_current, current_registry, registry_from_start
 
 OWNER_CURRENT_PROFILE = "folioview.owner-current-user-vault.v1"
 
@@ -56,13 +56,11 @@ class PrivateAuthorityViews:
 
     def owner_current(self, uid, nonce, *, now):
         """Read the verified sealed archive and the current authority for the Owner."""
-        self.cutover._named_store()
-        owner = owner_key(uid)
-        head = self.cutover._read(((HEADS, owner),))[0]
-        if head is None or head.get("handover") is None:
-            raise ContractError("not_found")
-        vault_id = head["vaultId"]
-        lookup = self.lookup(
+        evidence, start, baseline_digest = self.cutover._verified_start(
+            uid, None, nonce, now=now, allow_deleted=True
+        )
+        owner, vault_id = evidence["ownerSubject"], evidence["vaultId"]
+        lookup = self._lookup(
             uid,
             {
                 "contractVersion": CONTRACT_VERSION,
@@ -71,14 +69,13 @@ class PrivateAuthorityViews:
                 "ownerSubject": owner,
                 "vaultId": vault_id,
                 "sourceId": None,
-                "minimumRegistryEpoch": head["registryStart"]["registryEpoch"],
+                "minimumRegistryEpoch": evidence["registryStart"]["registryEpoch"],
                 "nonce": nonce,
             },
             now=now,
+            verified_start=(evidence, start),
         )["authority"]
-        baseline = self.cutover.verifier.baselines.read(
-            owner, vault_id, head["handover"]["baselineDigest"]
-        )
+        baseline = self.cutover.verifier.baselines.read(owner, vault_id, baseline_digest)
         if baseline is None:
             raise ContractError("source_unavailable")
         original = strict_json_loads(baseline)
@@ -141,14 +138,25 @@ class PrivateAuthorityViews:
         return result
 
     def lookup(self, uid, request, *, now):
+        return self._lookup(uid, request, now=now)
+
+    def _lookup(self, uid, request, *, now, verified_start=None):
         checked = private_authority_lookup(request)
         owner, vault, source = owner_key(uid), checked["vaultId"], checked["sourceId"]
         if owner != checked["ownerSubject"]:
             raise ContractError("insufficient_scope")
         try:
-            evidence, registry, bundles = current_registry(
-                self.cutover, uid, vault, now, allow_deleted=True
-            )
+            if verified_start is None:
+                evidence, registry, bundles = current_registry(
+                    self.cutover, uid, vault, now, allow_deleted=True
+                )
+            else:
+                evidence, start = verified_start
+                if (evidence["ownerSubject"], evidence["vaultId"]) != (owner, vault):
+                    raise ContractError("insufficient_scope")
+                evidence, registry, bundles = registry_from_start(
+                    self.cutover, evidence, start, now
+                )
             head = evidence["registry"]
             if head["registryEpoch"] < checked["minimumRegistryEpoch"]:
                 raise ContractError("rollback_detected")

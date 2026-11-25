@@ -18,7 +18,6 @@ from folioview_shared.encrypted.jsonutil import canonical_json
 from folioview_shared.encrypted.private_resources import (
     PrivateRegistryCursor,
     source_index_digest,
-    verify_private_registry_transition,
 )
 from folioview_shared.encrypted.schema import validate_schema
 from folioview_shared.firestore import BoundedTransaction
@@ -40,23 +39,17 @@ _MAX_REGISTRY_EXTENSION = 128
 
 def current_registry(cutover, uid, vault, now, *, allow_deleted=False):
     """Build authority only to the fixed current head returned by User."""
-    evidence = cutover.read_start(
+    evidence, start, _ = cutover._verified_start(
         uid, vault, secrets.token_urlsafe(24), now=now, allow_deleted=allow_deleted
     )
+    return registry_from_start(cutover, evidence, start, now)
+
+
+def registry_from_start(cutover, evidence, start, now):
+    """Extend the first bundle already verified in this request to its fixed head."""
     scope = {key: evidence[key] for key in ("ownerSubject", "vaultId", "rootKeyId")}
     root = evidence["rootJwk"]
     target = evidence["registry"]
-    start = verify_private_registry_transition(
-        evidence["signedTransition"],
-        first_bundle=evidence["firstBundle"],
-        root_jwk=root,
-        owner_subject=scope["ownerSubject"],
-        vault_id=vault,
-        pinned_root_key_id=scope["rootKeyId"],
-        authenticated_start=evidence["registryStart"],
-        previous=None,
-        now=now,
-    )
     registry = start.registry
     bundles = [evidence["firstBundle"]]
     current = start.head()
@@ -75,7 +68,7 @@ def current_registry(cutover, uid, vault, now, *, allow_deleted=False):
                 root_jwk=root,
                 pinned_root_key_id=scope["rootKeyId"],
                 owner_subject=scope["ownerSubject"],
-                vault_id=vault,
+                vault_id=scope["vaultId"],
                 previous=registry,
                 now=now,
                 signature_memo=memo,

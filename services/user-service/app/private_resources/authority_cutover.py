@@ -114,6 +114,13 @@ class UserAuthorityCutover:
             raise ContractError("authorization_unavailable")
 
     def read_start(self, uid, vault, nonce, *, now, allow_deleted=False):
+        evidence, _, _ = self._verified_start(
+            uid, vault, nonce, now=now, allow_deleted=allow_deleted
+        )
+        return evidence
+
+    def _verified_start(self, uid, vault, nonce, *, now, allow_deleted):
+        """Return request-local proof and the digest locked to the installed receipt."""
         validate_schema("OperationIdentifier", nonce)
         self._named_store()
         owner = owner_key(uid)
@@ -122,13 +129,18 @@ class UserAuthorityCutover:
             stored, raw_head = read(((HANDOVERS, owner), (HEADS, owner)))
             if stored is None or raw_head is None:
                 raise ContractError("not_found")
-            receipt, head = self._installed(stored, raw_head, owner, vault)
+            selected_vault = vault
+            if selected_vault is None and type(raw_head) is dict:
+                if raw_head.get("handover") is None:
+                    raise ContractError("not_found")
+                selected_vault = raw_head.get("vaultId")
+            receipt, head = self._installed(stored, raw_head, owner, selected_vault)
             if head.archive.state != "active" and not (
                 allow_deleted and head.archive.state == "deleted"
             ):
                 raise ContractError("key_authorization_required")
             first = receipt.registryStart.model_dump()
-            key = _index(owner, vault, first["registryEpoch"], first["registrySequence"])
+            key = _index(owner, head.vaultId, first["registryEpoch"], first["registrySequence"])
             entry = read(((HISTORY, key),))[0]
             if (
                 entry is None
@@ -141,7 +153,7 @@ class UserAuthorityCutover:
                 first_bundle=entry["bundle"],
                 root_jwk=entry["rootJwk"],
                 owner_subject=owner,
-                vault_id=vault,
+                vault_id=head.vaultId,
                 pinned_root_key_id=head.rootKeyId,
                 authenticated_start=first,
                 previous=None,
@@ -154,7 +166,7 @@ class UserAuthorityCutover:
                 "profile": "folioview.owner-registry-start-evidence.v1",
                 "nonce": nonce,
                 "ownerSubject": owner,
-                "vaultId": vault,
+                "vaultId": head.vaultId,
                 "rootKeyId": head.rootKeyId,
                 "vaultVersion": head.vaultVersion,
                 "archive": head.archive.model_dump(),
@@ -167,7 +179,7 @@ class UserAuthorityCutover:
             }
             if len(canonical_json(reply)) > MAX_REGISTRY_PAGE_BYTES:
                 raise ContractError("payload_too_large")
-            return reply
+            return reply, accepted, receipt.baselineDigest
 
         try:
             return self._transaction(snapshot, writes=False)
