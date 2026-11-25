@@ -16,6 +16,7 @@ function render({
   navigating = false,
   unreadPartial = false,
   centerPatch = {},
+  nextOccurrence = null,
 } = {}) {
   const messages = require(`../messages/${locale}.json`),
     metadata = { taskId: "task_PRIVATE_ID", status: "active", taskVersion: 1, executionEpoch: 1 };
@@ -37,7 +38,7 @@ function render({
           }),
       },
       "@/lib/task-forms": { defaultTask: () => ({}) },
-      "@/lib/task-center-schedule": { nextCenterOccurrence: () => null },
+      "@/lib/task-center-schedule": { nextCenterOccurrence: () => nextOccurrence },
       "@/lib/task-types": { bindingKey: JSON.stringify },
       "./ReportDialog": { ReportDialog: () => null },
       "./WorkspaceFeedback": { InlineError: () => null, LoadingIndicator: () => null },
@@ -129,7 +130,7 @@ for (const locale of ["en", "zh", "zh-Hant"]) {
     const messages = require(`../messages/${locale}.json`).taskCenter;
     const html = render({ locale, centerPatch: { enabled: false, capabilityState: "ready" } });
     assert.ok(html.includes(messages.runNotEnabled));
-    for (const label of [messages.delete, messages.runNow])
+    for (const label of [messages.delete, messages.requestRun])
       assert.ok(html.includes(`disabled="">${label}</button>`), label);
     for (const capabilityState of ["loading", "error"])
       assert.ok(
@@ -140,6 +141,38 @@ for (const locale of ["en", "zh", "zh-Hant"]) {
       );
     assert.ok(!render({ locale }).includes(messages.runNotEnabled));
     assert.doesNotMatch(html, /MISSING_MESSAGE|taskCenter\.|HUB_|_PRIVATE/);
+  });
+  test(`the actual ${locale} task treats schedule math as a preview of an enabled Agent plan`, () => {
+    const messages = require(`../messages/${locale}.json`).taskCenter;
+    const schedule = {
+      frequency: "daily",
+      days: [],
+      localTime: "22:00",
+      timeZone: "America/Toronto",
+    };
+    const selectedRecord = { rules: { definition: { schedule } } };
+    const nextOccurrence = "2026-11-24T03:00:00Z";
+    const previewLabel = messages.schedulePreview.split("{date}")[0];
+    const pending = render({ locale, nextOccurrence, centerPatch: { selectedRecord } });
+    assert.match(pending, /22:00 · America\/Toronto/);
+    assert.ok(pending.includes(messages.planUnconfirmed));
+    assert.ok(!pending.includes(previewLabel));
+    const confirmed = render({
+      locale,
+      nextOccurrence,
+      centerPatch: {
+        selectedRecord,
+        currentAssignments: [
+          {
+            assignment: { assignmentId: "current", provider: "muse" },
+            plan: { status: "enabled" },
+          },
+        ],
+      },
+    });
+    assert.ok(confirmed.includes(messages.agentReportedPlan));
+    assert.ok(confirmed.includes(previewLabel));
+    assert.ok(!confirmed.includes(messages.planUnconfirmed));
   });
   test(`the actual ${locale} task view localizes unavailable names, original-save notices, drafts and unknown-error fallback`, () => {
     const messages = require(`../messages/${locale}.json`).taskCenter;
@@ -176,17 +209,17 @@ test("task actions live inside the task and technical IDs never replace verified
   const html = render();
   assert.match(html, /Daily &lt;brief&gt;/);
   assert.doesNotMatch(html, /task_PRIVATE_ID|request_PRIVATE_ID|Manage executors|View results/);
-  assert.doesNotMatch(html.slice(0, html.indexOf("</header>")), /Run now/);
-  assert.match(html, /Run now/);
+  assert.doesNotMatch(html.slice(0, html.indexOf("</header>")), /Request a run/);
+  assert.match(html, /Request a run/);
 });
-test("Run now requires verified status for this head and shows existing progress during recovery", () => {
+test("Request a run requires verified status for this head and shows existing progress during recovery", () => {
   const record = { taskId: "task_PRIVATE_ID", taskVersion: 1, executionEpoch: 1 };
   const center = {
     runState: "ready",
     selectedRecord: record,
     currentAssignments: [{ assignment: { assignmentId: "current", provider: "muse" } }],
   };
-  const disabled = /disabled="">Run now<\/button>/;
+  const disabled = /disabled="">Request a run<\/button>/;
   assert.doesNotMatch(render({ centerPatch: center }), disabled);
   for (const patch of [
     { runState: "loading" },
@@ -200,7 +233,7 @@ test("Run now requires verified status for this head and shows existing progress
   }
   const running = render({ running: true, centerPatch: { ...center, runState: "error" } });
   assert.match(running, />View progress<\/button>/);
-  assert.doesNotMatch(running, /disabled="">View progress<\/button>|>Run now<\/button>/);
+  assert.doesNotMatch(running, /disabled="">View progress<\/button>|>Request a run<\/button>/);
 });
 test("known running requests show a returnable progress action and list/title indicators", () => {
   const html = render({ running: true, count: 2 });
@@ -229,7 +262,7 @@ test("legacy task settings wait for the selected assignment and retain it when d
         useTranslations: (ns) => createTranslator({ locale: "en", messages, namespace: ns }),
       },
       "@/lib/task-forms": { defaultTask: () => ({}) },
-      "@/lib/task-center-schedule": { nextCenterOccurrence: () => null },
+      "@/lib/task-center-schedule": { nextCenterOccurrence: () => nextOccurrence },
       "@/lib/task-types": { bindingKey: JSON.stringify },
       "./ReportDialog": { ReportDialog: () => null },
       "./WorkspaceFeedback": { InlineError: () => null, LoadingIndicator: () => null },
@@ -371,7 +404,7 @@ test("resource handoffs wait for the catalogue and review resources without fres
           },
         }),
       },
-      "@/lib/task-center-schedule": { nextCenterOccurrence: () => null },
+      "@/lib/task-center-schedule": { nextCenterOccurrence: () => nextOccurrence },
       "@/lib/task-types": { bindingKey: JSON.stringify },
       "./ReportDialog": { ReportDialog: () => null },
       "./WorkspaceFeedback": { LoadingIndicator, InlineError },
