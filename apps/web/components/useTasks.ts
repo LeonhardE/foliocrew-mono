@@ -1206,10 +1206,17 @@ export function useTasks(
         saved.metadata.taskVersion !== packet.body.expectedVersion + 1
       )
         throw new TaskError("invalid_response");
+      // Start the read now, but keep the saved packet's verification failure first.
+      const headRead = api(`/api/v2/tasks/${packet.taskId}`, context).then(
+        (value) => ({ ok: true as const, value }),
+        (error: unknown) => ({ ok: false as const, error }),
+      );
       // Verify the complete authenticated task before accepting success or clearing the exact retry packet.
       await live.current.workspace.openTask(saved);
       context.assert();
-      const head = encryptedTask(await api(`/api/v2/tasks/${packet.taskId}`, context));
+      const read = await headRead;
+      if (!read.ok) throw read.error;
+      const head = encryptedTask(read.value);
       context.assert();
       if (
         head.metadata.taskId !== packet.taskId ||
