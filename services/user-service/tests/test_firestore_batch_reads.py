@@ -133,6 +133,17 @@ class FirestoreBatchReadTests(unittest.TestCase):
         self.assertEqual(self.channels.get(UID), saved)
         self.assertEqual([len(batch) for batch in self.reads()], [2])
 
+    def test_versioned_watchlist_reads_use_one_batch_without_writing(self):
+        self.assertIsNone(self.watchlist.get_snapshot(UID).revision)
+        self.watchlist.change(UID, "AAPL", watch_item())
+        self.rpc.calls.clear()
+        saved = self.watchlist.get_snapshot(UID)
+        self.assertEqual(saved.items, [watch_item()])
+        self.assertEqual(saved.revision, 1)
+        self.assertEqual([len(batch) for batch in self.reads()], [2])
+        writes = [kw["request"]["writes"] for kind, kw in self.rpc.calls if kind == "commit"]
+        self.assertEqual(writes, [[]])
+
     def test_conflict_retry_rereads_peer_update_and_does_not_lose_its_symbol(self):
         self.resources.initialize(UID, "watchlist", "first")
         self.rpc.calls.clear()
@@ -143,8 +154,9 @@ class FirestoreBatchReadTests(unittest.TestCase):
             self.watchlist.change(UID, "MSFT", watch_item("MSFT"))
 
         self.rpc.before_abort = peer
-        result = self.watchlist.change(UID, "AAPL", watch_item())
-        self.assertEqual({row["symbol"] for row in result}, {"AAPL", "MSFT"})
+        result = self.watchlist.change_snapshot(UID, "AAPL", watch_item())
+        self.assertEqual({row["symbol"] for row in result.items}, {"AAPL", "MSFT"})
+        self.assertEqual(result.revision, 2)
         self.assertEqual([len(batch) for batch in self.reads()], [2, 2, 2])
         self.assertEqual(self.resources.read(UID, ("watchlist",))["watchlist"]["revision"], 2)
 
