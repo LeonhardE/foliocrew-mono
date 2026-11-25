@@ -13,12 +13,12 @@ import type { HoldingsPublication } from "@/lib/holdings-publication";
 
 const kinds: ResourceKind[] = ["holdings", "watchlist", "channel_follows"];
 const blank: ChannelInput = { name: "", handleOrUrl: "", note: "" };
-export type FollowsSync = {
+export type UserListSync = {
   revision: number;
   status: "syncing" | "synced" | "pending";
   retry: () => void;
 };
-function FollowsEditor({ model, sync }: { model: ResourceLibraryModel; sync?: FollowsSync }) {
+function FollowsEditor({ model, sync }: { model: ResourceLibraryModel; sync?: UserListSync }) {
   const t = useTranslations("resourceLibrary");
   const taskSync = useTranslations("resourceLibrary.followsSync");
   const [draft, setDraft] = useState<ChannelInput>(blank);
@@ -256,6 +256,7 @@ export function ResourceLibraryView({
   filter: selectedFilter,
   onFilterChange,
   followsSync,
+  watchlistSync,
 }: {
   model: ResourceLibraryModel;
   watchlist?: WatchlistModel;
@@ -263,9 +264,11 @@ export function ResourceLibraryView({
   onOpenWatchlist?: () => void;
   filter?: ResourceKind;
   onFilterChange?: (kind: ResourceKind) => void;
-  followsSync?: FollowsSync;
+  followsSync?: UserListSync;
+  watchlistSync?: UserListSync;
 }) {
   const t = useTranslations("resourceLibrary");
+  const watchlistSyncText = useTranslations("resourceLibrary.watchlistSync");
   const [localFilter, setLocalFilter] = useState<ResourceKind>("holdings");
   const filter = selectedFilter ?? localFilter;
   const setFilter = (kind: ResourceKind) => {
@@ -403,6 +406,16 @@ export function ResourceLibraryView({
           )}
           {model.authenticated && watchlist.data && (
             <>
+              {watchlistSync && watchlistSync.revision === sharedWatchlist?.revision && (
+                <div className={styles.note} role="status">
+                  <p>{watchlistSyncText(watchlistSync.status)}</p>
+                  {watchlistSync.status === "pending" && (
+                    <button type="button" onClick={watchlistSync.retry}>
+                      {watchlistSyncText("retry")}
+                    </button>
+                  )}
+                </div>
+              )}
               {!watchlist.data.items.length && <p className={styles.empty}>{t("noWatchlist")}</p>}
               <ul className={styles.watchlistRows} data-editable={Boolean(shared)}>
                 {watchlist.data.items.map((item) => (
@@ -470,7 +483,8 @@ export default function ResourceLibrary({
   onOpenWatchlist?: () => void;
   beforeSaveFollows?: (revision: number, owner: string) => Promise<void>;
   onSavedFollows?: (revision: number, owner: string) => void;
-  followsSync?: FollowsSync;
+  followsSync?: UserListSync;
+  watchlistSync?: UserListSync;
 }) {
   const auth = useAuth();
   const owner = auth.status === "authenticated" && auth.profile ? auth.sessionKey : null;

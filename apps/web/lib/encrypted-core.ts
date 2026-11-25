@@ -6317,7 +6317,9 @@ export class VaultCore {
           ? "holdings_snapshot"
           : newerSource.kind === "channel_follows"
             ? "channel_follows_evidence"
-            : null;
+            : newerSource.kind === "watchlist"
+              ? "watchlist_evidence"
+              : null;
       if (
         !objectType ||
         newerSource.ref?.kind !== newerSource.kind ||
@@ -6331,7 +6333,10 @@ export class VaultCore {
         context.sourceEpoch !== newerSource.sourceEpoch ||
         !Number.isSafeInteger(context.sourceRevision) ||
         context.sourceRevision < 1 ||
-        context.sourceRevision >= newerSource.revision
+        context.sourceRevision >= newerSource.revision ||
+        (newerSource.kind === "watchlist" &&
+          (!Object.hasOwn(newerSource.response ?? {}, "revision") ||
+            newerSource.response.revision !== newerSource.revision))
       )
         throw new VaultError("binding_mismatch");
       // Preserve the sealed original in the outbox archive. Validate the newer
@@ -6509,7 +6514,10 @@ export class VaultCore {
               ref: source.ref,
               sourceEpoch: source.sourceEpoch,
               revision: source.revision,
-              response: source.response,
+              response:
+                source.kind === "watchlist"
+                  ? { items: source.response.items, limit: source.response.limit }
+                  : source.response,
               sourceAsOf: source.sourceAsOf,
             }),
           );
@@ -6674,15 +6682,14 @@ export class VaultCore {
       "sourceAsOf",
       "response",
     ]);
-    exact(
-      source.response,
-      source.kind === "watchlist" ? ["items", "limit"] : ["revision", "items", "limit"],
-    );
+    const revisioned =
+      source.kind === "channel_follows" || Object.hasOwn(source.response ?? {}, "revision");
+    exact(source.response, revisioned ? ["revision", "items", "limit"] : ["items", "limit"]);
     if (
       source.ref.sourceService !== "user" ||
       !Array.isArray(source.response.items) ||
       source.response.limit !== 50 ||
-      (source.kind === "channel_follows" && source.response.revision !== source.revision)
+      (revisioned && source.response.revision !== source.revision)
     )
       throw new VaultError("binding_mismatch");
     const value = {

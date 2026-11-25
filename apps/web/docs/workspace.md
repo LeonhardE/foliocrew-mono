@@ -195,6 +195,13 @@ creator list in three tabs. The watchlist reuses the shell's Market controller a
 User `/api/v1/watchlist`; add/remove acts on that same list without a duplicate list read. Rows carry no
 holdings quantities, valuations or portfolio weights, and need no connected broker or passkey.
 
+When Agent Hub is configured, the shared editor requests the optional User watchlist revision.
+A saved revision queues an encrypted resource update for existing continuing grants. The owner
+can see the sync status in Resources. Market can save while the workspace is locked. That tab
+carries the saved revision until the same owner unlocks, then stores it with the vault for retry
+after a reload. Older User deployments keep watchlist editing available through the legacy
+response and cannot supply a verified revision for this automatic update.
+
 Creator add/edit/remove uses only User's exact `/api/v1/channel-follows` GET/PUT. Whole-list writes
 carry `expectedRevision`, at most 50 closed entries, strict YouTube handle locators and a 128 KiB
 UTF-8 budget. Names, handles and notes are user-provided; the UI fetches no YouTube subscriptions,

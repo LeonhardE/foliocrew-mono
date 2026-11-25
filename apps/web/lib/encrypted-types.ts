@@ -55,7 +55,8 @@ export type HoldingsAgentSync = {
   source: Source;
   revision: number;
 };
-export type ChannelFollowsAgentSync = { revision: number; confirmed: boolean };
+export type UserListAgentSync = { revision: number; confirmed: boolean };
+export type ChannelFollowsAgentSync = UserListAgentSync;
 export type SourceCreationPacket = {
   sourceId: string;
   operationId: string;

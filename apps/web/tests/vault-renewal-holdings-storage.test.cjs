@@ -577,3 +577,32 @@ test("the channel update pointer resumes after unlock and a delayed receipt cann
     await reopened.updateChannelFollowsAgentSync(f.vault.vaultId, confirmed, false);
     assert.equal(await reopened.loadChannelFollowsAgentSync(), null);
   }));
+
+test("a watchlist update pointer survives unlock independently of YouTube follows", async () =>
+  withStorage(async () => {
+    const { f, store } = await seeded();
+    clock = 1000;
+    f.time(clock);
+    const { client } = browser(f, store);
+    const vaultId = f.vault.vaultId;
+    await client.unlock(f.vault, f.material());
+    const attempt = { revision: 5, confirmed: false };
+    const confirmed = { revision: 6, confirmed: true };
+    const follows = { revision: 2, confirmed: true };
+    await assert.rejects(
+      client.updateWatchlistAgentSync("old_vault", attempt, true),
+      /binding_mismatch/,
+    );
+    await client.updateWatchlistAgentSync(vaultId, attempt, true);
+    await client.updateChannelFollowsAgentSync(vaultId, follows, true);
+    client.lock();
+    const { client: reopened } = browser(f, store);
+    await reopened.unlock(f.vault, f.material());
+    assert.deepEqual(await reopened.loadWatchlistAgentSync(), attempt);
+    await reopened.updateWatchlistAgentSync(vaultId, confirmed, true);
+    await reopened.updateWatchlistAgentSync(vaultId, attempt, false);
+    assert.deepEqual(await reopened.loadWatchlistAgentSync(), confirmed);
+    await reopened.updateWatchlistAgentSync(vaultId, confirmed, false);
+    assert.equal(await reopened.loadWatchlistAgentSync(), null);
+    assert.deepEqual(await reopened.loadChannelFollowsAgentSync(), follows);
+  }));

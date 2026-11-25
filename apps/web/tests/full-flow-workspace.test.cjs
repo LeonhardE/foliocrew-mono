@@ -152,6 +152,7 @@ function flow({
   search = "",
   owner = "A:1",
   access = { ownerConfigStatus: "ready" },
+  versionedWatchlist = false,
 } = {}) {
   const pageHooks = hooks(),
     libraryHooks = hooks();
@@ -210,15 +211,27 @@ function flow({
     },
   };
   const calls = [];
-  const store = { A: { list: stocks() } };
+  const store = { A: { list: stocks(), revision: 1 } };
   const requestPrivate = async (service, route, sessionKey, options = {}) => {
     assert.equal(sessionKey, shared.owner, "Only the current owner may start a request");
     calls.push({ service, route, owner: sessionKey, options });
     const current = store[sessionKey.split(":")[0]];
     if (service === "user" && route.startsWith("/api/v1/watchlist")) {
-      if (options.method === "PUT")
-        current.list.items.push(stocks(route.split("/").at(-1)).items[0]);
-      return response(current.list);
+      const [path, query] = route.split("?");
+      const symbol = path.split("/").at(-1);
+      if (options.method === "PUT") {
+        current.list.items.push(stocks(symbol).items[0]);
+        current.revision++;
+      }
+      if (options.method === "DELETE") {
+        current.list.items = current.list.items.filter((row) => row.symbol !== symbol);
+        current.revision++;
+      }
+      return response(
+        versionedWatchlist && query === "includeRevision=true"
+          ? { ...current.list, revision: current.revision }
+          : current.list,
+      );
     }
     if (route === "/api/v1/channel-follows") return response(channels());
     if (route === "/api/v2/resources/catalogue") return response(catalogue());
@@ -469,6 +482,48 @@ test("Market edits and resource discovery use the same owner source through the 
   assert.equal(h.shared, originalWorkspace);
   h.navigate("markets");
   assert.equal(h.render().active, "markets");
+  h.close();
+});
+
+test("Market and Resources hand the same versioned watchlist to the existing vault after unlock", async () => {
+  const h = flow({
+    versionedWatchlist: true,
+    access: {
+      agentHubConfigured: true,
+      ownerConfigStatus: "ready",
+      status: "authenticated",
+      sessionKey: "A:1",
+    },
+  });
+  const markers = [];
+  h.shared.loadHoldingsAgentSync = async () => [];
+  h.shared.loadChannelFollowsAgentSync = async () => null;
+  h.shared.loadWatchlistAgentSync = async () => null;
+  h.shared.updateWatchlistAgentSync = async (vault, marker, stage) =>
+    markers.push([vault, marker, stage]);
+  h.shared.phase = "locked";
+  await h.ready();
+  await h.panel("watchlist").watchlist.add("ADDED");
+  await h.settle();
+  assert.deepEqual(markers, []);
+  assert.deepEqual(
+    h.calls.map(({ route }) => route),
+    ["/api/v1/watchlist?includeRevision=true", "/api/v1/watchlist/ADDED?includeRevision=true"],
+  );
+  h.shared.vault = { vaultId: "vault_A" };
+  h.shared.phase = "unlocked";
+  h.shared.vaultGeneration++;
+  h.navigate("resources");
+  await h.settle();
+  assert.deepEqual(clone(markers), [["vault_A", { revision: 2, confirmed: true }, true]]);
+  assert.equal(h.panel("resources").watchlist.revision, 2);
+  await h.panel("resources").watchlist.remove("ADDED");
+  await h.settle();
+  assert.deepEqual(clone(markers.slice(1)), [
+    ["vault_A", { revision: 3, confirmed: false }, true],
+    ["vault_A", { revision: 3, confirmed: true }, true],
+  ]);
+  assert.equal(h.panel("watchlist").watchlist.revision, 3);
   h.close();
 });
 

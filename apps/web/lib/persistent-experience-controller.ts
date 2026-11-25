@@ -2,6 +2,7 @@
 import {
   readResourceCatalogue,
   readResourceWatchlist,
+  readResourceWatchlistSnapshot,
   readChannelFollows,
 } from "./resource-library";
 import { taskMetadata, taskPage } from "./task-types";
@@ -30,6 +31,7 @@ export type SavedChannelFollowsRevision = ChannelFollowsAgentSync & {
   owner: string;
   vaultId: string;
 };
+export type SavedWatchlistRevision = SavedChannelFollowsRevision & { kind: "watchlist" };
 export type PersistentConnection = {
   connectionId: string;
   clientId: string;
@@ -915,17 +917,28 @@ export class PersistentExperienceController {
 
   private async readUserResource(
     item: Json,
+    requireWatchlistRevision = false,
   ): Promise<Extract<AgentPreparationSource, { kind: "watchlist" | "channel_follows" }>> {
     const kind = item.ref.kind;
     const raw = await this.api(
       "user",
-      kind === "watchlist" ? "/api/v1/watchlist" : "/api/v1/channel-follows",
+      kind === "watchlist"
+        ? requireWatchlistRevision
+          ? "/api/v1/watchlist?includeRevision=true"
+          : "/api/v1/watchlist"
+        : "/api/v1/channel-follows",
     );
     this.assert();
-    const response = kind === "watchlist" ? readResourceWatchlist(raw) : readChannelFollows(raw);
+    const response =
+      kind === "watchlist"
+        ? requireWatchlistRevision
+          ? readResourceWatchlistSnapshot(raw)
+          : readResourceWatchlist(raw)
+        : readChannelFollows(raw);
+    const revision = "revision" in response ? response.revision : undefined;
     if (
-      kind === "channel_follows" &&
-      (!("revision" in response) || response.revision !== item.revision)
+      (requireWatchlistRevision || kind === "channel_follows") &&
+      (typeof revision !== "number" || revision !== item.revision)
     )
       fail("source_unavailable");
     return {
@@ -935,7 +948,10 @@ export class PersistentExperienceController {
       revision: item.revision,
       fetchedAt: new Date().toISOString(),
       sourceAsOf: null,
-      response,
+      response:
+        typeof revision === "number"
+          ? { items: response.items, limit: response.limit, revision }
+          : { items: response.items, limit: response.limit },
     };
   }
 
@@ -947,7 +963,13 @@ export class PersistentExperienceController {
     return this.syncSavedResource(saved);
   }
 
-  private async syncSavedResource(saved: SavedHoldingsRevision | SavedChannelFollowsRevision) {
+  async syncSavedWatchlist(saved: SavedWatchlistRevision) {
+    return this.syncSavedResource(saved);
+  }
+
+  private async syncSavedResource(
+    saved: SavedHoldingsRevision | SavedChannelFollowsRevision | SavedWatchlistRevision,
+  ) {
     const vaultId = this.vault().vaultId;
     if (
       saved.vaultId !== vaultId ||
@@ -974,12 +996,15 @@ export class PersistentExperienceController {
     if (!connections.length) return 0;
     const catalogue = await this.catalogue();
     const holdings = "source" in saved ? saved.source : null;
+    const watchlist = "kind" in saved && saved.kind === "watchlist";
+    const userKind = watchlist ? "watchlist" : "channel_follows";
+    const objectType = holdings ? "holdings_snapshot" : `${userKind}_evidence`;
     const unconfirmed = !("source" in saved) && !saved.confirmed;
     const item = holdings
       ? catalogue.groups
           .flatMap((group) => group.items)
           .find((entry) => same(entry.ref, holdings.resourceRef))
-      : catalogue.groups.find((group) => group.kind === "channel_follows")?.items[0];
+      : catalogue.groups.find((group) => group.kind === userKind)?.items[0];
     if (!item) return fail("source_unavailable");
     if (
       unconfirmed &&
@@ -1026,8 +1051,7 @@ export class PersistentExperienceController {
         if (pending) {
           if (
             pending.kind !== "publication" ||
-            pending.context?.objectType !==
-              (holdings ? "holdings_snapshot" : "channel_follows_evidence") ||
+            pending.context?.objectType !== objectType ||
             !same(pending.context.ref, item.ref) ||
             pending.context.sourceEpoch !== item.sourceEpoch ||
             pending.context.sourceRevision > item.revision
@@ -1045,7 +1069,7 @@ export class PersistentExperienceController {
                     `/api/v2/holdings/sources/${holdings.resourceRef.resourceId}/snapshots/${item.snapshotId}`,
                   ),
                 }
-              : (userSource ??= await this.readUserResource(item));
+              : (userSource ??= await this.readUserResource(item, watchlist));
             await this.settleOlderResourcePublication(
               connection,
               context.actor,
@@ -1065,7 +1089,7 @@ export class PersistentExperienceController {
             }
           }
         }
-        if (!holdings) userSource ??= await this.readUserResource(item);
+        if (!holdings) userSource ??= await this.readUserResource(item, watchlist);
         await this.publishResource(connection, context, item, catalogue, userSource);
         published++;
       } catch (error) {

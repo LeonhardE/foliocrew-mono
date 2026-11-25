@@ -2,6 +2,7 @@ import type { Instrument } from "@/lib/market-data";
 
 export type WatchlistItem = Instrument & { addedAt: string };
 export type WatchlistResponse = { items: WatchlistItem[]; limit: number };
+export type WatchlistSnapshot = WatchlistResponse & { revision?: number | null };
 
 export function readWatchlist(value: unknown): WatchlistResponse {
   if (!value || typeof value !== "object") throw new Error("Invalid watchlist response");
@@ -36,6 +37,22 @@ export function readWatchlist(value: unknown): WatchlistResponse {
     symbols.add(item.symbol);
   }
   return result as WatchlistResponse;
+}
+
+export function readWatchlistSnapshot(value: unknown): WatchlistSnapshot {
+  const { items, limit } = readWatchlist(value);
+  const snapshot = value as Record<string, unknown>;
+  if (!Object.hasOwn(snapshot, "revision")) return { items, limit };
+  const { revision } = snapshot;
+  if (
+    revision !== null &&
+    (typeof revision !== "number" ||
+      !Number.isSafeInteger(revision) ||
+      revision < 0 ||
+      (revision === 0 && items.length > 0))
+  )
+    throw new Error("Invalid watchlist response");
+  return { items, limit, revision };
 }
 
 export function watchlistError(status: number) {

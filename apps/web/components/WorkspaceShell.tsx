@@ -19,6 +19,7 @@ import { samePublicationRef } from "@/lib/holdings-publication";
 import type {
   SavedChannelFollowsRevision,
   SavedHoldingsRevision,
+  SavedWatchlistRevision,
 } from "@/lib/persistent-experience-controller";
 import type { TaskRequest } from "@/components/TasksPanel";
 import { useHoldingsWorkspace, type HoldingsWorkspace } from "@/components/useHoldingsWorkspace";
@@ -49,7 +50,7 @@ import {
   type StockSummary,
 } from "@/lib/market-data";
 
-type SavedResource = SavedHoldingsRevision | SavedChannelFollowsRevision;
+type SavedResource = SavedHoldingsRevision | SavedChannelFollowsRevision | SavedWatchlistRevision;
 type ResourceSyncEntry = {
   saved: SavedResource;
   status: "queued" | "syncing" | "pending" | "synced";
@@ -61,7 +62,7 @@ function sameSyncSource(a: SavedResource, b: SavedResource) {
       a.source.sourceEpoch === b.source.sourceEpoch &&
       samePublicationRef(a.source.resourceRef, b.source.resourceRef)
     );
-  return !("source" in a) && !("source" in b);
+  return !("source" in a) && !("source" in b) && "kind" in a === "kind" in b;
 }
 
 function changeClass(value: number | null | undefined) {
@@ -126,6 +127,10 @@ export default function WorkspaceShell() {
   liveSyncOwner.current = signedInOwner;
   if (activeView && activeView !== "markets") privateOwner.current = signedInOwner;
   const [resourceSync, setResourceSync] = useState<ResourceSyncEntry[]>([]);
+  const [marketWatchlistSave, setMarketWatchlistSave] = useState<{
+    owner: string;
+    revision: number;
+  } | null>(null);
   const [retryAgentConfiguration, setRetryAgentConfiguration] = useState(0);
   const syncInFlight = useRef(false);
   const enqueueResourceSync = useCallback(
@@ -160,6 +165,7 @@ export default function WorkspaceShell() {
       const scoped = entries.filter((entry) => entry.saved.owner === signedInOwner);
       return scoped.length === entries.length ? entries : scoped;
     });
+    setMarketWatchlistSave((saved) => (saved?.owner === signedInOwner ? saved : null));
   }, [signedInOwner]);
   const encryptedWorkspace = useHoldingsWorkspace(
     Boolean(signedInOwner && signedInOwner === privateOwner.current),
@@ -170,6 +176,8 @@ export default function WorkspaceShell() {
     finishHoldingsAgentSync,
     loadChannelFollowsAgentSync,
     updateChannelFollowsAgentSync,
+    loadWatchlistAgentSync,
+    updateWatchlistAgentSync,
     phase: holdingsPhase,
     needsDeviceApproval: needsHoldingsDeviceApproval,
     owner: holdingsOwner,
@@ -200,6 +208,37 @@ export default function WorkspaceShell() {
       updateChannelFollowsAgentSync,
     ],
   );
+  const beforeSaveWatchlist = useCallback(
+    async (revision: number, owner: string) => {
+      if (!currentVaultId || owner !== holdingsOwner || holdingsPhase !== "unlocked") return;
+      await updateWatchlistAgentSync(currentVaultId, { revision, confirmed: false }, true);
+    },
+    [currentVaultId, holdingsOwner, holdingsPhase, updateWatchlistAgentSync],
+  );
+  const stageSavedWatchlist = useCallback(
+    (revision: number, owner: string, vaultId: string) => {
+      const marker = { revision, confirmed: true };
+      const saved = { ...marker, kind: "watchlist" as const, owner, vaultId };
+      const enqueue = () => enqueueResourceSync(saved);
+      void updateWatchlistAgentSync(vaultId, marker, true).then(enqueue, enqueue);
+    },
+    [enqueueResourceSync, updateWatchlistAgentSync],
+  );
+  const onSavedWatchlist = useCallback(
+    (revision: number, owner: string) => {
+      if (!agentHubConfigured || owner !== liveSyncOwner.current) return;
+      if (currentVaultId && owner === holdingsOwner && holdingsPhase === "unlocked") {
+        stageSavedWatchlist(revision, owner, currentVaultId);
+        return;
+      }
+      // Markets may be active before the private vault has been loaded.
+      // Carry only the acknowledged revision through same-owner navigation.
+      setMarketWatchlistSave((saved) =>
+        saved?.owner === owner && saved.revision >= revision ? saved : { owner, revision },
+      );
+    },
+    [agentHubConfigured, currentVaultId, holdingsOwner, holdingsPhase, stageSavedWatchlist],
+  );
   useEffect(() => {
     if (
       !agentHubConfigured ||
@@ -225,6 +264,19 @@ export default function WorkspaceShell() {
         },
         () => {},
       );
+    if (currentVaultId && loadWatchlistAgentSync)
+      void loadWatchlistAgentSync().then(
+        (marker) => {
+          if (current && marker)
+            enqueueResourceSync({
+              ...marker,
+              kind: "watchlist",
+              vaultId: currentVaultId,
+              owner: signedInOwner,
+            });
+        },
+        () => {},
+      );
     return () => {
       current = false;
     };
@@ -236,8 +288,32 @@ export default function WorkspaceShell() {
     needsHoldingsDeviceApproval,
     loadHoldingsAgentSync,
     loadChannelFollowsAgentSync,
+    loadWatchlistAgentSync,
     currentVaultId,
     enqueueResourceSync,
+  ]);
+  useEffect(() => {
+    if (
+      !agentHubConfigured ||
+      !currentVaultId ||
+      holdingsPhase !== "unlocked" ||
+      needsHoldingsDeviceApproval ||
+      !marketWatchlistSave ||
+      marketWatchlistSave.owner !== signedInOwner ||
+      marketWatchlistSave.owner !== holdingsOwner
+    )
+      return;
+    stageSavedWatchlist(marketWatchlistSave.revision, marketWatchlistSave.owner, currentVaultId);
+    setMarketWatchlistSave((saved) => (saved === marketWatchlistSave ? null : saved));
+  }, [
+    agentHubConfigured,
+    currentVaultId,
+    holdingsOwner,
+    holdingsPhase,
+    marketWatchlistSave,
+    needsHoldingsDeviceApproval,
+    signedInOwner,
+    stageSavedWatchlist,
   ]);
   const agentScope = JSON.stringify([
     encryptedWorkspace.owner,
@@ -302,9 +378,12 @@ export default function WorkspaceShell() {
     void executeResourceSync(
       async (controller) => {
         if (!("source" in target)) {
-          const count = await controller.syncSavedChannelFollows(target);
+          const watchlist = "kind" in target;
+          const count = await (watchlist
+            ? controller.syncSavedWatchlist(target)
+            : controller.syncSavedChannelFollows(target));
           if (count !== null)
-            await updateChannelFollowsAgentSync(
+            await (watchlist ? updateWatchlistAgentSync : updateChannelFollowsAgentSync)(
               target.vaultId,
               {
                 revision: target.revision,
@@ -344,6 +423,7 @@ export default function WorkspaceShell() {
     executeResourceSync,
     finishHoldingsAgentSync,
     updateChannelFollowsAgentSync,
+    updateWatchlistAgentSync,
     encryptedWorkspace.needsDeviceApproval,
     privateNavigationDisabled,
   ]);
@@ -357,7 +437,10 @@ export default function WorkspaceShell() {
       saved.revision === metadata.revision
     );
   });
-  const selectedFollowsSync = scopedResourceSync.find(({ saved }) => !("source" in saved));
+  const selectedFollowsSync = scopedResourceSync.find(
+    ({ saved }) => !("source" in saved) && !("kind" in saved),
+  );
+  const selectedWatchlistSync = scopedResourceSync.find(({ saved }) => "kind" in saved);
   const syncStatus = (entry?: ResourceSyncEntry): "syncing" | "synced" | "pending" | undefined =>
     entry?.status === "queued" && persistentConfiguration.error
       ? "pending"
@@ -371,10 +454,10 @@ export default function WorkspaceShell() {
       entries.map((current) => (current === entry ? { ...current, status: "queued" } : current)),
     );
   };
-  const followsSyncStatus =
-    selectedFollowsSync?.status === "queued" && encryptedWorkspace.phase !== "unlocked"
-      ? "pending"
-      : syncStatus(selectedFollowsSync);
+  const listSyncStatus = (entry?: ResourceSyncEntry) =>
+    entry?.status === "queued" && holdingsPhase !== "unlocked" ? "pending" : syncStatus(entry);
+  const followsSyncStatus = listSyncStatus(selectedFollowsSync);
+  const watchlistSyncStatus = listSyncStatus(selectedWatchlistSync);
   useEffect(() => {
     if (privateNavigationDisabled) return;
     let disposed = false;
@@ -436,7 +519,10 @@ export default function WorkspaceShell() {
   const message = (value: string | null | undefined) => localizeMessage(value, t, locale);
   const pickerDialog = useRef<HTMLDialogElement>(null);
   const chartHeading = useRef<HTMLHeadingElement>(null);
-  const watchlist = useWatchlist(activeView === "markets" || activeView === "resources");
+  const watchlist = useWatchlist(
+    activeView === "markets" || activeView === "resources",
+    agentHubConfigured ? { beforeSave: beforeSaveWatchlist, onSaved: onSavedWatchlist } : undefined,
+  );
   const [manualSelection, setManualSelection] = useState<{
     owner: string;
     reload: number;
@@ -847,6 +933,15 @@ export default function WorkspaceShell() {
                       revision: selectedFollowsSync.saved.revision,
                       status: followsSyncStatus,
                       retry: () => retryResourceSync(selectedFollowsSync),
+                    }
+                  : undefined
+              }
+              watchlistSync={
+                selectedWatchlistSync && watchlistSyncStatus
+                  ? {
+                      revision: selectedWatchlistSync.saved.revision,
+                      status: watchlistSyncStatus,
+                      retry: () => retryResourceSync(selectedWatchlistSync),
                     }
                   : undefined
               }

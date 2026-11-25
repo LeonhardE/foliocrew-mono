@@ -3,6 +3,7 @@ import {
   VaultError,
   type ChannelFollowsAgentSync,
   type HoldingsAgentSync,
+  type UserListAgentSync,
 } from "./encrypted-types";
 export interface EncryptedStorage {
   setArchiveContext?(
@@ -67,6 +68,13 @@ export interface EncryptedStorage {
     stage: boolean,
     signal?: AbortSignal,
   ): Promise<void>;
+  updateWatchlistAgentSync?(
+    owner: string,
+    vaultId: string,
+    marker: UserListAgentSync,
+    stage: boolean,
+    signal?: AbortSignal,
+  ): Promise<void>;
   finishSourceCreation?(key: string, expected: any, signal?: AbortSignal): Promise<boolean>;
   finishSourceMutation?(key: string, expected: any, signal?: AbortSignal): Promise<boolean>;
   stageDevice(key: string, record: any, expected: any, blockedByKey?: string): Promise<boolean>;
@@ -81,6 +89,8 @@ export const holdingsAgentSyncPrefix = (owner: string, vaultId: string) =>
   `${owner}:holdings-agent-sync:${vaultId}:`;
 export const channelFollowsAgentSyncKey = (owner: string, vaultId: string) =>
   `${owner}:channel-follows-agent-sync:${vaultId}`;
+export const watchlistAgentSyncKey = (owner: string, vaultId: string) =>
+  `${owner}:watchlist-agent-sync:${vaultId}`;
 const same = (a: any, b: any) => JSON.stringify(a) === JSON.stringify(b);
 // Unlike serialization equality, preserve every own field when comparing a saved row.
 export const sameEncryptedRecord = (a: any, b: any): boolean => {
@@ -1072,9 +1082,38 @@ export class BrowserEncryptedStorage implements EncryptedStorage {
     stage: boolean,
     signal?: AbortSignal,
   ) {
+    return this.updateUserListAgentSync(
+      owner,
+      channelFollowsAgentSyncKey(owner, vaultId),
+      marker,
+      stage,
+      signal,
+    );
+  }
+  updateWatchlistAgentSync(
+    owner: string,
+    vaultId: string,
+    marker: UserListAgentSync,
+    stage: boolean,
+    signal?: AbortSignal,
+  ) {
+    return this.updateUserListAgentSync(
+      owner,
+      watchlistAgentSyncKey(owner, vaultId),
+      marker,
+      stage,
+      signal,
+    );
+  }
+  private updateUserListAgentSync(
+    owner: string,
+    key: string,
+    marker: UserListAgentSync,
+    stage: boolean,
+    signal?: AbortSignal,
+  ) {
     const context = this.archiveContext;
     if (!context || owner !== context.owner) return Promise.reject(new VaultError("wrong_account"));
-    const key = channelFollowsAgentSyncKey(owner, vaultId);
     return this.guarded<void>(
       key,
       (store, done, fail) => {
