@@ -154,6 +154,10 @@ function harness(authOverride, ownerRequest, readRequest, otherRequest) {
     },
     {
       document,
+      window: {
+        addEventListener: (event, listener) => events.set(event, listener),
+        removeEventListener: (event) => events.delete(event),
+      },
       Headers,
       setTimeout: timer,
       clearTimeout: (n) => timers.delete(n),
@@ -199,6 +203,9 @@ function harness(authOverride, ownerRequest, readRequest, otherRequest) {
       return unlocks;
     },
     render,
+    focus() {
+      events.get("focus")?.();
+    },
     async settle() {
       for (let i = 0; i < 6; i++) {
         await tick();
@@ -1454,4 +1461,33 @@ test("display streams keep the original one MiB ceiling and cancel before parsin
   } finally {
     h.close();
   }
+});
+
+test("returning from a connector setup rechecks a warm display once without polling", async () => {
+  const h = harness();
+  h.render();
+  const model = await h.settle();
+  const initial = h.calls.length;
+
+  h.focus();
+  await h.settle();
+  assert.equal(h.calls.length, initial);
+
+  model.expectProviderReturn();
+  h.hide(true);
+  h.focus();
+  assert.equal(h.calls.length, initial);
+  h.show(1000);
+  await h.settle();
+  const returned = h.calls.length;
+  assert.ok(returned > initial, "visibility return ignores the warm display");
+
+  h.focus();
+  await h.settle();
+  assert.equal(h.calls.length, returned, "focus and visibility share one return refresh");
+
+  h.render().expectProviderReturn();
+  h.focus();
+  await h.settle();
+  assert.ok(h.calls.length > returned, "a separate provider window may return by focus alone");
 });

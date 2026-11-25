@@ -726,6 +726,17 @@ export function PersistentAgentsPanel({
       >
         {help && connectionPrompt && (
           <>
+            <div className={styles.actions}>
+              <a
+                className={`${styles.primary} ${styles.providerLink}`}
+                href={help === "chatgpt" ? "https://chatgpt.com/plugins" : "https://muse.ai/"}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={model.expectProviderReturn}
+              >
+                {t("openProvider", { provider: providerName(help) })}
+              </a>
+            </div>
             <p id="connect-agent-instructions">
               {t(
                 helpIsPairing
@@ -740,17 +751,34 @@ export function PersistentAgentsPanel({
                 },
               )}
             </p>
-            <textarea
-              aria-label={t("connectionMessage")}
-              aria-describedby="connect-agent-instructions"
-              className={styles.connectMessage}
-              rows={7}
-              value={connectionPrompt}
-              readOnly
-            />
-            <button className={styles.secondary} onClick={() => copyMessage(connectionPrompt)}>
-              {t(copiedMessage === connectionPrompt ? "copied" : "copyConnectionMessage")}
-            </button>
+            {connectorAddress && !helpIsPairing && (
+              <div className={styles.connectorAddress}>
+                <span className={styles.note}>{t("serverAddress")}</span>
+                <div className={styles.actions}>
+                  <code>{connectorAddress}</code>
+                  <button
+                    className={styles.secondary}
+                    onClick={() => copyMessage(connectorAddress)}
+                  >
+                    {t(copiedMessage === connectorAddress ? "copied" : "copyServerAddress")}
+                  </button>
+                </div>
+              </div>
+            )}
+            <details className={styles.connectionInstructions} open={helpIsPairing || undefined}>
+              <summary>{t("connectionMessage")}</summary>
+              <textarea
+                aria-label={t("connectionMessage")}
+                aria-describedby="connect-agent-instructions"
+                className={styles.connectMessage}
+                rows={7}
+                value={connectionPrompt}
+                readOnly
+              />
+              <button className={styles.secondary} onClick={() => copyMessage(connectionPrompt)}>
+                {t(copiedMessage === connectionPrompt ? "copied" : "copyConnectionMessage")}
+              </button>
+            </details>
           </>
         )}
       </ReportDialog>

@@ -103,6 +103,10 @@ export function usePersistentWorkspace(
   const job = useRef<AbortController | null>(null);
   const displayJob = useRef<AbortController | null>(null);
   const fresh = useRef(0);
+  const providerReturn = useRef(false);
+  const expectProviderReturn = useCallback(() => {
+    if (live.current.scope && live.current.active) providerReturn.current = true;
+  }, []);
   const read = useRef<symbol | null>(null);
   const execute = useCallback(
     async <T>(
@@ -556,6 +560,7 @@ export function usePersistentWorkspace(
     displayJob.current = null;
     read.current = null;
     fresh.current = 0;
+    providerReturn.current = false;
     setState({ ...initial, owner, hubOrigin });
     return () => {
       job.current?.abort();
@@ -566,8 +571,11 @@ export function usePersistentWorkspace(
     };
   }, [owner, sessionScope, hubOrigin]);
   useEffect(() => {
-    if (active && scope) void reload(false);
-    else {
+    if (active && scope) {
+      const returning = providerReturn.current;
+      providerReturn.current = false;
+      void reload(returning);
+    } else {
       if (!visible && job.current) {
         job.current.abort();
         job.current = null;
@@ -589,6 +597,17 @@ export function usePersistentWorkspace(
     document.addEventListener("visibilitychange", change);
     return () => document.removeEventListener("visibilitychange", change);
   }, []);
+  useEffect(() => {
+    if (!active) return;
+    const onFocus = () => {
+      if (!providerReturn.current || !live.current.scope || document.visibilityState === "hidden")
+        return;
+      providerReturn.current = false;
+      void reload();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [active, reload]);
   const perform = useCallback(
     async (action: (c: PersistentExperienceController) => Promise<unknown>) => {
       const result = await execute((c) => action(c));
@@ -624,6 +643,7 @@ export function usePersistentWorkspace(
     unlocked: !!scope,
     owner,
     reload,
+    expectProviderReturn,
     loadTask,
     invalidateTask: (taskId: string) => {
       displayJob.current?.abort();

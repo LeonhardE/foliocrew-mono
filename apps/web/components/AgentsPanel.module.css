@@ -168,6 +168,23 @@
   border-radius: 8px;
   margin-top: 18px;
 }
+.providerLink {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+.connectorAddress {
+  margin-top: 16px;
+}
+.connectorAddress code {
+  overflow-wrap: anywhere;
+}
+.connectionInstructions {
+  margin-top: 16px;
+}
+.connectionInstructions summary {
+  cursor: pointer;
+}
 .connectMessage {
   display: block;
   width: 100%;

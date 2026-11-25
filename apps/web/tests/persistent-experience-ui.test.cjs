@@ -643,3 +643,58 @@ test("expiry changes at the exact credential deadline and account unlinking foll
     }
   }
 });
+
+test("connector dialogs open the official provider and copy the configured endpoint in each locale", async () => {
+  const brandOrigin = connectionContracts.BRANDED_AGENT_ORIGIN;
+  const endpoint = brandOrigin + "/mcp/v3";
+  for (const [locale, connect, open, copy, guide] of [
+    ["en", "Connect", "Open", "Copy address", /ChatGPT Plugins/],
+    ["zh", "连接", "打开", "复制地址", /ChatGPT 的插件页面/],
+    ["zh-Hant", "連線", "開啟", "複製位址", /ChatGPT 的外掛程式頁面/],
+  ]) {
+    let launches = 0;
+    const writes = [];
+    const button = (tree, label) =>
+      all(tree, (node) => node.type === "button" && node.props.children === label)[0];
+    await render(locale, true, null, null, null, {
+      brandOrigin,
+      model: {
+        views: [],
+        expectProviderReturn() {
+          launches++;
+        },
+      },
+      navigator: {
+        clipboard: {
+          async writeText(value) {
+            writes.push(value);
+          },
+        },
+      },
+      async interact(view) {
+        for (const [provider, url] of [
+          ["Muse", "https://muse.ai/"],
+          ["ChatGPT", "https://chatgpt.com/plugins"],
+        ]) {
+          button(view(), `${connect} ${provider}`).props.onClick();
+          const tree = view();
+          const [link] = all(tree, (node) => node.type === "a" && node.props.href === url);
+          assert.equal(link.props.children, `${open} ${provider}`);
+          assert.equal(link.props.target, "_blank");
+          assert.equal(link.props.rel, "noopener noreferrer");
+          link.props.onClick();
+          if (provider === "ChatGPT") {
+            const [instructions] = all(
+              tree,
+              (node) => node.props.id === "connect-agent-instructions",
+            );
+            assert.match(instructions.props.children, guide);
+          }
+          await button(tree, copy).props.onClick();
+        }
+      },
+    });
+    assert.equal(launches, 2);
+    assert.deepEqual(writes, [endpoint, endpoint]);
+  }
+});
