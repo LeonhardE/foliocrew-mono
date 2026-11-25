@@ -10,7 +10,8 @@ from test_firestore_store import MemoryRpc
 from test_task_routes import CREATE, TASK, HttpTaskFixture, NoSources, result_value
 
 from app.fences import FenceService
-from app.store import FirestoreHubStore
+from app.store import FirestoreHubStore, StoreUnavailable, document_path
+from app.task_upload_cancellations import ledger_path, operation_path
 from app.tasks import TaskService
 from app.vaults import VaultService
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
@@ -80,6 +81,39 @@ class FirestoreTaskTests(unittest.TestCase):
         self.assertEqual(self.service.get(UID, TASK), created)
         self.assertEqual(self.service.get(UID, TASK, version=1), created)
         self.assertEqual(self.service.list(UID)["items"], [created["metadata"]])
+
+    def test_create_batches_task_state_in_each_transaction(self):
+        self.create()
+        owner, vault = owner_key(UID), self.fixture.vault
+        task_paths = {
+            document_path("hub_task_indexes", owner, vault),
+            document_path("hub_tasks", owner, vault, TASK),
+            operation_path(owner, vault, TASK, CREATE),
+            ledger_path(owner, vault),
+        }
+        state_reads = []
+        transaction = 0
+        for kind, kwargs in self.rpc.calls:
+            if kind == "begin":
+                transaction += 1
+            if kind != "get":
+                continue
+            request = kwargs["request"]
+            paths = {name.split("/documents/", 1)[1] for name in request["documents"]}
+            if paths & task_paths:
+                self.assertEqual(paths, task_paths)
+                self.assertTrue(request["transaction"])
+                state_reads.append(transaction)
+        self.assertEqual(state_reads, [1, 2])
+
+    def test_create_replay_rejects_non_integer_head(self):
+        body = self.fixture.body()
+        self.create(body)
+        path = document_path("hub_tasks", owner_key(UID), self.fixture.vault, TASK)
+        reference = self.client.document(path)
+        self.rpc.documents[reference._document_path]["operationCount"] = 1.0
+        with self.assertRaises(StoreUnavailable):
+            self.create(body)
 
     def test_competing_updates_retry_against_committed_cas_and_keep_one_version(self):
         first = self.create()

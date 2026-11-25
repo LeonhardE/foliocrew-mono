@@ -9,6 +9,7 @@ import hashlib
 import math
 import secrets
 import time
+from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Annotated
 
@@ -36,7 +37,12 @@ from .fences import require_current_bindings
 from .registry_reads import RegistryPrefixCache
 from .store import StoreUnavailable, document_path, get_store, private_resource_writer_fence_path
 from .task_lifecycle import lifecycle_index, require_visible
-from .task_upload_cancellations import TaskUploadCancellationService, operation_cancelled
+from .task_upload_cancellations import (
+    TaskUploadCancellationService,
+    ledger_path,
+    operation_cancelled,
+    operation_path,
+)
 from .user_vault_authority import scoped_user_vaults
 from .vaults import VaultService, _current, _selection, identifier, positive
 
@@ -67,7 +73,8 @@ class _TaskReadView:
         self.unit, self.rows = unit, rows
 
     def get(self, path):
-        return _snapshot(self.rows[path]) if path in self.rows else self.unit.get(path)
+        # Preserve Firestore's native types for the same strict row checks as get.
+        return deepcopy(self.rows[path]) if path in self.rows else self.unit.get(path)
 
     def __getattr__(self, name):
         return getattr(self.unit, name)
@@ -437,11 +444,21 @@ class TaskService:
             vault, registry = self._authority(unit, owner, now, user_scope)
             vault_id = vault["vaultId"]
             require_visible(unit, owner, vault_id, task_id)
-            index = _index(unit, owner, vault_id)
-            head = _head(unit, owner, vault_id, task_id, index)
-            op_path = document_path("hub_task_operations", owner, vault_id, task_id, operation)
-            saved = unit.get(op_path)
-            if operation_cancelled(unit, vault, task_id, operation, saved):
+            index_path = document_path("hub_task_indexes", owner, vault_id)
+            op_path = operation_path(owner, vault_id, task_id, operation)
+            paths = [
+                index_path,
+                _paths(owner, vault_id, task_id),
+                op_path,
+                ledger_path(owner, vault_id),
+            ]
+            # Batch the task's fixed state in this transaction attempt. Each
+            # validator still sees its own row, including absent fences.
+            view = _TaskReadView(unit, unit.get_many(paths))
+            index = _index(view, owner, vault_id)
+            head = _head(view, owner, vault_id, task_id, index)
+            saved = view.get(op_path)
+            if operation_cancelled(view, vault, task_id, operation, saved):
                 raise ContractError("idempotency_conflict")
             current = head["metadata"] if head is not None else None
             if saved is not None:
@@ -650,7 +667,7 @@ class TaskService:
             if commit:
                 index["version"] += 1
                 index["tasks"][task_id] = metadata
-                unit.put(document_path("hub_task_indexes", owner, vault_id), index)
+                unit.put(index_path, index)
                 unit.put(
                     _paths(owner, vault_id, task_id),
                     {"ownerSubject": owner, "metadata": metadata, "operationCount": version},
