@@ -675,6 +675,117 @@ test("explicit preview+review required; save transports only original ciphertext
   assert.deepEqual(h.seals[0].content.inputPolicy, { ...forms.defaultTask().inputPolicy });
   h.unmount();
 });
+test("save starts the head read during original verification and independently opens the newer head", async () => {
+  const savedCheck = deferred(),
+    headRead = deferred(),
+    opened = [];
+  let committed = null,
+    newer = null,
+    headRequested = false;
+  const h = harness({
+    rows: [],
+    transport({ route, options, setHead }) {
+      if (route === "/api/v2/tasks" && options.method === "POST") {
+        committed = task(meta(1, { taskId: options.json.taskId }));
+        newer = task(meta(2, { taskId: options.json.taskId, resourceBindings: [binding()] }));
+        setHead(newer);
+        return response(committed, 201);
+      }
+      if (committed && route === `/api/v2/tasks/${committed.metadata.taskId}`) {
+        headRequested = true;
+        return headRead.promise;
+      }
+    },
+    open(packet) {
+      opened.push(packet.metadata.taskVersion);
+      return packet.metadata.taskVersion === 1 ? savedCheck.promise : content({ name: "NEW_HEAD" });
+    },
+  });
+  try {
+    const ready = await h.ready();
+    ready.startNew(undefined, content());
+    let model = await h.drain();
+    await model.save();
+    const saving = h.render().save(true);
+    await settle();
+    assert.deepEqual(opened, [1]);
+    assert.ok(headRequested, "read starts while the saved packet is still being authenticated");
+
+    headRead.resolve(response(newer));
+    await settle();
+    assert.deepEqual(opened, [1], "newer head waits for the original packet to be authenticated");
+    assert.equal(h.outbox.size, 1);
+    assert.equal(h.drafts.size, 1);
+
+    savedCheck.resolve(content());
+    await saving;
+    model = h.render();
+    assert.deepEqual(opened, [1, 2]);
+    assert.equal(model.notice, "saved");
+    assert.equal(model.selected.taskVersion, 2);
+    assert.equal(model.form.name, "NEW_HEAD");
+    assert.equal(model.bindings[0].ref.resourceId, binding().ref.resourceId);
+    assert.equal(h.outbox.size, 0);
+    assert.equal(h.drafts.size, 0);
+  } finally {
+    savedCheck.resolve(content());
+    headRead.resolve(response(task()));
+    h.unmount();
+  }
+});
+test("head read errors wait for original authentication and leave the exact retry packet", async (t) => {
+  for (const savedFailure of [false, true]) {
+    await t.test(
+      savedFailure ? "original verification error takes precedence" : "head read fails",
+      async () => {
+        const savedCheck = deferred();
+        let taskId,
+          headRequested = false;
+        const h = harness({
+          rows: [],
+          transport({ route, options }) {
+            if (route === "/api/v2/tasks" && options.method === "POST") {
+              taskId = options.json.taskId;
+              return response(task(meta(1, { taskId })), 201);
+            }
+            if (route === `/api/v2/tasks/${taskId}`) {
+              headRequested = true;
+              return response({}, 503);
+            }
+          },
+          open: () => savedCheck.promise,
+        });
+        try {
+          const ready = await h.ready();
+          ready.startNew(undefined, content());
+          const draft = await h.drain();
+          await draft.save();
+          const saving = h.render().save(true);
+          await settle();
+          assert.ok(headRequested);
+          assert.equal(h.render().busy, true);
+          assert.equal(h.render().error, "");
+          const pending = h.outbox.get(taskId);
+          assert.ok(pending);
+
+          if (savedFailure) savedCheck.reject({ code: "registry_conflict" });
+          else savedCheck.resolve(content());
+          await saving;
+          const model = h.render();
+          assert.equal(model.error, savedFailure ? "registry_conflict" : "source_unavailable");
+          assert.equal(model.busy, false);
+          assert.equal(model.selected, null);
+          assert.deepEqual(h.outbox.get(taskId), pending);
+          assert.equal(h.drafts.size, 1);
+          assert.equal(h.opens.length, 1);
+        } finally {
+          savedCheck.resolve(content());
+          h.unmount();
+        }
+      },
+    );
+  }
+});
 test("editing invalidates confirmed review; resource/epoch/recipient changes have distinct explicit reasons", async () => {
   const h = harness();
   let model = await h.ready();
