@@ -50,6 +50,11 @@ export type Source = {
   };
   sourceEpoch: number;
 };
+export type HoldingsAgentSync = {
+  vaultId: string;
+  source: Source;
+  revision: number;
+};
 export type SourceCreationPacket = {
   sourceId: string;
   operationId: string;

@@ -292,6 +292,9 @@ function renderDashboard({
     "react/jsx-runtime": jsxRuntime,
     "@/lib/market-data": market,
     "next-intl": intl,
+    "@/lib/holdings-publication": require("./resource-library-helpers.cjs").compile(
+      "../lib/holdings-publication.ts",
+    ),
     "@/lib/ui-messages": compile("../lib/ui-messages.ts", {}),
     "./PersistentAgentsPanel": { PersistentAgentsPanel: () => null },
     "./IndependentAgentPanel": { IndependentAgentPanel: () => null },

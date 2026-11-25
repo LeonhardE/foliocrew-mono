@@ -495,3 +495,55 @@ test("archive context changed while storage opens cannot bypass the captured ses
     await assert.rejects(pending, /archive_session_stale/);
     assert.deepEqual(await store.get(key), row);
   }));
+
+test("a verified holdings save stages only a version pointer and survives a new unlocked browser session", async () =>
+  withStorage(async () => {
+    const { f, holdings, store, key, row } = await seeded();
+    clock = 1000;
+    f.time(clock);
+    const { client } = browser(f, store);
+    await client.unlock(f.vault, f.material());
+    const receipt = holdings.response.receipt;
+    await assert.rejects(
+      client.finishHoldingsSaveForAgents(holdings.pending, {
+        ...receipt,
+        revision: receipt.revision + 1,
+      }),
+    );
+    assert.deepEqual(await store.get(key), row);
+    assert.deepEqual(await client.loadHoldingsAgentSync(), []);
+
+    const cancelKey = `${f.owner}:upload-cancellation:${f.vault.vaultId}:holdings:${holdings.source.resourceRef.resourceId}`;
+    await store.put(cancelKey, { pending: true });
+    await assert.rejects(
+      client.finishHoldingsSaveForAgents(holdings.pending, receipt),
+      /upload_cancellation_pending/,
+    );
+    assert.deepEqual(await store.get(key), row);
+    await store.remove(cancelKey);
+    await client.finishHoldingsSaveForAgents(holdings.pending, receipt);
+    assert.equal(await store.get(key), null);
+    client.lock();
+
+    const { client: reopened } = browser(f, store);
+    await reopened.unlock(f.vault, f.material());
+    const [marker] = await reopened.loadHoldingsAgentSync();
+    assert.deepEqual(marker, {
+      vaultId: f.vault.vaultId,
+      source: holdings.source,
+      revision: receipt.revision,
+    });
+    const newest = { ...marker, revision: marker.revision + 1 };
+    const markerKey =
+      storageModule.holdingsAgentSyncPrefix(f.owner, f.vault.vaultId) +
+      marker.source.resourceRef.resourceId;
+    await store.put(markerKey, newest);
+    await reopened.finishHoldingsAgentSync(marker);
+    assert.deepEqual(
+      await reopened.loadHoldingsAgentSync(),
+      [newest],
+      "a late sync cannot clear a newer revision",
+    );
+    await reopened.finishHoldingsAgentSync(newest);
+    assert.deepEqual(await reopened.loadHoldingsAgentSync(), []);
+  }));

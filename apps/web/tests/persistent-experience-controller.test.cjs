@@ -772,3 +772,159 @@ test("task setup checks the exact saved version and recovers only its own pendin
   assert.deepEqual(effects, [h.w.pending, "assignment", "selected resource"]);
   assert.equal(taskReads, 2);
 });
+
+function savedHoldingsHarness() {
+  const ref = {
+    kind: "holdings",
+    sourceService: "portfolio",
+    resourceId: "holding_A",
+    incarnation: "incarnation_A",
+  };
+  const saved = {
+    owner: "owner_A",
+    vaultId: "vault_A",
+    source: { resourceRef: ref, sourceEpoch: 3 },
+    revision: 4,
+  };
+  const item = { ref, sourceEpoch: 3, revision: 5, state: "active", snapshotId: "snapshot_latest" };
+  const slot = {
+    contractVersion: packet.body.contractVersion,
+    profile: "folioview.provider-connection-slot.v1",
+    slot: null,
+    retainedSelections: [],
+    retirementCandidates: [],
+    legacyBlockers: [],
+    requiresFreshGrants: true,
+  };
+  const summary = {
+    contractVersion: packet.body.contractVersion,
+    profile: "folioview.provider-connection-summary.v1",
+    vaultId: saved.vaultId,
+    connections: [connection],
+    providers: { muse: slot, chatgpt: slot },
+    credentials: [
+      {
+        connectionId: connection.connectionId,
+        state: {
+          contractVersion: packet.body.contractVersion,
+          profile: "folioview.agent-credential.v1",
+          identity: null,
+          binding: null,
+          lease: null,
+          approval: null,
+          status: "reauthorization_required",
+          defaultValiditySeconds: 7776000,
+          noticeSeconds: 604800,
+        },
+      },
+    ],
+  };
+  const permission = {
+    ref,
+    sourceEpoch: 3,
+    status: "active",
+    versionPolicy: "current_and_future",
+    fromRevision: 1,
+    permissionId: "permission_X",
+    permissionEpoch: 1,
+  };
+  const calls = [];
+  const h = harness(async (service, path) => {
+    calls.push(path);
+    if (path.endsWith("/summary")) return summary;
+    if (service === "portfolio" && path.endsWith("snapshot_latest")) return { encrypted: true };
+    if (path.includes("/operations/")) return missing();
+    throw Error("unexpected: " + path);
+  });
+  h.w.owner = saved.owner;
+  h.w.pending = null;
+  h.c.catalogue = async () => ({ groups: [{ items: [item] }] });
+  h.c.context = async () => ({
+    actor: { connectionId: connection.connectionId, clientId: connection.clientId },
+    policy: { permissions: [permission] },
+  });
+  h.c.inspectCredential = async () => ({ verified: { status: "active" } });
+  h.c.publishResource = async (target, _, current) => {
+    assert.equal(target, connection);
+    assert.equal(current, item);
+    calls.push("publish");
+  };
+  return { ...h, saved, calls, permission, summary };
+}
+
+test("saving holdings synchronizes the latest exact version only within continuing authorization", async () => {
+  const f = savedHoldingsHarness();
+  await assert.rejects(
+    f.c.syncSavedHoldings({ ...f.saved, owner: "other_owner" }),
+    /verification_failed/,
+  );
+  await assert.rejects(
+    f.c.syncSavedHoldings({ ...f.saved, vaultId: "other_vault" }),
+    /verification_failed/,
+  );
+  assert.deepEqual(f.calls, []);
+  for (const changes of [
+    { versionPolicy: "exact" },
+    { status: "revoked" },
+    { sourceEpoch: 2 },
+    { ref: { ...f.permission.ref, incarnation: "old_incarnation" } },
+    { fromRevision: 6 },
+  ]) {
+    const original = { ...f.permission };
+    Object.assign(f.permission, changes);
+    assert.equal(await f.c.syncSavedHoldings(f.saved), 0);
+    Object.assign(f.permission, original);
+  }
+  assert.ok(!f.calls.includes("publish"));
+  assert.equal(await f.c.syncSavedHoldings(f.saved), 1);
+  assert.equal(f.calls.at(-1), "publish");
+});
+
+test("saving holdings preserves another pending operation and settles only an older publication of the same source", async () => {
+  const f = savedHoldingsHarness();
+  f.w.pending = { ...packet, kind: "consent" };
+  await assert.rejects(f.c.syncSavedHoldings(f.saved), /persistent_operation_pending/);
+  assert.ok(!f.calls.includes("publish"));
+  f.w.pending = {
+    ...packet,
+    context: {
+      objectType: "holdings_snapshot",
+      ref: f.saved.source.resourceRef,
+      sourceEpoch: 3,
+      sourceRevision: 4,
+    },
+  };
+  f.w.archiveSupersededPersistentPublication = async (args) => {
+    assert.equal(args.expectedOperationId, packet.operationId);
+    assert.equal(args.expectedFingerprint, packet.fingerprint);
+    assert.equal(args.newerSource.revision, 5);
+    assert.equal(args.newerSource.snapshot.encrypted, true);
+    f.w.pending = null;
+    f.calls.push("preserve prior operation");
+    return true;
+  };
+  assert.equal(await f.c.syncSavedHoldings(f.saved), 1);
+  assert.deepEqual(f.calls.slice(-2), ["preserve prior operation", "publish"]);
+});
+
+test("a missing latest revision remains recoverable and one unavailable Agent does not stop another", async () => {
+  const missing = savedHoldingsHarness();
+  missing.c.catalogue = async () => ({ groups: [] });
+  await assert.rejects(missing.c.syncSavedHoldings(missing.saved), /source_unavailable/);
+  const f = savedHoldingsHarness();
+  const second = {
+    ...connection,
+    provider: "chatgpt",
+    clientId: "chatgpt_A",
+    connectionId: "connection_B",
+  };
+  f.summary.connections.push(second);
+  f.summary.credentials.push({ ...f.summary.credentials[0], connectionId: second.connectionId });
+  f.c.inspectCredential = async (target) => ({
+    verified: { status: target === second ? "active" : "expired" },
+  });
+  const recipients = [];
+  f.c.publishResource = async (target) => recipients.push(target);
+  await assert.rejects(f.c.syncSavedHoldings(f.saved), /connection_unavailable/);
+  assert.deepEqual(recipients, [second]);
+});

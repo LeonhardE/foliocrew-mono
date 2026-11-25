@@ -1,6 +1,7 @@
 /** Public worker bridge: returned objects contain public controls/ciphertext only. */
 import {
   BrowserEncryptedStorage,
+  holdingsAgentSyncPrefix,
   sameEncryptedRecord,
   type EncryptedStorage,
 } from "./encrypted-storage";
@@ -22,6 +23,7 @@ import {
   type Vault,
   type PasskeyMaterial,
   type Source,
+  type HoldingsAgentSync,
   type SourceCreationPacket,
   type SourceMutationAction,
   type SourceMutationPacket,
@@ -1910,8 +1912,9 @@ export class EncryptedVaultSession {
         throw new VaultError("operation_conflict");
       const verified = await this.rpc("verifySupersededPublicationPending", {
         actor,
-        current: args.current,
-        hubOrigin: args.hubOrigin,
+        ...(args.newerSource
+          ? { newerSource: args.newerSource }
+          : { current: args.current, hubOrigin: args.hubOrigin }),
         packet,
       });
       this.assert(g);
@@ -2923,6 +2926,66 @@ export class EncryptedVaultSession {
     if (row && row.operationId !== operationId) throw new VaultError("operation_conflict");
     if (!(await this.storage.removeOperation(this.owner + ":outbox:" + sourceId, operationId)))
       throw new VaultError("operation_conflict");
+  }
+  finishHoldingsSaveForAgents(upload: PendingSnapshot, receipt: unknown): Promise<void> {
+    return this.serial(async () => {
+      const g = this.generation;
+      const key = this.owner + ":outbox:" + upload.source.resourceRef.resourceId;
+      await this.started;
+      const row = await this.storage.get(key);
+      this.assert(g);
+      if (
+        row?.ownerSubject !== this.owner ||
+        row.vaultId !== this.vaultId ||
+        !sameEncryptedRecord(row.pending, upload)
+      )
+        throw new VaultError("operation_conflict");
+      await this.verifyReceipt(upload, receipt);
+      this.assert(g);
+      if (
+        !this.storage.reconcileHoldingsOutbox ||
+        !(await this.storage.reconcileHoldingsOutbox(key, row, this.lifetime.signal, true))
+      )
+        throw new VaultError("operation_conflict");
+      this.assert(g);
+    });
+  }
+  async loadHoldingsAgentSync(): Promise<HoldingsAgentSync[]> {
+    if (this.renewalOnly || this.deletionOnly) throw new VaultError("invalid_operation");
+    const g = this.generation;
+    await this.started;
+    if (!this.vaultId) throw new VaultError("locked");
+    const prefix = holdingsAgentSyncPrefix(this.owner, this.vaultId);
+    const rows = await this.storage.list(prefix);
+    this.assert(g);
+    return rows.flatMap(({ key, value }) => {
+      const ref = value?.source?.resourceRef;
+      if (
+        value?.vaultId !== this.vaultId ||
+        ref?.kind !== "holdings" ||
+        ref.sourceService !== "portfolio" ||
+        key !== prefix + ref.resourceId ||
+        !Number.isSafeInteger(value.revision) ||
+        value.revision < 1 ||
+        !Number.isSafeInteger(value.source.sourceEpoch) ||
+        value.source.sourceEpoch < 1 ||
+        ![ref.resourceId, ref.incarnation].every(
+          (id) => typeof id === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(id),
+        )
+      )
+        return [];
+      return [{ vaultId: value.vaultId, source: value.source, revision: value.revision }];
+    });
+  }
+  async finishHoldingsAgentSync(sync: HoldingsAgentSync): Promise<void> {
+    if (this.renewalOnly || this.deletionOnly) throw new VaultError("invalid_operation");
+    const g = this.generation;
+    await this.started;
+    this.assert(g);
+    if (!this.vaultId || sync.vaultId !== this.vaultId || !this.storage.finishHoldingsAgentSync)
+      throw new VaultError("wrong_account");
+    await this.storage.finishHoldingsAgentSync(this.owner, sync, this.lifetime.signal);
+    this.assert(g);
   }
   private async renewalHoldingsRow(sourceId: string) {
     const g = this.generation;

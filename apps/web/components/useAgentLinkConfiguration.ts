@@ -9,7 +9,7 @@ import {
 } from "@/lib/agent-link";
 
 /** This public metadata response contains a configured destination, never a user or credential. */
-export function useAgentLinkConfiguration(active: boolean) {
+export function useAgentLinkConfiguration(active: boolean, retry = 0) {
   const [state, setState] = useState<{
     data: AgentLinkConfiguration | null;
     loading: boolean;
@@ -117,7 +117,7 @@ export function useAgentLinkConfiguration(active: boolean) {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [active, visible]);
+  }, [active, visible, retry]);
   // Public destination metadata may keep an existing helper heartbeat alive while hidden.
   return state;
 }

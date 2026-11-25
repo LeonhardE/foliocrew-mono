@@ -290,6 +290,9 @@ function flow({
       "@/components/TasksPanel": { __esModule: true, default: TasksPanel },
       "@/components/AgentsPanel": { __esModule: true, default: AgentsPanel },
       "@/components/useHoldingsWorkspace": { useHoldingsWorkspace: () => shared },
+      "@/lib/holdings-publication": require("./resource-library-helpers.cjs").compile(
+        "../lib/holdings-publication.ts",
+      ),
       "@/lib/ui-messages": { localizeMessage: (message) => message ?? "" },
       "@/lib/inbox-link": links,
       "@/components/CandlestickChart": { CandlestickChart: () => null },

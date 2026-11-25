@@ -15,6 +15,8 @@ import {
 } from "./WorkspacePanels";
 import { usePersistentWorkspace } from "./usePersistentWorkspace";
 import { useAgentLinkConfiguration } from "./useAgentLinkConfiguration";
+import { samePublicationRef } from "@/lib/holdings-publication";
+import type { SavedHoldingsRevision } from "@/lib/persistent-experience-controller";
 import type { TaskRequest } from "@/components/TasksPanel";
 import { useHoldingsWorkspace, type HoldingsWorkspace } from "@/components/useHoldingsWorkspace";
 import { useWorkspaceJourney } from "./useWorkspaceJourney";
@@ -43,6 +45,19 @@ import {
   type SearchResponse,
   type StockSummary,
 } from "@/lib/market-data";
+
+type HoldingsSyncEntry = {
+  saved: SavedHoldingsRevision;
+  status: "queued" | "syncing" | "pending" | "synced";
+};
+function sameSyncSource(a: SavedHoldingsRevision, b: SavedHoldingsRevision) {
+  return (
+    a.owner === b.owner &&
+    a.vaultId === b.vaultId &&
+    a.source.sourceEpoch === b.source.sourceEpoch &&
+    samePublicationRef(a.source.resourceRef, b.source.resourceRef)
+  );
+}
 
 function changeClass(value: number | null | undefined) {
   return value == null || !Number.isFinite(value) ? "" : value >= 0 ? "positive" : "negative";
@@ -79,6 +94,7 @@ export default function WorkspaceShell() {
   const [chartReload, setChartReload] = useState(0);
   const pathname = usePathname();
   const {
+    agentHubConfigured,
     ownerConfigStatus,
     ownerCapabilities,
     privateWorkspaceAvailable,
@@ -102,9 +118,69 @@ export default function WorkspaceShell() {
   const privateOwner = useRef<string | null>(null);
   const signedInOwner = authStatus === "authenticated" ? sessionKey : null;
   if (activeView && activeView !== "markets") privateOwner.current = signedInOwner;
+  const [holdingsSync, setHoldingsSync] = useState<HoldingsSyncEntry[]>([]);
+  const [retryAgentConfiguration, setRetryAgentConfiguration] = useState(0);
+  const syncInFlight = useRef(false);
+  const enqueueHoldingsSync = useCallback(
+    (saved: SavedHoldingsRevision) => {
+      if (!agentHubConfigured || saved.owner !== signedInOwner) return;
+      setHoldingsSync((entries) => {
+        const existing = entries.find((entry) => sameSyncSource(entry.saved, saved));
+        if (existing && existing.saved.revision >= saved.revision) return entries;
+        return [
+          ...entries.filter((entry) => !sameSyncSource(entry.saved, saved)),
+          { saved, status: "queued" },
+        ];
+      });
+    },
+    [agentHubConfigured, signedInOwner],
+  );
+  useEffect(() => {
+    setHoldingsSync((entries) => {
+      const scoped = entries.filter((entry) => entry.saved.owner === signedInOwner);
+      return scoped.length === entries.length ? entries : scoped;
+    });
+  }, [signedInOwner]);
   const encryptedWorkspace = useHoldingsWorkspace(
     Boolean(signedInOwner && signedInOwner === privateOwner.current),
+    agentHubConfigured ? enqueueHoldingsSync : undefined,
   );
+  const {
+    loadHoldingsAgentSync,
+    finishHoldingsAgentSync,
+    phase: holdingsPhase,
+    needsDeviceApproval: needsHoldingsDeviceApproval,
+    owner: holdingsOwner,
+  } = encryptedWorkspace;
+  useEffect(() => {
+    if (
+      !agentHubConfigured ||
+      !signedInOwner ||
+      holdingsOwner !== signedInOwner ||
+      holdingsPhase !== "unlocked" ||
+      needsHoldingsDeviceApproval
+    )
+      return;
+    let current = true;
+    void loadHoldingsAgentSync().then(
+      (markers) => {
+        if (!current) return;
+        for (const marker of markers) enqueueHoldingsSync({ ...marker, owner: signedInOwner });
+      },
+      () => {},
+    );
+    return () => {
+      current = false;
+    };
+  }, [
+    agentHubConfigured,
+    signedInOwner,
+    holdingsOwner,
+    holdingsPhase,
+    needsHoldingsDeviceApproval,
+    loadHoldingsAgentSync,
+    enqueueHoldingsSync,
+  ]);
   const agentScope = JSON.stringify([
     encryptedWorkspace.owner,
     encryptedWorkspace.vault?.vaultId,
@@ -127,7 +203,15 @@ export default function WorkspaceShell() {
   const agentViewsActive =
     activeView === "agents" ||
     (activeView === "tasks" && taskAgentDemand.scope === agentScope && taskAgentDemand.needed);
-  const persistentConfiguration = useAgentLinkConfiguration(agentViewsActive);
+  const scopedHoldingsSync = holdingsSync.filter(
+    ({ saved }) =>
+      saved.owner === signedInOwner && saved.vaultId === encryptedWorkspace.vault?.vaultId,
+  );
+  const nextHoldingsSync = scopedHoldingsSync.find(({ status }) => status === "queued");
+  const persistentConfiguration = useAgentLinkConfiguration(
+    agentViewsActive || Boolean(nextHoldingsSync),
+    retryAgentConfiguration,
+  );
   const agentLink = persistentConfiguration.data;
   const hubOrigin = agentLink?.hubOrigin ?? null;
   const brandOrigin = agentLink?.schemaVersion === 2 ? agentLink.brandOrigin : null;
@@ -139,6 +223,77 @@ export default function WorkspaceShell() {
     agentViewsActive,
     brandOrigin,
   );
+  const {
+    execute: executeHoldingsSync,
+    isBusy: persistentBusy,
+    busy: persistentUpdating,
+    canSyncHoldings,
+  } = persistent;
+  useEffect(() => {
+    if (!nextHoldingsSync || !canSyncHoldings || persistentBusy() || syncInFlight.current) return;
+    if (encryptedWorkspace.needsDeviceApproval || privateNavigationDisabled) return;
+    const target = nextHoldingsSync.saved;
+    const finish = (status: HoldingsSyncEntry["status"] | null) =>
+      setHoldingsSync((entries) =>
+        entries.flatMap((entry) =>
+          entry.saved !== target ? [entry] : status ? [{ saved: target, status }] : [],
+        ),
+      );
+    syncInFlight.current = true;
+    finish("syncing");
+    void executeHoldingsSync(
+      async (controller) => {
+        const count = await controller.syncSavedHoldings(target);
+        const { vaultId, source, revision } = target;
+        await finishHoldingsAgentSync({ vaultId, source, revision });
+        return count;
+      },
+      true,
+      false,
+      undefined,
+      false,
+      120_000,
+      true,
+    ).then((result) => {
+      syncInFlight.current = false;
+      if (result === null) {
+        finish(document.visibilityState === "hidden" ? "queued" : "pending");
+      } else {
+        finish(result > 0 ? "synced" : null);
+      }
+    });
+  }, [
+    nextHoldingsSync,
+    canSyncHoldings,
+    persistentBusy,
+    persistentUpdating,
+    executeHoldingsSync,
+    finishHoldingsAgentSync,
+    encryptedWorkspace.needsDeviceApproval,
+    privateNavigationDisabled,
+  ]);
+  const selectedSync = scopedHoldingsSync.find(({ saved }) => {
+    const metadata = encryptedWorkspace.sourceMetadata;
+    return (
+      metadata?.state === "active" &&
+      samePublicationRef(saved.source.resourceRef, metadata.source.resourceRef) &&
+      saved.source.sourceEpoch === metadata.source.sourceEpoch &&
+      saved.revision === metadata.revision
+    );
+  });
+  const holdingsSyncStatus =
+    selectedSync?.status === "queued" && persistentConfiguration.error
+      ? "pending"
+      : selectedSync?.status === "queued"
+        ? "syncing"
+        : selectedSync?.status;
+  const retryHoldingsSync = () => {
+    if (!selectedSync) return;
+    setRetryAgentConfiguration((attempt) => attempt + 1);
+    setHoldingsSync((entries) =>
+      entries.map((entry) => (entry === selectedSync ? { ...entry, status: "queued" } : entry)),
+    );
+  };
   useEffect(() => {
     if (privateNavigationDisabled) return;
     let disposed = false;
@@ -603,6 +758,8 @@ export default function WorkspaceShell() {
                 navigate("tasks", "handoff");
               }}
               workspace={encryptedWorkspace}
+              holdingsSyncStatus={holdingsSyncStatus}
+              onRetryHoldingsSync={retryHoldingsSync}
               onOpenWatchlist={() => {
                 setPickerTab("watchlist");
                 navigate("markets", "handoff");

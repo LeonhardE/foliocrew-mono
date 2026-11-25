@@ -288,6 +288,12 @@
     "index": "指數不適用企業估值與股票成交量指標。"
   },
   "resources": {
+    "taskSync": {
+      "syncing": "正在檢查已獲授權的 Agent 是否需要這版持倉。",
+      "synced": "已獲授權的 Agent 可以讀取這版持倉。",
+      "pending": "持倉已儲存，Agent 資料同步尚未完成。",
+      "retry": "重試同步"
+    },
     "eyebrow": "你的投資資源",
     "title": "資源庫",
     "description": "在一個地方管理持倉、自選股和創作者名單。",

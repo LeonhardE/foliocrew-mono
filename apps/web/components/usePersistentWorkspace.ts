@@ -119,6 +119,7 @@ export function usePersistentWorkspace(
       ) => Promise<(() => Promise<Response>) | undefined>,
       reuseOwnerResume = false,
       actionTimeoutMs = 120000,
+      quietError = false,
     ): Promise<T | null> => {
       if (job.current) return null;
       if (display && (!live.current.active || displayJob.current)) return null;
@@ -313,7 +314,7 @@ export function usePersistentWorkspace(
           live.current.scope === start.scope
         ) {
           const code = (error as { code?: string })?.code;
-          if (!display)
+          if (!display && !quietError)
             setState((s) => ({
               ...s,
               error: [
@@ -637,6 +638,7 @@ export function usePersistentWorkspace(
       }));
     },
     execute,
+    canSyncHoldings: Boolean(scope && hubOrigin && auth.agentHubConfigured),
     executeTaskActivation: <T>(action: Parameters<typeof execute<T>>[0]) =>
       execute(action, true, false, undefined, false, 180000),
     review: (connection: PersistentConnection) => execute((c) => c.review(connection)),
