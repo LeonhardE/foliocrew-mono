@@ -525,7 +525,7 @@ class TaskCenterContractTests(unittest.TestCase):
                 recovered, assignment, self.slot, authority_fingerprint="a" * 64
             )
 
-    def test_purge_boundary_keeps_tombstone_and_never_allows_restoring_or_recreating_it(self):
+    def test_owner_can_end_trash_retention_early_only_with_a_current_signed_purge(self):
         for cert in self.f.certificates.values():
             cert["expiresAt"] = TRASH_RETENTION_SECONDS + 5000
         self.args["registry"] = self.f.verify(self.f.make_bundle())
@@ -536,12 +536,25 @@ class TaskCenterContractTests(unittest.TestCase):
             action="trash",
             **self.args,
         )
-        self.args["now"] = gone["purgeAfter"] - 1
         with self.assertRaises(ContractError):
             plan_task_lifecycle(
-                self.control("purge", gone), current_definition=gone, action="purge", **self.args
+                self.control("purge", definition),
+                current_definition=definition,
+                action="purge",
+                **self.args,
             )
-        self.args["now"] += 1
+        with self.assertRaises(ContractError):
+            plan_task_lifecycle(
+                self.control("trash", gone), current_definition=gone, action="purge", **self.args
+            )
+        with self.assertRaises(ContractError):
+            plan_task_lifecycle(
+                self.control("purge", definition),
+                current_definition=gone,
+                action="purge",
+                **self.args,
+            )
+        self.args["now"] = gone["deletedAt"] + 1
         tombstone = plan_task_lifecycle(
             self.control("purge", gone), current_definition=gone, action="purge", **self.args
         )
