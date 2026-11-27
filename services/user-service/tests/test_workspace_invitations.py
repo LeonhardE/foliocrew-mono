@@ -169,6 +169,9 @@ class WorkspaceInvitationTests(unittest.TestCase):
         )
         self.assertEqual(self.client.get(API, headers=BEARER).status_code, 403)
         self.assertEqual(self.create().status_code, 403)
+        self.assertEqual(
+            self.client.delete(f"{API}/{'a' * 64}/{'a' * 32}", headers=BEARER).status_code, 403
+        )
         self.store_lookup.assert_not_called()
         self.send.assert_not_called()
         self.claims.return_value["uid"] = ADMIN
@@ -178,6 +181,9 @@ class WorkspaceInvitationTests(unittest.TestCase):
         )
         os.environ.pop("FOLIOCREW_INVITATION_ADMIN_UID")
         self.assertEqual(self.create().status_code, 403)
+        self.assertEqual(
+            self.client.delete(f"{API}/{'a' * 64}/{'a' * 32}", headers=BEARER).status_code, 403
+        )
 
     def test_exact_gmail_invitation_is_idempotent_and_private(self):
         response = self.create(" Example.Invitee@Gmail.Com ")

@@ -18,6 +18,7 @@ from folioview_shared.firestore import BoundedTransaction
 
 from ..firestore_reads import read_documents
 from ..resources import FirestoreUserResourceStore, ResourceUnavailable, SQLiteUserResourceStore
+from .display_name_cleanup import erase_retired_names
 from .legacy_baselines import _sha
 from .recovery import COLLECTION as HEADS
 from .recovery import ClosedModel, Digest, Identifier, RecoveryHeads, Version
@@ -141,9 +142,16 @@ class SourceInvalidations:
         receipt_key = invalidation_receipt_key(owner, request["mutationId"])
         try:
             if isinstance(self.store, SQLiteUserResourceStore):
-                return self._sqlite(owner, receipt_key, request)
-            if isinstance(self.store, FirestoreUserResourceStore):
-                return self._firestore(owner, receipt_key, request)
+                ack = self._sqlite(owner, receipt_key, request)
+            elif isinstance(self.store, FirestoreUserResourceStore):
+                ack = self._firestore(owner, receipt_key, request)
+            else:
+                raise ContractError("authorization_unavailable")
+            # Fence first. From this commit no new alias write can succeed. A retry of the
+            # exact receipt also resumes an interrupted purge before acknowledging Portfolio.
+            if request["reason"] == "deleted":
+                erase_retired_names(self.store, owner, request["ref"])
+            return ack
         except ContractError:
             raise
         except ResourceUnavailable as error:

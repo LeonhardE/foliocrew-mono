@@ -17,7 +17,7 @@ from app.private_resources.legacy_baselines import (
 from app.private_resources.original_operations import original_operation_baseline
 from app.private_resources.recovery import RecoveryHeads
 from app.resources import FirestoreUserResourceStore, SQLiteUserResourceStore
-from folioview_shared.encrypted.constants import CONTRACT_VERSION
+from folioview_shared.encrypted.constants import CONTRACT_VERSION, MAX_SAFE_INTEGER
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import b64url_encode, canonical_json, strict_json_loads
 
@@ -70,6 +70,46 @@ class LegacyVaultBaselineTests(unittest.TestCase):
         self.assertIsNone(RecoveryHeads(self.store).read(OWNER))
         self.assertIsNone(self.baselines.read("1" * 64, VAULT, self.digest))
         self.assertIsNone(self.baselines.read(OWNER, "other_vault", self.digest))
+
+    def test_hub_retirements_preserve_the_original_digest_and_release_source_slots(self):
+        self.assertNotIn("retiredSourceCount", strict_json_loads(self.body))
+        for retired in (0, 1, 80):
+            with self.subTest(retired=retired):
+                candidate = {
+                    **self.vault,
+                    "retiredSourceCount": retired,
+                    "operationCount": 1 + retired,
+                    "version": 1 + retired,
+                }
+                encoded = verified_baseline(OWNER, candidate, None, now=1000)
+                expected = hashlib.sha256(encoded).hexdigest()
+                self.assertTrue(self.stage(vault=candidate, digest=expected))
+                self.assertEqual(strict_json_loads(encoded)["retiredSourceCount"], retired)
+                self.assertNotEqual(expected, self.digest)
+        self.assertTrue(self.stage())
+        self.assertEqual(self.baselines.read(OWNER, VAULT, self.digest), self.body)
+        for retired, version in (
+            (-1, 0),
+            (True, 2),
+            (1.0, 2),
+            (5, 5),
+            (MAX_SAFE_INTEGER, MAX_SAFE_INTEGER + 1),
+        ):
+            with (
+                self.subTest(retired=retired, version=version),
+                self.assertRaisesRegex(ContractError, "malformed_request"),
+            ):
+                verified_baseline(
+                    OWNER,
+                    {
+                        **self.vault,
+                        "retiredSourceCount": retired,
+                        "version": version,
+                        "operationCount": version,
+                    },
+                    None,
+                    now=1000,
+                )
 
     def test_conflicting_input_and_corrupt_copy_leave_no_replacement(self):
         with self.assertRaisesRegex(ContractError, "recipient_binding_mismatch"):
@@ -182,6 +222,10 @@ class OriginalOperationBaselineTests(unittest.TestCase):
         read = strict_json_loads(baselines.read(OWNER, VAULT, expected))
         self.assertEqual(read["originalOperations"], records)
         self.assertIsNone(RecoveryHeads(store).read(OWNER))
+        with self.assertRaisesRegex(ContractError, "authorization_unavailable"):
+            original_operation_baseline(
+                OWNER, {**scope, "sources": [], "retiredSourceCount": 1}, records
+            )
         altered = deepcopy(records)
         altered[f"hub_fence_mutations/{path}"]["ack"]["mapValue"]["fields"][
             "acknowledgedSourceEpoch"

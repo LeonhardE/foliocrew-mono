@@ -726,6 +726,7 @@ async def advance_owner_registry(
     return result
 
 
+HUB_ARCHIVE_RETIREMENT_PATH = "/internal/v2/private-resources/hub-archive-retirement/read"
 HUB_AUTHORITY_PATH = "/internal/v2/private-resources/hub-authority/read"
 PORTFOLIO_AUTHORITY_PATH = "/internal/v2/private-resources/portfolio-authority/read"
 
@@ -736,7 +737,7 @@ def live_authority_views() -> PrivateAuthorityViews:
     return PrivateAuthorityViews(get_resource_store())
 
 
-async def _authority_result(request, response, service, consumer, path, caller_env):
+async def _authority_result(request, response, lookup, consumer, path, caller_env):
     require_v2(request)
     if request.url.query:
         raise ContractError("unsupported_query")
@@ -774,9 +775,25 @@ async def _authority_result(request, response, service, consumer, path, caller_e
         }[error.code]
         raise ContractError(code) from None
     require_selected_private_owner(owner_key(uid))
-    result = await run_in_threadpool(service.lookup, uid, value, now=int(time.time()))
+    result = await run_in_threadpool(lookup, uid, value, now=int(time.time()))
     _uncached_private(response)
     return result
+
+
+@internal.post(HUB_ARCHIVE_RETIREMENT_PATH)
+async def read_hub_archive_retirement(
+    request: Request,
+    response: Response,
+    service: Annotated[PrivateAuthorityViews, Depends(live_authority_views)],
+):
+    return await _authority_result(
+        request,
+        response,
+        service.hub_archive_retirement,
+        "hub",
+        HUB_ARCHIVE_RETIREMENT_PATH,
+        "USER_TRUSTED_HUB_CALLERS",
+    )
 
 
 @internal.post(HUB_AUTHORITY_PATH)
@@ -786,7 +803,7 @@ async def read_hub_authority(
     service: Annotated[PrivateAuthorityViews, Depends(live_authority_views)],
 ):
     return await _authority_result(
-        request, response, service, "hub", HUB_AUTHORITY_PATH, "USER_TRUSTED_HUB_CALLERS"
+        request, response, service.lookup, "hub", HUB_AUTHORITY_PATH, "USER_TRUSTED_HUB_CALLERS"
     )
 
 
@@ -799,7 +816,7 @@ async def read_portfolio_authority(
     return await _authority_result(
         request,
         response,
-        service,
+        service.lookup,
         "portfolio",
         PORTFOLIO_AUTHORITY_PATH,
         "USER_PRIVATE_PORTFOLIO_CALLER",
