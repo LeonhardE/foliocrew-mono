@@ -11,6 +11,60 @@ mock_provider "google" {
   }
 }
 
+run "retention_has_no_default_iam_or_scheduler_dependency" {
+  command = plan
+  assert {
+    condition = (
+      length(module.agent_hub_retention_identity) == 0 &&
+      length(module.agent_hub_retention_database) == 0 &&
+      length(google_project_service.agent_hub_scheduler) == 0 &&
+      length(google_cloud_run_v2_job_iam_member.agent_hub_retention_trigger) == 0
+    )
+    error_message = "Retention must be opt-in."
+  }
+}
+run "retention_prepare_provisions_only_database_worker_and_trigger_identity" {
+  command = plan
+  variables {
+    agent_hub_provisioning_stage = "service"
+    agent_hub_retention_stage    = "prepare"
+  }
+  assert {
+    condition = (
+      toset(keys(module.agent_hub_retention_identity)) == toset(["worker", "trigger"]) &&
+      module.agent_hub_retention_database[0].database_resource_name == "projects/demo-folio-alpha/databases/agent-hub" &&
+      toset(keys(module.agent_hub_retention_database[0].grants)) == toset(["worker"]) &&
+      module.agent_hub_retention_database[0].grants.worker.role == "roles/datastore.user" &&
+      module.agent_hub_retention_database[0].grants.worker.member == "serviceAccount:fa-hub-retention-worker@demo-folio-alpha.iam.gserviceaccount.com" &&
+      google_project_service.agent_hub_scheduler[0].service == "cloudscheduler.googleapis.com" &&
+      !google_project_service.agent_hub_scheduler[0].disable_on_destroy &&
+      length(google_cloud_run_v2_job_iam_member.agent_hub_retention_trigger) == 0
+    )
+    error_message = "Preparation should limit data access to the Hub database and postpone the job grant until the job exists."
+  }
+}
+run "retention_invoker_granted_on_one_job" {
+  command = plan
+  variables {
+    agent_hub_provisioning_stage = "service"
+    agent_hub_retention_stage    = "invoker"
+  }
+  assert {
+    condition = (
+      google_cloud_run_v2_job_iam_member.agent_hub_retention_trigger[0].name == "agent-hub-task-retention" &&
+      google_cloud_run_v2_job_iam_member.agent_hub_retention_trigger[0].role == "roles/run.invoker" &&
+      google_cloud_run_v2_job_iam_member.agent_hub_retention_trigger[0].member == "serviceAccount:fa-hub-retention-trigger@demo-folio-alpha.iam.gserviceaccount.com"
+    )
+    error_message = "Only the trigger identity may invoke the named retention job through this grant."
+  }
+}
+run "retention_rejects_missing_hub_service" {
+  command = plan
+  variables { agent_hub_retention_stage = "prepare" }
+  expect_failures = [var.agent_hub_retention_stage]
+}
+
+
 # Only computed identifiers are mocked; configured target names/permissions remain real.
 override_resource {
   target          = google_project_iam_custom_role.agent_hub["service_configuration"]
