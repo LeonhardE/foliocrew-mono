@@ -1620,6 +1620,7 @@
     "advanced": "更多选项",
     "reportLanguage": "报告语言",
     "resources": "任务资料",
+    "resourceCatalogueFailed": "暂时无法加载资料列表，请重试。",
     "resourceCataloguePartial": "部分资料暂不可用，已有选择会保留。可重试更新资料状态。",
     "resourceNotSelectable": "暂不可选",
     "executors": "执行者",

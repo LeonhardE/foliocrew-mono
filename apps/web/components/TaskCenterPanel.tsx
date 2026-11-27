@@ -288,20 +288,39 @@ export function TaskCenterView({
           assertScope();
           const view = available.find((v) => v.connection.provider === provider);
           if (!view || !persistent) throw Error("connection_unavailable");
+          const reviewed = state.assignments.find(
+            (row: J) => row.assignment.provider === provider,
+          )?.assignment;
           setActivation("prepare");
           const result = await persistent.executeTaskActivation(async (controller, api, assert) => {
             await controller.approveTask(view.connection, selected, {
+              state,
               previous,
-              beforePublish: async (packet, context) => {
+              beforePublish: async (packet, context, reviewedAuthority) => {
                 assert();
                 assertScope();
                 const current = await center.api(center.base(selected.taskId));
+                const verified = await workspace.verifyTaskCenterState(current);
+                assert();
+                assertScope();
+                const assigned = verified.assignments.find(
+                  ({ assignment }: J) => assignment.provider === provider,
+                );
+                if (
+                  state.taskVersion !== verified.taskVersion ||
+                  state.executionEpoch !== verified.executionEpoch ||
+                  state.rules?.definition.definitionVersion !==
+                    verified.rules?.definition.definitionVersion ||
+                  reviewed?.assignmentId !== assigned?.assignment.assignmentId ||
+                  reviewed?.assignmentVersion !== assigned?.assignment.assignmentVersion ||
+                  (assigned?.assignment.credential.connectionId === view.connection.connectionId &&
+                    (assigned.authority?.fingerprint ?? null) !==
+                      (reviewedAuthority?.fingerprint ?? null))
+                )
+                  throw Error("version_conflict");
                 const fingerprint =
                   packet.kind === "no_change" ? packet.authority.fingerprint : packet.fingerprint;
                 if (packet.kind === "no_change") {
-                  const verified = await workspace.verifyTaskCenterState(current);
-                  assert();
-                  assertScope();
                   const credential = view.credential?.reference;
                   if (
                     credential &&
@@ -611,9 +630,9 @@ export function TaskCenterView({
           retryLabel={t(failure === "task_activation_unconfirmed" ? "continueActivation" : "retry")}
         />
       )}
-      {model.catalogueError && (mode === "edit" || request) && (
+      {model.catalogueError && request && !form && (
         <InlineError
-          message={t("errors.request_failed")}
+          message={t("resourceCatalogueFailed")}
           retryLabel={t("retry")}
           onRetry={() => void model.reloadCatalogue()}
         />
@@ -878,6 +897,13 @@ export function TaskCenterView({
                   <div className={styles.form}>
                     <fieldset>
                       <legend>{t("resources")}</legend>
+                      {model.catalogueError && (
+                        <InlineError
+                          message={t("resourceCatalogueFailed")}
+                          retryLabel={t("retry")}
+                          onRetry={() => void model.reloadCatalogue()}
+                        />
+                      )}
                       {model.catalogueLoading && (
                         <LoadingIndicator
                           busy

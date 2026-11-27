@@ -1620,6 +1620,7 @@
     "advanced": "更多選項",
     "reportLanguage": "報告語言",
     "resources": "任務資料",
+    "resourceCatalogueFailed": "暫時無法載入資料清單，請重試。",
     "resourceCataloguePartial": "部分資料暫不可用，既有選擇會保留。可重試更新資料狀態。",
     "resourceNotSelectable": "暫不可選",
     "executors": "執行者",

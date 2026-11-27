@@ -312,6 +312,22 @@ test("loading and transport failure do not masquerade as ready partial discovery
     p.close();
   }
 });
+test("a failed resource list is actionable in the picker and does not label a successful save as failed", () => {
+  const p = picker({ mode: "available" });
+  try {
+    p.model.catalogueError = "service_unavailable";
+    const errors = () => all(p.draw(), (n) => n.type?.name === "InlineError");
+    assert.equal(errors()[0].props.message, p.messages.resourceCatalogueFailed);
+    errors()[0].props.onRetry();
+    assert.equal(p.retries(), 1);
+    p.button(p.draw(), p.messages.next).props.onClick();
+    assert.equal(errors().length, 0);
+    p.model.error = "request_failed";
+    assert.equal(errors()[0].props.message, p.messages.errors.request_failed);
+  } finally {
+    p.close();
+  }
+});
 test("available and pending holdings remain independent of Agent credential status", () => {
   for (const mode of ["available", "pending"])
     for (const credential of ["active", "revoked"]) {
@@ -427,6 +443,9 @@ for (const [scenario, expected] of [
   ["initially stale", ["set_rules"]],
   ["deselect", ["set_rules", "remove_assignment"]],
   ["concurrent replacement", ["set_rules"]],
+  ["publication changed", ["set_rules"]],
+  ["assignment removed before publish", ["set_rules"]],
+  ["rules changed before publish", ["set_rules"]],
 ]) {
   test(`saving a task with an existing Muse assignment: ${scenario}`, async () => {
     const commands = [];
@@ -451,6 +470,7 @@ for (const [scenario, expected] of [
             status: "active",
             authorityFingerprint: "same_publication",
           },
+          authority: { fingerprint: "same_publication" },
           plan: { currentAssignment: scenario !== "initially stale" },
         };
         state.assignments = [row];
@@ -478,10 +498,24 @@ for (const [scenario, expected] of [
           },
         ];
         const controller = {
-          async approveTask(connection, selected, { beforePublish }) {
+          async approveTask(connection, selected, { state: reviewedState, beforePublish }) {
+            assert.equal(reviewedState, state);
+            const reviewedHead = row.authority;
+            if (scenario === "publication changed") row.authority = { fingerprint: "replaced" };
+            if (scenario === "assignment removed before publish") {
+              row.assignment = { ...row.assignment, status: "revoked", assignmentVersion: 2 };
+              row.plan.currentAssignment = false;
+            }
+            if (scenario === "rules changed before publish") {
+              center.api = async () => ({
+                ...state,
+                rules: { definition: { ...d, definitionVersion: 4, ruleVersion: 4 } },
+              });
+            }
             await beforePublish(
               { kind: "no_change", authority: { fingerprint: "same_publication" } },
               {},
+              reviewedHead,
             );
           },
         };
@@ -509,7 +543,14 @@ for (const [scenario, expected] of [
       p.button(p.draw(), p.messages.confirm).props.onClick();
       await new Promise((resolve) => setImmediate(resolve));
       assert.deepEqual(commands, expected);
-      if (scenario === "concurrent replacement") {
+      if (
+        [
+          "concurrent replacement",
+          "publication changed",
+          "assignment removed before publish",
+          "rules changed before publish",
+        ].includes(scenario)
+      ) {
         assert.ok(
           all(p.draw(), (node) => node.props?.message === p.messages.errors.version_conflict)
             .length,
