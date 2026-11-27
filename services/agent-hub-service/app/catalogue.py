@@ -652,7 +652,8 @@ class CatalogueService:
         return self._transferred_context(uid, scope)
 
     def _transferred_context(self, uid, scope):
-        if scope.authority["ownerSubject"] != owner_key(uid):
+        owner = owner_key(uid)
+        if scope.authority["ownerSubject"] != owner:
             raise ContractError("source_unavailable")
 
         def transferred(unit):
@@ -676,7 +677,9 @@ class CatalogueService:
                 ],
             }
 
-        return self.vaults.store.transact(transferred)
+        return self.vaults.store.read_snapshot(
+            lambda: [private_resource_writer_fence_path(owner)], transferred
+        )
 
     def _snapshot(self, uid, *, registry_cache=None):
         owner = owner_key(uid)

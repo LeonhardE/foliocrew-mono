@@ -275,7 +275,7 @@ class ScopedUserVaults:
         if owner != self.owner:
             return None
         fence_path = private_resource_writer_fence_path(owner)
-        fence = self.store.transact(lambda unit: unit.get(fence_path))
+        fence = self.store.read_snapshot(lambda: [fence_path], lambda unit: unit.get(fence_path))
         if fence is None:
             return None
         if self.client is None or type(fence) is not dict:

@@ -41,8 +41,7 @@ class _ReadView:
         self._open()
         paths = _batch_paths(paths)
         if field_paths is not None:
-            # Preserve the original projection validator/reader. These two
-            # opt-in callbacks read full documents, not masked history fields.
+            # Preloaded documents are complete. Use the projection reader for field masks.
             return self._unit.get_many(paths, field_paths=field_paths)
         result = {
             path: copy.deepcopy(self._initial[path]) for path in paths if path in self._initial
