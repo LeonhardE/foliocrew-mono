@@ -729,25 +729,50 @@ test("task setup checks the exact saved version and recovers only its own pendin
   };
   const item = { ...binding, revision: 4, state: "active" };
   const saved = { metadata };
-  let taskReads = 0;
+  const head = { publicationId: "pub_muse", context: { connectionId: connection.connectionId } };
+  const centerState = {
+    taskId: metadata.taskId,
+    rules: { definition: {} },
+    assignments: [
+      {
+        assignment: { credential: { connectionId: "another" } },
+        authority: { publicationId: "other" },
+      },
+      { assignment: { credential: { connectionId: connection.connectionId } }, authority: head },
+    ],
+  };
+  const envelope = { proof: "signed" };
+  const reads = [];
   const h = harness(async (_service, path) => {
-    assert.equal(path, "/api/v2/tasks/task_A");
-    taskReads++;
-    return saved;
+    reads.push(path);
+    if (path === "/api/v2/tasks/task_A") return saved;
+    if (path === "/api/v3/task-center/vault_A/tasks/task_A") return centerState;
+    assert.equal(
+      path,
+      "/api/v2/persistent-content/vault_A/connections/connection_A/operations/pub_muse",
+    );
+    return { envelope };
   });
   const context = { identityState: {}, policy: {} };
   h.c.context = async () => context;
   h.c.catalogue = async () => ({
     groups: [{ items: [item, { ...item, ref: { ...ref, resourceId: "unrelated" } }] }],
   });
-  h.c.taskAuthority = async () => ({});
+  let verified = 0;
+  h.w.verifyTaskCenterState = async (state) => {
+    assert.equal(state, centerState);
+    verified++;
+    return state;
+  };
   h.w.preparePersistentConsent = async ({ resources }) => {
     assert.equal(resources.length, 1);
     assert.equal(resources[0].ref, ref);
     return { kind: "no_change" };
   };
-  h.w.preparePersistentTask = async ({ task }) => {
+  h.w.preparePersistentTask = async ({ task, authority }) => {
     assert.equal(task, saved);
+    assert.equal(authority.authority, head);
+    assert.equal(authority.envelope, envelope);
     return { kind: "no_change" };
   };
   const effects = [];
@@ -760,7 +785,13 @@ test("task setup checks the exact saved version and recovers only its own pendin
     assert.ok(catalogue);
     effects.push("selected resource");
   };
-  const options = { beforePublish: async () => effects.push("assignment") };
+  const options = {
+    state: centerState,
+    beforePublish: async (_packet, _context, actualHead) => {
+      assert.equal(actualHead, head);
+      effects.push("assignment");
+    },
+  };
   h.w.pending = { ...packet, context: { objectType: "task", taskId: "unrelated" } };
   await assert.rejects(
     h.c.approveTask(connection, metadata, options),
@@ -770,7 +801,29 @@ test("task setup checks the exact saved version and recovers only its own pendin
   h.w.pending = { ...packet, context: { objectType: "resource", ...binding } };
   await h.c.approveTask(connection, metadata, options);
   assert.deepEqual(effects, [h.w.pending, "assignment", "selected resource"]);
-  assert.equal(taskReads, 2);
+  assert.deepEqual(reads, [
+    "/api/v2/tasks/task_A",
+    "/api/v2/tasks/task_A",
+    "/api/v2/persistent-content/vault_A/connections/connection_A/operations/pub_muse",
+  ]);
+  assert.equal(verified, 1);
+  reads.length = 0;
+  h.w.pending = {
+    ...packet,
+    context: {
+      objectType: "task",
+      taskId: metadata.taskId,
+      taskVersion: metadata.taskVersion,
+      ownerTaskFingerprint: metadata.envelopeFingerprint,
+    },
+  };
+  await h.c.approveTask(connection, metadata, options);
+  assert.deepEqual(reads, [
+    "/api/v2/tasks/task_A",
+    "/api/v3/task-center/vault_A/tasks/task_A",
+    "/api/v2/persistent-content/vault_A/connections/connection_A/operations/pub_muse",
+  ]);
+  assert.equal(verified, 2);
 });
 
 function savedHoldingsHarness() {

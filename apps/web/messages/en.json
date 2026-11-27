@@ -1620,6 +1620,7 @@
     "advanced": "More options",
     "reportLanguage": "Report language",
     "resources": "Resources",
+    "resourceCatalogueFailed": "The resource list could not be loaded. Retry to see the available resources.",
     "resourceCataloguePartial": "Some resources are unavailable. Existing selections are kept. Retry to check their status.",
     "resourceNotSelectable": "Not selectable",
     "executors": "Agents",

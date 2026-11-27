@@ -38,6 +38,11 @@ export type PersistentTask = {
   authority: Json;
   plan: Json | null;
 };
+type TaskActivation = {
+  state?: Json;
+  previous?: Json;
+  beforePublish: (packet: Json, context: Json, authority: Json | null) => Promise<void>;
+};
 export type PersistentConnectionView = {
   connection: PersistentConnection;
   identity: Json | null;
@@ -611,36 +616,42 @@ export class PersistentExperienceController {
     connection: PersistentConnection,
     task: Pick<PersistentTask, "taskId">,
     previous?: Json,
+    enrolled?: Pick<TaskActivation, "state">,
   ) {
-    try {
-      return await this.request(
-        `/api/v2/persistent-content/${connection.vaultId}/tasks/${task.taskId}/authority`,
-      );
-    } catch (error) {
-      if (!(error instanceof PersistentExperienceError) || error.code !== "version_conflict")
-        throw error;
-      const state = await this.workspace().verifyTaskCenterState(
-        await this.request(`/api/v3/task-center/${connection.vaultId}/tasks/${task.taskId}`),
-      );
-      const head =
-        state.assignments.find(
-          (r: Json) => r.assignment.credential.connectionId === connection.connectionId,
-        )?.authority ??
-        (previous?.authority?.context.connectionId === connection.connectionId
-          ? previous.authority
-          : null);
-      const receipt = head
-        ? await this.request(
-            `/api/v2/persistent-content/${connection.vaultId}/connections/${connection.connectionId}/operations/${head.publicationId}`,
-          )
-        : null;
-      return {
-        contractVersion: PERSISTENT_CONTRACT,
-        profile: "folioview.persistent-content.v1",
-        authority: head,
-        envelope: receipt?.envelope ?? (head ? previous?.envelope : null),
-      };
+    // Once rules exist the legacy task-wide authority endpoint always rejects the request.
+    if (!enrolled) {
+      try {
+        return await this.request(
+          `/api/v2/persistent-content/${connection.vaultId}/tasks/${task.taskId}/authority`,
+        );
+      } catch (error) {
+        if (!(error instanceof PersistentExperienceError) || error.code !== "version_conflict")
+          throw error;
+      }
     }
+    const state = await this.workspace().verifyTaskCenterState(
+      enrolled?.state ??
+        (await this.request(`/api/v3/task-center/${connection.vaultId}/tasks/${task.taskId}`)),
+    );
+    if (state.taskId !== task.taskId || !state.rules) fail("version_conflict");
+    const head =
+      state.assignments.find(
+        (r: Json) => r.assignment.credential.connectionId === connection.connectionId,
+      )?.authority ??
+      (previous?.authority?.context.connectionId === connection.connectionId
+        ? previous.authority
+        : null);
+    const receipt = head
+      ? await this.request(
+          `/api/v2/persistent-content/${connection.vaultId}/connections/${connection.connectionId}/operations/${head.publicationId}`,
+        )
+      : null;
+    return {
+      contractVersion: PERSISTENT_CONTRACT,
+      profile: "folioview.persistent-content.v1",
+      authority: head,
+      envelope: receipt?.envelope ?? (head ? previous?.envelope : null),
+    };
   }
   async tasks() {
     const v = this.vault(),
@@ -701,10 +712,7 @@ export class PersistentExperienceController {
   async approveTask(
     connection: PersistentConnection,
     metadata: TaskMetadata,
-    options: {
-      previous?: Json;
-      beforePublish: (packet: Json, context: Json) => Promise<void>;
-    },
+    options: TaskActivation,
   ) {
     const actor = this.actor(connection);
     const [packet, pending] = await Promise.all([
@@ -740,6 +748,7 @@ export class PersistentExperienceController {
       if (!matchesPublication && !matchesConsent) fail("persistent_operation_pending");
       // Only recover the exact signed operation for this task or one of its sources.
       await this.send(connection, pending);
+      if (publication?.objectType === "task") options = { ...options, state: undefined };
     }
     return this.approveReviewed(
       connection,
@@ -764,10 +773,7 @@ export class PersistentExperienceController {
     tasks: Pick<PersistentTask, "taskId" | "packet">[],
     expected: Json | null,
     allowReassign = false,
-    taskCenter?: {
-      previous?: Json;
-      beforePublish: (packet: Json, context: Json) => Promise<void>;
-    },
+    taskCenter?: TaskActivation,
   ) {
     if (!tasks.length) fail("select_task");
     const [context, catalogue] = await Promise.all([this.context(connection), this.catalogue()]);
@@ -809,7 +815,12 @@ export class PersistentExperienceController {
     await this.send(connection, packet);
     const current = packet.kind === "no_change" ? context : await this.context(connection);
     for (const task of tasks) {
-      const authority = await this.taskAuthority(connection, task, taskCenter?.previous);
+      const authority = await this.taskAuthority(
+        connection,
+        task,
+        taskCenter?.previous,
+        taskCenter,
+      );
       const p = await this.workspace().preparePersistentTask({
         ...this.control(current),
         authority,
@@ -818,7 +829,7 @@ export class PersistentExperienceController {
         allowReassign,
       });
       this.assert();
-      if (taskCenter) await taskCenter.beforePublish(p, current);
+      if (taskCenter) await taskCenter.beforePublish(p, current, authority.authority);
       this.assert();
       await this.send(connection, p);
     }
