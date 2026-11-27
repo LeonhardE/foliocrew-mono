@@ -9,7 +9,7 @@ from .constants import CONTRACT_VERSION, MAX_CONTROL_BYTES, MAX_SAFE_INTEGER
 from .crypto import jwk_thumbprint, signing_input_fingerprint, verify_jws
 from .errors import ContractError
 from .jsonutil import b64url_decode, canonical_json, strict_json_loads
-from .private_resources import PrivateRegistryCursor
+from .private_resources import PrivateRegistryCursor, verify_private_registry_transition_payload
 from .schema import validate_schema
 
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
@@ -339,6 +339,40 @@ def verify_legacy_archive_history(vault, registry, row):
     return _checked_history(vault, registry, row, maximum_checkpoints=32)
 
 
+def verify_retired_archive_history(vault, registry, row, transition, *, fingerprint, now):
+    """Verify a removed frozen copy against the signed, committed transfer boundary."""
+    try:
+        change = verify_private_registry_transition_payload(
+            transition, vault["rootJwk"], vault["rootKeyId"]
+        )
+        boundary = change["archive"]
+        if (
+            vault["archive"] is not None
+            or signing_input_fingerprint(transition) != fingerprint
+            or any(change[key] != vault[key] for key in ("ownerSubject", "vaultId", "rootKeyId"))
+            or change["previousHead"] != PrivateRegistryCursor(registry, 1).head()
+            or change["previousVaultVersion"] != vault["version"]
+            or change["nextVaultVersion"] != vault["version"] + 1
+            or change["nextHead"]["registryEpoch"] != 2
+            or change["issuedAt"] > now
+            or boundary["state"] != "active"
+        ):
+            raise ContractError("authorization_unavailable")
+        result = _verify_history(vault, registry, row, 32, retired_digest=boundary["digest"])
+        if result["version"] + 1 != boundary["version"]:
+            raise ContractError("authorization_unavailable")
+        return result
+    except (
+        ContractError,
+        KeyError,
+        TypeError,
+        ValueError,
+        AttributeError,
+        RecursionError,
+    ):
+        raise ContractError("authorization_unavailable") from None
+
+
 def verify_transferred_archive_history(vault, cursor, row):
     """Verify original and current receipts against an independently verified User registry."""
     if not isinstance(cursor, PrivateRegistryCursor) or cursor.registry_epoch != 2:
@@ -354,7 +388,7 @@ def _checked_history(vault, registry, row, *, maximum_checkpoints):
         raise ContractError("authorization_unavailable") from None
 
 
-def _verify_history(vault, registry, row, maximum_checkpoints):
+def _verify_history(vault, registry, row, maximum_checkpoints, *, retired_digest=None):
     if not isinstance(registry, VerifiedRegistry) or (
         vault["ownerSubject"] != registry.owner_subject
         or vault["vaultId"] != registry.vault_id
@@ -371,9 +405,9 @@ def _verify_history(vault, registry, row, maximum_checkpoints):
     }
     if vault["archive"] is not None:
         validate_passkey_archive(vault["archive"], **scope)
-    elif row is None:
+    elif row is None and retired_digest is None:
         raise ContractError("authorization_unavailable")
-    current_digest = _digest_value(vault["archive"])
+    current_digest = retired_digest or _digest_value(vault["archive"])
     initial = (
         current_digest
         if row is None
@@ -437,7 +471,8 @@ def _verify_history(vault, registry, row, maximum_checkpoints):
             raise ContractError("authorization_unavailable")
         advanced["operations"] = {**state["operations"], payload["stableOperationId"]: item}
         state = advanced
-    if state["digest"] != current_digest or state["deleted"] != (vault["archive"] is None):
+    expected_deleted = vault["archive"] is None and retired_digest is None
+    if state["digest"] != current_digest or state["deleted"] != expected_deleted:
         raise ContractError("authorization_unavailable")
     return state
 

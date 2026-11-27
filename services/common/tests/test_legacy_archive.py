@@ -17,6 +17,7 @@ from folioview_shared.encrypted.legacy_archive import (
     legacy_archive_receipt,
     verify_legacy_archive_command,
     verify_legacy_archive_history,
+    verify_retired_archive_history,
     verify_transferred_archive_history,
 )
 from folioview_shared.encrypted.private_resources import PrivateRegistryCursor
@@ -190,3 +191,50 @@ class LegacyArchiveTests(unittest.TestCase):
         self.assertEqual(result, self.state)
         self.assertTrue(result["deleted"])
         self.assertEqual(result["revision"], 1)
+
+    def test_retired_ciphertext_still_requires_exact_signed_transfer_and_history(self):
+        self.apply(
+            "recovery_authorize",
+            1000,
+            authorizationId="recovery",
+            newArchiveDigest="f" * 64,
+        )
+        previous = PrivateRegistryCursor(self.registry, 1).head()
+        first = self.f.make_bundle(previous=self.registry, issued_at=1050)
+        after = self.f.verify(first, previous=self.registry, now=1100)
+        change = {
+            **self.scope,
+            "contractVersion": CONTRACT_VERSION,
+            "profile": "folioview.owner-registry-transition.v1",
+            "operationId": "synthetic_registry_transfer_01",
+            "previousVaultVersion": 2,
+            "nextVaultVersion": 3,
+            "previousHead": previous,
+            "nextHead": PrivateRegistryCursor(after, 2).head(),
+            "archive": {
+                "state": "active",
+                "digest": self.state["digest"],
+                "version": 2,
+            },
+            "issuedAt": 1050,
+            "ownerKeyIds": sorted(after.active_key_ids),
+        }
+        signed = self.f.sign(change, "root")
+        vault = {**self.vault, "archive": None}
+        trusted = signing_input_fingerprint(signed)
+
+        def checked(row, signature=signed):
+            return verify_retired_archive_history(
+                vault, self.registry, row, signature, fingerprint=trusted, now=1100
+            )
+
+        self.assertEqual(checked(self.row), self.state)
+        bad = deepcopy(self.row)
+        bad["history"][0]["receipt"]["archiveRevision"] += 1
+        for changed in (None, bad):
+            with self.assertRaises(ContractError):
+                checked(changed)
+        with self.assertRaises(ContractError):
+            checked(self.row, self.f.sign({**change, "issuedAt": 1051}, "root"))
+        with self.assertRaises(ContractError):
+            verify_legacy_archive_history(vault, self.registry, self.row)

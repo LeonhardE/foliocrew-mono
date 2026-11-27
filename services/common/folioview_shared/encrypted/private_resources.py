@@ -329,6 +329,13 @@ def verify_private_registry_page(
     return PrivateRegistryCursor(registry, epoch)
 
 
+def verify_private_registry_transition_payload(signed, root_jwk, pinned_root_key_id):
+    return _validate(
+        "PrivateRegistryTransition",
+        verify_jws(signed, root_jwk, typ="fv-control+jws", expected_kid=pinned_root_key_id),
+    )
+
+
 def verify_private_registry_transition(
     signed: dict,
     *,
@@ -347,10 +354,7 @@ def verify_private_registry_transition(
     signed transition, next bundle, floor, and original receipt atomically.
     """
     _validate("PrivateResourceTime", now)
-    change = _validate(
-        "PrivateRegistryTransition",
-        verify_jws(signed, root_jwk, typ="fv-control+jws", expected_kid=pinned_root_key_id),
-    )
+    change = verify_private_registry_transition_payload(signed, root_jwk, pinned_root_key_id)
     _scope_match(
         change,
         {"ownerSubject": owner_subject, "vaultId": vault_id, "rootKeyId": pinned_root_key_id},
