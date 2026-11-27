@@ -355,7 +355,11 @@ def main():
         client = firestore.Client(project=args.project, database=args.database)
         print(
             json.dumps(
-                {"database": args.database, "providerMessageIds": delivery_refs(client, subject)}
+                {
+                    "database": args.database,
+                    "providerMessageIds": delivery_refs(client, subject),
+                    "providerSearchRequired": True,
+                }
             )
         )
         return

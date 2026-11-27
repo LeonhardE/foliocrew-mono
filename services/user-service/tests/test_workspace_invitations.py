@@ -237,14 +237,49 @@ class WorkspaceInvitationTests(unittest.TestCase):
         self.send.side_effect = revoke_while_sending
         revoked = self.create().json()
         self.assertEqual(revoked["status"], "revoked")
+        self.assertEqual(self.store.rows[revoked["id"]]["providerMessageId"], original_send)
         self.assertEqual(self.create().json(), revoked)
         self.send.side_effect = None
+        self.send.return_value = "replacement-message"
         sent = self.create(replaceRevision=revoked["revision"]).json()
         self.assertEqual(sent["status"], "invited")
+        self.assertEqual(self.store.rows[sent["id"]]["providerMessageId"], "replacement-message")
         self.assertNotEqual(sent["revision"], revoked["revision"])
         self.assertEqual(self.action(revoked, "revoke").json(), sent)
         self.assertEqual(self.create(replaceRevision=revoked["revision"]).json(), sent)
         self.assertEqual(self.send.call_count, 2)
+
+    def test_late_success_from_the_original_lease_confirms_the_same_retry(self):
+        original, _ = invites.start_delivery(None, EMAIL, NOW, "first")
+        retry, _ = invites.start_delivery(
+            original, None, NOW + invites.DELIVERY_LEASE, "second", "first"
+        )
+        for current in (
+            retry,
+            invites.finish_delivery(retry, retry["deliveryKey"], "second", None, NOW + 31)[1],
+        ):
+            with self.subTest(status=current["status"]):
+                _, final = invites.finish_delivery(
+                    current, original["deliveryKey"], "first", "confirmed-id", NOW + 32
+                )
+                self.assertEqual(final["status"], "invited")
+                self.assertEqual(final["providerMessageId"], "confirmed-id")
+                self.assertEqual(
+                    invites.finish_delivery(final, retry["deliveryKey"], "second", None, NOW + 33),
+                    (None, final),
+                )
+
+    def test_late_receipt_cannot_attach_to_a_reissued_invitation(self):
+        original, _ = invites.start_delivery(None, EMAIL, NOW, "first")
+        revoked, _ = invites.revoke(original, NOW + 1, "first")
+        replacement, _ = invites.start_delivery(revoked, EMAIL, NOW + 2, "second", "first")
+        self.assertEqual(
+            invites.finish_delivery(
+                replacement, original["deliveryKey"], "first", "old-recipient-id", NOW + 3
+            ),
+            (None, replacement),
+        )
+        self.assertNotIn("providerMessageId", replacement)
 
     def test_stale_ambiguous_delivery_cannot_retry_outside_provider_window(self):
         self.send.side_effect = DeliveryUnconfirmed
