@@ -1519,6 +1519,8 @@
     "openProvider": "Open {provider}",
     "serverAddress": "MCP server address",
     "copyServerAddress": "Copy address",
+    "museClientId": "Client ID (only if Muse asks)",
+    "copyClientId": "Copy Client ID",
     "connectHelp": "In {provider}, ask to add a custom connector named Foliocrew. Use the address below and follow the prompts to confirm access.",
     "reconnectHelp": "Open the existing Foliocrew connector in {provider} and authorize it again when prompted.",
     "connectionMessage": "Setup message to paste",

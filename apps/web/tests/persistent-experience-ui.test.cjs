@@ -644,13 +644,38 @@ test("expiry changes at the exact credential deadline and account unlinking foll
   }
 });
 
-test("connector dialogs open the official provider and copy the configured endpoint in each locale", async () => {
+test("connector dialogs open the official provider and copy Muse setup details in each locale", async () => {
   const brandOrigin = connectionContracts.BRANDED_AGENT_ORIGIN;
   const endpoint = brandOrigin + "/mcp/v3";
-  for (const [locale, connect, open, copy, guide] of [
-    ["en", "Connect", "Open", "Copy address", /ChatGPT Plugins/],
-    ["zh", "连接", "打开", "复制地址", /ChatGPT 的插件页面/],
-    ["zh-Hant", "連線", "開啟", "複製位址", /ChatGPT 的外掛程式頁面/],
+  const clientId = "foliocrew-muse-prod";
+  for (const [locale, connect, open, copy, guide, copyClientId, clientIdHelp] of [
+    [
+      "en",
+      "Connect",
+      "Open",
+      "Copy address",
+      /ChatGPT Plugins/,
+      "Copy Client ID",
+      "Client ID (only if Muse asks)",
+    ],
+    [
+      "zh",
+      "连接",
+      "打开",
+      "复制地址",
+      /ChatGPT 的插件页面/,
+      "复制 Client ID",
+      "Client ID（仅在 Muse 要求时使用）",
+    ],
+    [
+      "zh-Hant",
+      "連線",
+      "開啟",
+      "複製位址",
+      /ChatGPT 的外掛程式頁面/,
+      "複製 Client ID",
+      "Client ID（僅在 Muse 要求時使用）",
+    ],
   ]) {
     let launches = 0;
     const writes = [];
@@ -689,12 +714,65 @@ test("connector dialogs open the official provider and copy the configured endpo
               (node) => node.props.id === "connect-agent-instructions",
             );
             assert.match(instructions.props.children, guide);
+            assert.equal(button(tree, copyClientId), undefined);
           }
           await button(tree, copy).props.onClick();
+          if (provider === "Muse") {
+            assert.equal(
+              all(tree, (node) => node.type === "span" && node.props.children === clientIdHelp)
+                .length,
+              1,
+            );
+            assert.equal(
+              all(tree, (node) => node.type === "code" && node.props.children === clientId).length,
+              1,
+            );
+            const [message] = all(tree, (node) => node.type === "textarea");
+            assert.ok(message.props.value.includes(clientId));
+            await button(tree, copyClientId).props.onClick();
+          }
         }
       },
     });
     assert.equal(launches, 2);
-    assert.deepEqual(writes, [endpoint, endpoint]);
+    assert.deepEqual(writes, [endpoint, clientId, endpoint]);
+  }
+});
+
+test("the public Muse Client ID stays out of unbranded setup and credential pairing", async () => {
+  const pairingView = {
+    connection: {
+      provider: "muse",
+      connectionId: "pairing",
+      status: "active",
+      accountState: "connected",
+      linkedAt: 1000,
+    },
+    credential: { status: "reauthorization_required" },
+    tasks: [],
+  };
+  for (const [brandOrigin, views, action] of [
+    [undefined, [], "Connect Muse"],
+    [connectionContracts.BRANDED_AGENT_ORIGIN, [pairingView], "Continue connection"],
+  ]) {
+    await render("en", true, null, null, null, {
+      brandOrigin,
+      model: { views },
+      async interact(view) {
+        const button = all(
+          view(),
+          (node) => node.type === "button" && node.props.children === action,
+        )[0];
+        button.props.onClick();
+        const tree = view();
+        assert.equal(
+          all(tree, (node) => node.type === "button" && node.props.children === "Copy Client ID")
+            .length,
+          0,
+        );
+        const [message] = all(tree, (node) => node.type === "textarea");
+        assert.doesNotMatch(message.props.value, /foliocrew-muse-prod/);
+      },
+    });
   }
 });

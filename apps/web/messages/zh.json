@@ -1519,6 +1519,8 @@
     "openProvider": "打开 {provider}",
     "serverAddress": "MCP 服务器地址",
     "copyServerAddress": "复制地址",
+    "museClientId": "Client ID（仅在 Muse 要求时使用）",
+    "copyClientId": "复制 Client ID",
     "connectHelp": "在 {provider} 中请它添加名为 Foliocrew 的自定义 Connector，使用下方地址，并按提示确认授权。",
     "reconnectHelp": "在 {provider} 中打开现有的 Foliocrew Connector，按提示重新授权。",
     "connectionMessage": "可粘贴的设置说明",

@@ -302,16 +302,20 @@ export function PersistentAgentsPanel({
   const helpIsPairing = helpGroup?.accountStep === "pairingNeeded";
   const connectorOrigin = brandOrigin ?? origin;
   const connectorAddress = connectorOrigin && `${connectorOrigin}/mcp/v3`;
+  const museClientId =
+    help === "muse" && !helpIsPairing && connectorOrigin === BRANDED_AGENT_ORIGIN
+      ? PUBLIC_MUSE_CLIENT_ID
+      : null;
   const connectionPrompt =
     help && helpIsPairing
       ? t("pairingPrompt")
       : connectorAddress && help
         ? help === "chatgpt"
           ? t("chatgptConnectionPrompt", { address: connectorAddress })
-          : connectorOrigin === BRANDED_AGENT_ORIGIN
+          : museClientId
             ? t("museConnectionPromptWithClient", {
                 address: connectorAddress,
-                clientId: PUBLIC_MUSE_CLIENT_ID,
+                clientId: museClientId,
               })
             : t("museConnectionPrompt", { address: connectorAddress })
         : null;
@@ -761,6 +765,21 @@ export function PersistentAgentsPanel({
                     onClick={() => copyMessage(connectorAddress)}
                   >
                     {t(copiedMessage === connectorAddress ? "copied" : "copyServerAddress")}
+                  </button>
+                </div>
+              </div>
+            )}
+            {museClientId && (
+              <div className={styles.connectorAddress}>
+                <span className={styles.note}>{t("museClientId")}</span>
+                <div className={styles.actions}>
+                  <code>{museClientId}</code>
+                  <button
+                    type="button"
+                    className={styles.secondary}
+                    onClick={() => copyMessage(museClientId)}
+                  >
+                    {t(copiedMessage === museClientId ? "copied" : "copyClientId")}
                   </button>
                 </div>
               </div>
