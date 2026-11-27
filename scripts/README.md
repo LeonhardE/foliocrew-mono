@@ -1,5 +1,8 @@
 # Target registration, CI and first provision
 
+The [account erasure and restore procedure](docs/account-erasure.md) covers verified
+requests across the private application services.
+
 `service-targets.json` is the source registry used by CI, the isolated backend
 test runner and application release guards. It registers only source targets
 already delivered in this repository. It creates no infrastructure, build
