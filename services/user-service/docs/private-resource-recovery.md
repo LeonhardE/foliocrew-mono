@@ -122,3 +122,45 @@ A holdings-source deletion invalidates its eligibility and removes its display a
 Invitation administrators can remove an individually revoked or expired invitation using `DELETE /api/v1/workspace-invitations/{id}/{revision}`. An older revision cannot erase a replacement invitation. Removal is idempotent and the stored invitation disappears from the list. It does not change another membership or recall a previously delivered email.
 
 A migrated vault's cloud-key removal also clears all original wrapped-key copies staged in the User database for that owner, vault and Root. The signed handover and original registry checkpoints authenticate the old digest, and the complete signed lifecycle verifies the deletion and any later independent recovery. The removal endpoint and original-command retry finish interrupted cleanup before reporting a successful deletion. For older removals, run `--retired-archive-only` in `user-data` on the verified account and repeat with `--apply`. This checks for a verified post-handover deletion, including when independent recovery already created a newer archive. Reissuing the old staging operation cannot recreate the original envelope. Hub can obtain the applied deletion command and receipt using the Hub-only archive-retirement lookup. A restored database and any immutable exports still require their separate erasure checks.
+
+### Joined invitations and changed Gmail addresses
+
+Admission stores the verified Firebase owner partition and Google provider subject on each joined
+invitation. Inventory and mail-provider lookup follow this binding across address changes.
+An operator can remove an unclaimed invitation addressed to the verified current mailbox. A
+joined invitation belonging to another account stays with that account, including its delivery ID.
+
+A joined row from before this binding was recorded prevents a verified zero-residual result until
+its ownership is classified. Its address may have changed or been reassigned. An older erasure
+might already have removed the membership that once accompanied it. The lookup checks binding
+fields before fetching an owner's message ID. Bring the old joined inventory up to date before
+running multi-service account erasure. A current address or matching timestamps alone cannot
+establish the owner.
+
+For a legacy row, find the successful original Firestore admission Commit in the project's trusted
+Data Access log. The same Commit must link the membership keyed by the Firebase UID and the exact
+invitation email, revision and join time. Verify the issuing User runtime service account from
+the deployment inventory. In the service runtime, run
+`python -m app.repair_invitation_binding --project PROJECT --database user-data --writer-service-account RUNTIME_EMAIL`.
+Supply a private JSON object on standard input with the verified target `uid`, current `email`
+and original audit entry `insertId`. The default operation reads the Cloud Logging API and
+checks the current rows. Repeat with `--apply` to bind the surviving row. This metadata repair can also classify
+active members during migration. The separate erasure operation requires a disabled account. If the membership is already gone, the original Commit can still prove the invitation's
+scope. Re-run the ordinary account inventory, delivery-reference lookup and erasure afterward.
+Run against the actual original database when checking the legacy default database.
+
+If audit logging was disabled, the entry expired, essential fields were redacted, or the account
+identity is gone, retain the unresolved case for independently verified historical evidence.
+Keep quarantined restores offline if their original invitation scope cannot be established.
+The repair uses no locally supplied log body and emits no email address, UID or delivery ID.
+See Google's [Firestore audit logging](https://docs.cloud.google.com/firestore/native/docs/audit-logging)
+and [Cloud Logging entries lookup](https://docs.cloud.google.com/logging/docs/reference/v2/rest/v2/entries/list).
+
+When the subject is the workspace invitation administrator, the deployment owner also needs
+to check the `foliocrew-invitation-admin-uid` Secret Manager secret used by
+`FOLIOCREW_INVITATION_ADMIN_UID`. Coordinate the successor or remove the administrator role.
+Review active traffic, rollback-capable revisions, pinned versions and still-recoverable old
+secret versions against the target UID. Verify retirement or final destruction of versions
+containing it under the restricted case before closing this part of the request. Keep secret
+values out of evidence summaries. Ordinary member erasure has no need for access to this
+deployment secret.

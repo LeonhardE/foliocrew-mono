@@ -22,6 +22,12 @@ from folioview_shared.encrypted.crypto import verify_jws
 from folioview_shared.encrypted.jsonutil import canonical_json, strict_json_loads
 from folioview_shared.identity import owner_key
 
+from .invitation_erasure import (
+    ErasureIncomplete,
+    InvitationReviewRequired,
+    invitation_matches,
+    joined_binding,
+)
 from .private_resources.archive_lifecycle import PrivateArchiveLifecycle
 from .private_resources.authority_cutover import ARCHIVE_RECORDS, HANDOVERS, WITNESSES
 from .private_resources.display_name_cleanup import NAMES, OPERATIONS, erase_retired_names
@@ -41,10 +47,6 @@ from .resource_versions import KINDS, version_key
 from .resources import COLLECTIONS, FirestoreUserResourceStore
 from .watchlist import fx_owner
 from .workspace_invitations import INVITATIONS, MEMBERS, invitation_id
-
-
-class ErasureIncomplete(Exception):
-    """The scope, inventory or verification changed. Keep the case open."""
 
 
 @dataclass(frozen=True)
@@ -91,8 +93,6 @@ def fixed_keys(subject):
             (table, version_key(uid, kind))
             for table in ("user_resource_versions", "user_resource_initializations")
         )
-    if subject.email.isascii():
-        refs.append((INVITATIONS, invitation_id(subject.email)))
     return refs
 
 
@@ -140,25 +140,21 @@ def packed_owner(table, key, raw):
 def verify_fixed(table, data, subject):
     if table == MEMBERS and data.get("googleSubject") != subject.google_subject:
         raise ErasureIncomplete("Workspace membership is bound to another identity.")
-    if table == INVITATIONS and data.get("email") != subject.email:
-        raise ErasureIncomplete("Invitation identity is inconsistent.")
 
 
 def delivery_refs(client, subject):
-    if not subject.email.isascii():
-        return []
-    invite = client.collection(INVITATIONS).document(invitation_id(subject.email))
-    row = invite.get(field_paths=["email", "providerMessageId"], timeout=30)
-    if not row.exists:
-        return []
-    data = row.to_dict()
-    verify_fixed(INVITATIONS, data, subject)
-    ref = data.get("providerMessageId")
-    if ref is None:
-        return []
-    if not isinstance(ref, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", ref):
-        raise ErasureIncomplete("The delivery reference requires private operator review.")
-    return [ref]
+    refs = []
+    for invite in firestore_invitations(client, subject):
+        delivered = invite.reference.get(field_paths=["providerMessageId"], timeout=30)
+        if not delivered.exists or delivered.update_time != invite.update_time:
+            raise InvitationReviewRequired
+        value = delivered.to_dict().get("providerMessageId")
+        if value is None:
+            continue
+        if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", value):
+            raise ErasureIncomplete("The delivery reference requires private operator review.")
+        refs.append(value)
+    return sorted(set(refs))
 
 
 def sqlite_rows(db, subject):
@@ -172,6 +168,10 @@ def sqlite_rows(db, subject):
                 verify_fixed(table, strict_json_loads(row[0]), subject)
             yield table, "owner", key
     owner = owner_key(subject.uid)
+    if INVITATIONS in present:
+        for key, raw in db.execute(f"SELECT owner,value FROM {INVITATIONS}"):
+            if invitation_matches(key, strict_json_loads(raw, max_bytes=1_048_576), subject):
+                yield INVITATIONS, "owner", key
     for table, field in INDEXED.items():
         if table in present:
             for (key,) in db.execute(
@@ -216,7 +216,37 @@ def pages(query):
         cursor = rows[-1]
 
 
+def firestore_invitations(client, subject):
+    # Before owner bindings existed an old address may be the only lookup key.
+    invitations = client.collection(INVITATIONS)
+    fields = ["email", "status", "joinedOwner", "joinedGoogleSubject"]
+    current = invitation_id(subject.email) if subject.email.isascii() else None
+    if current:
+        row = invitations.document(current).get(field_paths=fields, timeout=30)
+        if row.exists and invitation_matches(row.id, row.to_dict(), subject):
+            yield row
+    owner = owner_key(subject.uid)
+    joined = invitations.where(filter=FieldFilter("status", "==", "joined"))
+    for row in pages(joined.select(["joinedOwner", "joinedGoogleSubject"])):
+        if row.id == current:
+            continue
+        bound_owner, google = joined_binding(row.to_dict())
+        if bound_owner != owner:
+            continue
+        if google != subject.google_subject:
+            raise InvitationReviewRequired
+        matched = row.reference.get(field_paths=fields, timeout=30)
+        if (
+            not matched.exists
+            or matched.update_time != row.update_time
+            or not invitation_matches(matched.id, matched.to_dict(), subject)
+        ):
+            raise InvitationReviewRequired
+        yield matched
+
+
 def firestore_rows(client, subject):
+    yield from firestore_invitations(client, subject)
     owner = owner_key(subject.uid)
     refs = [client.collection(table).document(key) for table, key in fixed_keys(subject)]
     for row in client.get_all(refs, field_paths=["email", "googleSubject"], timeout=30):
@@ -386,6 +416,10 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except InvitationReviewRequired:
+        sys.exit(
+            "Invitation ownership requires review. Verify the original admission before erasing."
+        )
     except Exception:
         # SDK errors can include private document paths or the account's email.
         sys.exit("User erasure incomplete. Verify the identity, database access and case status.")
