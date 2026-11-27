@@ -85,6 +85,7 @@ function picker({
   mode = "unavailable",
   credential = "active",
   schedule = null,
+  setup,
 } = {}) {
   const h = hooks(),
     messages = require("../messages/" + locale + ".json");
@@ -167,16 +168,18 @@ function picker({
       },
     ],
   };
+  const workspace = {
+    authenticated: true,
+    owner: "owner_A",
+    phase: "unlocked",
+    vault: { vaultId: "vault_A" },
+    vaultGeneration: 1,
+  };
+  setup?.({ model, center, persistent, workspace });
   const draw = () =>
     h.render(() =>
       component.TaskCenterView({
-        workspace: {
-          authenticated: true,
-          owner: "owner_A",
-          phase: "unlocked",
-          vault: { vaultId: "vault_A" },
-          vaultGeneration: 1,
-        },
+        workspace,
         model,
         center,
         persistent,
@@ -412,6 +415,106 @@ for (const newTask of [false, true]) {
           },
         },
       ]);
+    } finally {
+      p.close();
+    }
+  });
+}
+
+for (const [scenario, expected] of [
+  ["reschedule", ["set_rules", "set_assignment"]],
+  ["same schedule", []],
+  ["initially stale", ["set_rules"]],
+  ["deselect", ["set_rules", "remove_assignment"]],
+  ["concurrent replacement", ["set_rules"]],
+]) {
+  test(`saving a task with an existing Muse assignment: ${scenario}`, async () => {
+    const commands = [];
+    const p = picker({
+      mode: "available",
+      schedule: { frequency: "daily", days: [], localTime: "15:37", timeZone: "America/Toronto" },
+      setup({ model, center, persistent, workspace }) {
+        const state = center.selectedRecord;
+        const d = state.rules.definition;
+        const versions = { taskVersion: 1, executionEpoch: 1, ruleVersion: 2, lifecycleEpoch: 1 };
+        Object.assign(d, versions);
+        Object.assign(model.selected, { executionEpoch: 1, vaultId: "vault_A" });
+        const credential = { connectionId: "muse_connection" };
+        const row = {
+          assignment: {
+            ...versions,
+            ruleVersion: scenario === "initially stale" ? 1 : 2,
+            assignmentId: "original_muse",
+            assignmentVersion: 1,
+            credential,
+            provider: "muse",
+            status: "active",
+            authorityFingerprint: "same_publication",
+          },
+          plan: { currentAssignment: scenario !== "initially stale" },
+        };
+        state.assignments = [row];
+        center.currentAssignments = row.plan.currentAssignment ? [row] : [];
+        center.executors.providers = row.plan.currentAssignment ? ["muse"] : [];
+        center.base = (id) => id;
+        center.api = async () => state;
+        center.load = async () => {};
+        center.command = async (id, action, value, reviewed) => {
+          assert.equal(reviewed, state);
+          commands.push(action);
+          if (action === "set_rules") {
+            d.schedule = value;
+            d.ruleVersion++;
+            row.plan.currentAssignment = false;
+          } else if (action === "remove_assignment")
+            assert.equal(value, row.assignment.assignmentId);
+          else assert.equal(value.authorityFingerprint, row.assignment.authorityFingerprint);
+        };
+        workspace.verifyTaskCenterState = async (current) => current;
+        persistent.views = [
+          {
+            connection: { provider: "muse", status: "active", ...credential },
+            credential: { status: "active", reference: credential },
+          },
+        ];
+        const controller = {
+          async approveTask(connection, selected, { beforePublish }) {
+            await beforePublish(
+              { kind: "no_change", authority: { fingerprint: "same_publication" } },
+              {},
+            );
+          },
+        };
+        persistent.executeTaskActivation = (run) =>
+          run(
+            controller,
+            async () => ({ slot: { currentCredential: credential } }),
+            () => {},
+          );
+      },
+    });
+    try {
+      const muse = all(p.draw(), (n) => n.type === "label" && text(n) === "Muse")[0];
+      const input = all(muse, (n) => n.type === "input")[0];
+      assert.equal(input.props.checked, scenario !== "initially stale");
+      if (scenario === "deselect" || scenario === "concurrent replacement")
+        input.props.onChange({ target: { checked: false } });
+      if (scenario === "concurrent replacement")
+        p.center.selectedRecord.assignments[0].assignment.assignmentVersion++;
+      if (scenario !== "same schedule") {
+        const time = all(p.draw(), (n) => n.type === "input" && n.props.type === "time")[0];
+        time.props.onChange({ target: { value: "14:37" } });
+      }
+      p.button(p.draw(), p.messages.next).props.onClick();
+      p.button(p.draw(), p.messages.confirm).props.onClick();
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(commands, expected);
+      if (scenario === "concurrent replacement") {
+        assert.ok(
+          all(p.draw(), (node) => node.props?.message === p.messages.errors.version_conflict)
+            .length,
+        );
+      } else assert.ok(p.button(p.draw(), p.messages.settings));
     } finally {
       p.close();
     }
