@@ -1,0 +1,126 @@
+@font-face {
+  font-family: "Instrument Sans";
+  src: url("./instrument-sans.woff") format("woff");
+  font-weight: 400 700;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light dark;
+  --bg: #f7f8f8;
+  --ink: #172531;
+  --text: #354956;
+  --rule: #c0cbd1;
+  --link: #315eac;
+  font-family: "Instrument Sans", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0a1019;
+    --ink: #f4f3ee;
+    --text: #c0c8d3;
+    --rule: #3c4658;
+    --link: #b6c8fd;
+  }
+}
+
+.policy {
+  margin: 0;
+  padding-inline: clamp(20px, 5vw, 72px);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 1.0625rem;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.policy:lang(zh-Hant) {
+  font-family: "Instrument Sans", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+}
+
+.policy > header,
+.policy > main,
+.policy > footer {
+  max-width: 46rem;
+  margin-inline: auto;
+}
+
+.policy > header,
+.policy > footer,
+.policy nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1.25rem;
+}
+
+.policy > header {
+  justify-content: space-between;
+  padding-block: 1.5rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.policy header > a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--ink);
+  font-size: 1.3rem;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.policy header img {
+  width: 1.875rem;
+  height: 1.875rem;
+}
+
+.policy > main {
+  padding-block: clamp(2.25rem, 6vw, 5rem);
+}
+
+.policy h1,
+.policy h2 {
+  color: var(--ink);
+  line-height: 1.15;
+  text-wrap: balance;
+}
+
+.policy h1 {
+  margin: 0 0 1rem;
+  font-size: clamp(2.25rem, 5vw, 3.5rem);
+  letter-spacing: -0.04em;
+}
+
+.policy h2 {
+  margin: 2.25rem 0 0.65rem;
+  font-size: clamp(1.35rem, 2vw, 1.7rem);
+}
+
+.policy p,
+.policy ul,
+.policy ol {
+  margin: 0.75rem 0;
+}
+
+.policy ul,
+.policy ol {
+  padding-inline-start: 1.5rem;
+}
+
+.policy a {
+  color: var(--link);
+  text-underline-offset: 0.2em;
+}
+
+.policy a:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+
+.policy > footer {
+  border-top: 1px solid var(--rule);
+  padding-block: 1.5rem;
+  font-size: 0.95rem;
+}

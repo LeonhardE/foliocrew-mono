@@ -19,6 +19,7 @@
     pause: "Pause presentation",
     play: "Play presentation",
     language: "Language",
+    policies: "Policies",
   });
   const dictionaries = {
     en: english,
@@ -54,6 +55,9 @@
       pause: "暂停播放",
       play: "继续播放",
       language: "语言",
+      policies: "网站政策",
+      privacyPolicy: "隐私政策",
+      termsOfService: "服务条款",
     },
     "zh-Hant": {
       category: "投資研究 Agent 平台",
@@ -87,6 +91,9 @@
       pause: "暫停播放",
       play: "繼續播放",
       language: "語言",
+      policies: "網站政策",
+      privacyPolicy: "隱私權政策",
+      termsOfService: "服務條款",
     },
   };
   const scopeCopy = {
