@@ -241,11 +241,7 @@ export class PersistentOwner {
         c.issuedAt < deletedAt + 2592000
       ) {
         status = "active";
-      } else if (
-        c.action === "purge" &&
-        status === "trashed" &&
-        c.issuedAt >= deletedAt + 2592000
-      ) {
+      } else if (c.action === "purge" && status === "trashed" && c.issuedAt >= deletedAt) {
         status = "purged";
       } else fail();
     }

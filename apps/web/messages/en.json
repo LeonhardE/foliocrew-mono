@@ -170,6 +170,9 @@
       "review": "Review invitation",
       "confirmSend": "Send an invitation to {email}?",
       "confirmRevoke": "Revoke the invitation for {email}?",
+      "confirmErase": "Permanently delete the invitation record for {email}?",
+      "erase": "Delete record",
+      "eraseFor": "Delete the invitation record for {email}",
       "send": "Send invitation",
       "revoke": "Revoke",
       "cancel": "Cancel",
@@ -384,6 +387,7 @@
       "receipt_recovered": "The saved receipt was recovered and verified. Cloud history was kept.",
       "retry_discarded": "The local retry was removed. Cloud history was not deleted; you can choose a CSV for a new import.",
       "source_change_pending": "The change was accepted and is awaiting confirmation.",
+      "source_deleted": "The holdings source and its saved snapshots have been deleted.",
       "source_change_acknowledged": "The original change is acknowledged. Refer to the displayed current data state.",
       "source_change_discarded": "The obsolete local request was cleared. Server data was not deleted.",
       "new_source": "New independent data is ready. Review the CSV and explicitly save; existing data keeps its state.",
@@ -490,7 +494,7 @@
       "newHelp": "Your next save creates independent data. It will not restore or change access to existing data.",
       "add": "New holdings source",
       "newFromPreview": "Save this preview as independent data",
-      "limit": "At most 10 creation records are retained. Deleting data does not release a record slot.",
+      "limit": "This vault can hold 10 holdings sources at a time. Delete one to add another.",
       "historical": "These holdings belong to the previous scope. Previous access is invalidated. Review the preview accounts and save again before authorizing an agent.",
       "creationPending": "The creation result is unconfirmed. Continue checking the original request without creating a duplicate.",
       "resumeCreation": "Check original creation",
@@ -518,13 +522,13 @@
       "effects": {
         "fence": "Stop future access and new tasks under the previous scope while retaining holdings history. Save the current account scope again, then authorize an agent.",
         "disconnect": "Stop future use and updates. Existing holdings remain readable after unlocking. Importing again requires independent data.",
-        "delete": "Hide this data and its holdings history, and stop future access. Server ciphertext and backups may be retained; this does not mean immediate physical erasure."
+        "delete": "Delete this holdings source and its saved snapshots, and stop future access. Copies in backups may remain until they expire."
       },
       "states": {
         "active": "Available for use and updates.",
         "revoking": "Restricting previous access; awaiting confirmation.",
         "disconnected": "Disconnected. Existing holdings remain readable.",
-        "deleted": "Deleted. Holdings history is hidden."
+        "deleted": "This source is no longer accessible. Removal of its saved snapshots is awaiting confirmation."
       },
       "unknown": "This data state is unconfirmed. Check it again before saving or changing access.",
       "initialize": "Check and prepare this data",
@@ -1592,6 +1596,11 @@
     "unknownSave": "Save not confirmed. Check the original request.",
     "checkSave": "Check status",
     "retryOriginal": "Retry original save",
+    "purge": "Delete permanently",
+    "purgeConfirm": "Permanently delete “{title}” and all its reports? You won’t be able to restore them.",
+    "purgeComplete": "The task and its reports were permanently removed from the task center.",
+    "purgePending": "Deletion is in progress. You can close this page.",
+    "purgeReview": "Deletion needs review. Some task data may still remain.",
     "trashEmpty": "Trash is empty.",
     "back": "Back",
     "recoverable": "Recoverable",
@@ -1682,6 +1691,7 @@
       "channel_follows": "YouTube creators"
     },
     "errors": {
+      "purge_unconfirmed": "The task is unavailable. We couldn’t confirm that permanent deletion finished.",
       "request_failed": "Could not finish. Please try again.",
       "validation_failed": "Complete the name, goal and required resources.",
       "invalid_schedule": "Choose a valid time, time zone and weekday.",

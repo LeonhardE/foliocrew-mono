@@ -191,12 +191,17 @@ their access. The old Passkey alone cannot restore an absent cloud archive.
 
 ### Cloud archive removal: Request and proof boundaries
 
-Three fixed Google-owner BFF POST routes consume the released Hub producer:
+For a Hub-owned vault the browser uses three fixed owner POST routes:
 
 - `archive-deletions`: the root-signed original removal, with its stable idempotency key.
 - `archive-deletion-checks`: read-only check of that exact signed request; no idempotency key.
 - `archive-deletion-withdrawals`: a new root-signed withdrawal bound to the original request's
   identifier, fingerprint and lifecycle version, with its own stable idempotency key.
+
+For a vault whose authority moved to User, the browser verifies the signed outcome with User
+and asks Hub to clear the former copy using `retired-archive-cleanup`. Hub derives ownership and
+reads the migration evidence from User. The browser checks the vault identifier and a zero remaining
+count before clearing the local request. Reopening settings can finish an interrupted removal.
 
 The BFF forwards public root signatures only, without author-key selection or delegation.
 Command bodies are bounded to 8 KiB; withdrawals are bounded to 24 KiB with each of their two

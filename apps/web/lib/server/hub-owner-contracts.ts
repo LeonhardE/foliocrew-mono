@@ -497,6 +497,15 @@ export function hubResponse(
   if (method === "PUT" && /\/preparation\/objects\//.test(path))
     return descriptor(body, true) && record(body) && body.objectId === path.split("/").at(-1);
   if (!record(body) || body.contractVersion !== CONTRACT) return false;
+  const retiredArchive =
+    /^\/api\/v2\/vaults\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})\/retired-archive-cleanup$/.exec(path);
+  if (retiredArchive)
+    return (
+      method === "POST" &&
+      fields(body, ["contractVersion", "vaultId", "remaining"]) &&
+      body.vaultId === retiredArchive[1] &&
+      body.remaining === 0
+    );
   const renewalPath =
     /^\/api\/v2\/vaults\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})\/(key-renewal-state|key-renewals|key-renewal-operations\/([A-Za-z0-9_-]{22,128}))$/.exec(
       path,

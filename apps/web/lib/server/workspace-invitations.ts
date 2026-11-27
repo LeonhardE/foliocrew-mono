@@ -147,7 +147,9 @@ export function createWorkspaceInvitationsProxy(options: Options = {}) {
         }),
         signal,
       );
-      if (response.status !== 200) {
+      if (request.method === "DELETE" && response.status === 204)
+        return new Response(null, { status: 204, headers: { "Cache-Control": "no-store" } });
+      if (response.status !== 200 || request.method === "DELETE") {
         void response.body?.cancel().catch(() => {});
         return errorResponse(RESPONSE_ERRORS.get(response.status) ?? "source_unavailable");
       }

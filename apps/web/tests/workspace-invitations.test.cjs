@@ -148,3 +148,17 @@ test("list cursors and delivery revisions are scoped to the fixed routes", async
   assert.equal(retry.forwarded[0].url, TARGET + suffix);
   assert.equal(retry.forwarded[0].options.body, undefined);
 });
+
+test("permanent invitation removal accepts only the reviewed invitation and revision", async () => {
+  const { handle, forwarded } = setup(() => new Response(null, { status: 204 }));
+  const suffix = `/${INVITATION.id}/${INVITATION.revision}`;
+  assert.equal(
+    (await handle(request(suffix, { method: "DELETE", headers: { Origin: SITE } }))).status,
+    204,
+  );
+  assert.equal(forwarded[0].url, TARGET + suffix);
+  assert.equal(forwarded[0].options.method, "DELETE");
+  assert.equal((await handle(request("/" + INVITATION.id, { method: "DELETE" }))).status, 404);
+  assert.equal((await handle(request(suffix, { method: "DELETE", body: "{}" }))).status, 400);
+  assert.equal(forwarded.length, 1);
+});

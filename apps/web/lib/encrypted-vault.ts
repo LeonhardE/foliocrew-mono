@@ -1575,6 +1575,49 @@ export class EncryptedVaultSession {
     this.assert(g);
     return result;
   }
+  async pendingRemovedSources(sources: Source[]): Promise<SourceMutationPacket[]> {
+    const generation = this.generation;
+    await this.started;
+    const prefix = this.owner + ":source-mutation:";
+    const rows = await this.storage.list(prefix);
+    this.assert(generation);
+    const packets = [];
+    for (const { key, value } of rows) {
+      const id = key.slice(prefix.length);
+      if (
+        value?.vaultId !== this.vaultId ||
+        value?.pending?.action !== "delete" ||
+        sources.some((source) => source.resourceRef.resourceId === id)
+      )
+        continue;
+      const packet = await this.loadSourceMutation(id);
+      if (packet?.action === "delete") packets.push(packet);
+    }
+    this.assert(generation);
+    return packets;
+  }
+  // A physically erased operation has no receipt to replay. The caller verifies
+  // absence in both the fresh vault and Portfolio before retiring its local retry.
+  async finishAbsentDeletion(packet: SourceMutationPacket, signal: AbortSignal) {
+    return this.serial(async () => {
+      const generation = this.generation;
+      const cancellation = AbortSignal.any([this.lifetime.signal, signal]);
+      cancellation.throwIfAborted();
+      await this.rpc("validateSourceMutation", { packet });
+      this.assert(generation);
+      if (packet.action !== "delete" || !this.storage.finishSourceMutation)
+        throw new VaultError("operation_conflict");
+      if (
+        !(await this.storage.finishSourceMutation(
+          this.sourceMutationKey(packet.source.resourceRef.resourceId),
+          { ownerSubject: this.owner, vaultId: this.vaultId, pending: packet },
+          cancellation,
+        ))
+      )
+        throw new VaultError("operation_conflict");
+      this.assert(generation);
+    });
+  }
   async discardSourceMutation(
     packet: SourceMutationPacket,
     currentSource: Source,
@@ -1814,6 +1857,19 @@ export class EncryptedVaultSession {
         throw new VaultError("operation_conflict");
       this.assert(g);
       return result;
+    });
+  }
+  async clearConfirmedPurge(taskId: string, operationId: string) {
+    return this.serial(async () => {
+      const generation = this.generation;
+      const packet = await this.loadTaskCenterPending(taskId);
+      this.assert(generation);
+      if (!packet) return;
+      if (packet.action !== "purge" || packet.operationId !== operationId)
+        throw new VaultError("operation_conflict");
+      if (!(await this.storage.removeOperation(this.taskCenterKey(taskId), operationId)))
+        throw new VaultError("operation_conflict");
+      this.assert(generation);
     });
   }
   private persistentKey(actor: { connectionId: string; clientId: string }) {

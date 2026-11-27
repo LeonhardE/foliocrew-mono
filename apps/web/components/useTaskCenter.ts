@@ -489,6 +489,122 @@ export function useTaskCenter(
     },
     [api, base, load, update],
   );
+  const purgeTrashTask = useCallback(
+    async (row: J, reviewedScope: string) => {
+      const start = live.current;
+      if (start.scope !== reviewedScope || !start.scope || !start.workspace.canWriteState)
+        throw Error("unlock_required");
+      if (writes.current) throw Error("operation_pending");
+      writes.current = true;
+      update({ busy: true, error: "" }, reviewedScope);
+      const checked = () => {
+        if (live.current.scope !== reviewedScope) throw Error("cancelled");
+      };
+      try {
+        const d = row.definition,
+          task = row.taskId;
+        if (
+          !d ||
+          !row.title ||
+          !row.canRestore ||
+          d.status !== "trashed" ||
+          d.taskId !== task ||
+          d.vaultId !== start.workspace.vault!.vaultId ||
+          row.envelope?.metadata?.taskId !== task ||
+          row.envelope.metadata.taskVersion !== d.taskVersion
+        )
+          throw Error("version_conflict");
+        const path = base(task);
+        const sameReview = (actual: J | null | undefined) =>
+          actual?.status === "trashed" &&
+          [
+            "ownerSubject",
+            "vaultId",
+            "taskId",
+            "taskVersion",
+            "executionEpoch",
+            "definitionVersion",
+            "lifecycleEpoch",
+            "deletedAt",
+          ].every((key) => actual[key] === d[key]);
+        let packet = await start.workspace.loadTaskCenterPending(task);
+        checked();
+        if (packet && (packet.action !== "purge" || !sameReview(packet.definition)))
+          throw Error("operation_pending");
+        if (!packet) {
+          const current = await api(path);
+          checked();
+          if (
+            current.taskId !== task ||
+            !sameReview(current.rules?.definition) ||
+            current.taskVersion !== d.taskVersion ||
+            current.executionEpoch !== d.executionEpoch
+          )
+            throw Error("version_conflict");
+          packet = await start.workspace.prepareTaskCenterControl({
+            state: current,
+            action: "purge",
+            value: null,
+          });
+          checked();
+        }
+        // A lost POST can have committed already. Only a confirmed maintenance result
+        // can resolve that ambiguity. An ordinary 404 neither proves nor completes erasure.
+        let accepted = false;
+        try {
+          await send(packet, false);
+          accepted = true;
+        } catch (e) {
+          checked();
+          if (
+            ![
+              "not_found",
+              "request_timeout",
+              "service_unavailable",
+              "request_failed",
+              "Failed to fetch",
+            ].includes(error(e))
+          )
+            throw e;
+        }
+        checked();
+        try {
+          const result = await api(path + "/maintenance", {
+            method: "POST",
+            json: { contractVersion: CONTRACT },
+          });
+          if (
+            result.contractVersion !== CONTRACT ||
+            typeof result.complete !== "boolean" ||
+            typeof result.reviewRequired !== "boolean" ||
+            (result.complete && result.reviewRequired)
+          )
+            throw Error("invalid_response");
+          if (!accepted) await start.workspace.clearConfirmedPurge(task, packet.operationId);
+          checked();
+          update({ pending: null }, reviewedScope);
+          if (result.complete) return "purgeComplete" as const;
+          return result.reviewRequired ? ("purgeReview" as const) : ("purgePending" as const);
+        } catch (e) {
+          checked();
+          if (
+            accepted &&
+            ["request_timeout", "service_unavailable", "not_found"].includes(error(e))
+          )
+            return "purgePending" as const;
+          if (error(e) === "not_found") throw Error("purge_unconfirmed");
+          throw e;
+        }
+      } catch (e) {
+        update({ error: error(e) }, reviewedScope);
+        throw e;
+      } finally {
+        writes.current = false;
+        update({ busy: false }, reviewedScope);
+      }
+    },
+    [api, base, send, update],
+  );
   const trashList = useCallback(
     async (more = false) => {
       const start = live.current;
@@ -518,10 +634,19 @@ export function useTaskCenter(
           }
         }
         const rows = await Promise.all(
-          page.items.map(async (row: J) => ({
-            ...row,
-            title: row.envelope ? (await start.workspace.openTask(row.envelope)).name : null,
-          })),
+          page.items.map(async (row: J) => {
+            if (
+              row.envelope &&
+              (row.envelope.metadata?.taskId !== row.taskId ||
+                row.envelope.metadata?.vaultId !== start.workspace.vault!.vaultId ||
+                row.envelope.metadata?.taskVersion !== row.definition?.taskVersion)
+            )
+              throw Error("invalid_response");
+            return {
+              ...row,
+              title: row.envelope ? (await start.workspace.openTask(row.envelope)).name : null,
+            };
+          }),
         );
         update(
           {
@@ -845,6 +970,7 @@ export function useTaskCenter(
     recover,
     cancel,
     trashList,
+    purgeTrashTask,
     api,
     base,
   };

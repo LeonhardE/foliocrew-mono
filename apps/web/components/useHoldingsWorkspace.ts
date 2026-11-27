@@ -909,6 +909,55 @@ export function useHoldingsWorkspace(
     [api, auth.ownerCapabilities?.userVault, uid],
   );
 
+  const reconcileRemovedSource = useCallback(
+    async (
+      instance: EncryptedVaultSession,
+      fresh: { vault: Vault | null; sources: Source[] },
+      packet: SourceMutationPacket,
+      signal: AbortSignal,
+      assertActive: () => void,
+    ) => {
+      const ref = packet.source.resourceRef;
+      if (
+        !fresh.vault ||
+        fresh.vault.vaultId !== stateRef.current.vault?.vaultId ||
+        fresh.vault.rootKeyId !== stateRef.current.vault.rootKeyId ||
+        packet.action !== "delete" ||
+        fresh.sources.some((s) => sameSource(s.resourceRef, ref)) ||
+        fresh.vault.userAuthority?.sources.some((s) => sameSource(s.binding.ref, ref))
+      )
+        return false;
+      await instance.acceptVault(fresh.vault);
+      assertActive();
+      const path = `/api/v2/holdings/sources/${ref.resourceId}/mutations/${packet.operationId}`;
+      const target = { resourceRef: ref, sourceEpoch: packet.source.sourceEpoch + 1 };
+      let receipt = await api("portfolio", path, signal, { allowMissing: true });
+      assertActive();
+      if (receipt !== null) {
+        const checked = mutationReceipt(receipt, target, packet.operationId);
+        await instance.verifySourceMutationReceipt(packet, checked);
+        assertActive();
+        if (checked.state === "pending") {
+          receipt = await api("portfolio", path + "/synchronize", signal, {
+            method: "POST",
+            json: { contractVersion: CONTRACT },
+            allowMissing: true,
+          });
+          assertActive();
+        }
+      }
+      if (receipt === null) await instance.finishAbsentDeletion(packet, signal);
+      else
+        await instance.finishSourceMutation(
+          packet,
+          mutationReceipt(receipt, target, packet.operationId),
+          signal,
+        );
+      assertActive();
+      return true;
+    },
+    [api],
+  );
   const readUserArchive = useCallback(
     async (vault: Vault, signal: AbortSignal, operationId: string | null) => {
       const nonce = crypto.randomUUID().replace(/-/g, "");
@@ -1539,6 +1588,29 @@ export function useHoldingsWorkspace(
     [api, uid],
   );
 
+  const clearRetiredArchive = useCallback(
+    async (vault: Vault, signal: AbortSignal) => {
+      if (!vault.userAuthority) return;
+      const result = await api(
+        "agent-hub",
+        `/api/v2/vaults/${vault.vaultId}/retired-archive-cleanup`,
+        signal,
+        {
+          method: "POST",
+          json: { contractVersion: CONTRACT },
+        },
+      );
+      if (
+        !record(result) ||
+        result.contractVersion !== CONTRACT ||
+        result.vaultId !== vault.vaultId ||
+        result.remaining !== 0
+      )
+        throw new WorkspaceError("archive_deletion_unknown");
+    },
+    [api],
+  );
+
   const reconcileArchiveDeletion = useCallback(
     async (
       initial: { vault: Vault | null; sources: Source[] },
@@ -1594,6 +1666,7 @@ export function useHoldingsWorkspace(
         assertActive();
         if (!pending) {
           await instance.verifyLifecycle(snapshot.vault, lifecycle);
+          if (snapshot.vault.archive === null) await clearRetiredArchive(snapshot.vault, signal);
           assertActive();
           terminate();
           setState((previous) => ({
@@ -1640,6 +1713,8 @@ export function useHoldingsWorkspace(
           continue;
         }
         if (pending.outcome !== "unresolved") {
+          if (pending.outcome === "deleted") await clearRetiredArchive(snapshot.vault, signal);
+          assertActive();
           const outcome = await instance.finishArchiveDeletion(snapshot.vault, lifecycle);
           assertActive();
           terminate();
@@ -1657,7 +1732,7 @@ export function useHoldingsWorkspace(
       }
       throw new WorkspaceError("archive_deletion_unknown");
     },
-    [archiveRemovalRequest, owner, uid, readCurrent, readLifecycle, terminate],
+    [archiveRemovalRequest, clearRetiredArchive, owner, uid, readCurrent, readLifecycle, terminate],
   );
 
   const unlock = useCallback(
@@ -1810,6 +1885,33 @@ export function useHoldingsWorkspace(
             const deviceChange = await instance.loadDeviceChange(displayVault);
             const sourceCreation = await instance.loadSourceCreation();
             assertActive();
+            let selectedAfterRemoval: Source | undefined;
+            let selectedWasRemoved = false;
+            if (!readOnly && !options?.forResults && capabilitiesRef.current.portfolio) {
+              const deletes = await instance.pendingRemovedSources(refreshed.sources);
+              assertActive();
+              for (const packet of deletes) {
+                const removed = await reconcileRemovedSource(
+                  instance,
+                  refreshed,
+                  packet,
+                  signal,
+                  assertActive,
+                );
+                if (
+                  removed &&
+                  stateRef.current.selectedSourceId === packet.source.resourceRef.resourceId
+                )
+                  selectedWasRemoved = true;
+              }
+              if (selectedWasRemoved) {
+                displayCache.current.holdings.clear();
+                pausedDisplay.current = null;
+                verifiedSnapshot.current = null;
+                pending.current = null;
+                selectedAfterRemoval = refreshed.sources.at(-1);
+              }
+            }
             const verifiedDisplay = privateDisplayVault
               ? await proveResourceDisplay(
                   privateDisplayVault,
@@ -1832,6 +1934,19 @@ export function useHoldingsWorkspace(
               vault: displayVault,
               verifiedDisplay,
               sources: refreshed.sources,
+              ...(selectedWasRemoved
+                ? {
+                    selectedSourceId: selectedAfterRemoval?.resourceRef.resourceId ?? null,
+                    content: null,
+                    sourceMetadata: null,
+                    sourceMutation: null,
+                    sourceReview: null,
+                    preview: null,
+                    importPreview: null,
+                    hasPending: false,
+                    newSource: false,
+                  }
+                : {}),
               canWriteState: readOnly ? Boolean(resultAccess?.canWriteState) : true,
               keyManagement,
               deviceChange,
@@ -1839,17 +1954,12 @@ export function useHoldingsWorkspace(
               needsDeviceApproval: false,
               recoveryCheck: null,
             }));
-            if (
-              !options?.forResults &&
-              capabilitiesRef.current.portfolio &&
-              selectedSource(refreshed.sources, stateRef.current.selectedSourceId)
-            ) {
+            const nextSource = selectedWasRemoved
+              ? selectedAfterRemoval
+              : selectedSource(refreshed.sources, stateRef.current.selectedSourceId);
+            if (!options?.forResults && capabilitiesRef.current.portfolio && nextSource) {
               try {
-                await readSaved(
-                  selectedSource(refreshed.sources, stateRef.current.selectedSourceId)!,
-                  signal,
-                  assertActive,
-                );
+                await readSaved(nextSource, signal, assertActive);
               } catch (error) {
                 assertActive();
                 if (!(error instanceof WorkspaceError) || error.code !== "service_unavailable")
@@ -1877,6 +1987,7 @@ export function useHoldingsWorkspace(
       terminate,
       uid,
       reconcileArchiveDeletion,
+      reconcileRemovedSource,
       ownerSession,
       proveResourceDisplay,
     ],
@@ -2636,6 +2747,38 @@ export function useHoldingsWorkspace(
     [freshSource, perform],
   );
 
+  const showAfterDeletion = useCallback(
+    async (
+      current: { vault: Vault | null; sources: Source[] },
+      signal: AbortSignal,
+      assertActive: () => void,
+    ) => {
+      displayCache.current.holdings.clear();
+      pausedDisplay.current = null;
+      verifiedSnapshot.current = null;
+      pending.current = null;
+      const next = current.sources.at(-1);
+      setState((previous) => ({
+        ...previous,
+        vault: current.vault,
+        sources: current.sources,
+        selectedSourceId: next?.resourceRef.resourceId ?? null,
+        newSource: false,
+        sourceMetadata: null,
+        sourceMutation: null,
+        sourceReview: null,
+        staleSourceMutation: false,
+        preview: null,
+        importPreview: null,
+        content: null,
+        hasPending: false,
+        error: "",
+        notice: "source_deleted",
+      }));
+      if (next && current.vault) await readSaved(next, signal, assertActive, false, current.vault);
+    },
+    [readSaved],
+  );
   const completeSourceChange = useCallback(
     async (
       instance: EncryptedVaultSession,
@@ -2651,30 +2794,57 @@ export function useHoldingsWorkspace(
       } as Source;
       let receipt = original;
       if (receipt.state === "pending") {
-        receipt = mutationReceipt(
-          await api(
-            "portfolio",
-            `/api/v2/holdings/sources/${sourceId}/mutations/${original.operationId}/synchronize`,
-            signal,
-            { method: "POST", json: { contractVersion: CONTRACT } },
-          ),
-          target,
-          original.operationId,
+        const result = await api(
+          "portfolio",
+          `/api/v2/holdings/sources/${sourceId}/mutations/${original.operationId}/synchronize`,
+          signal,
+          {
+            method: "POST",
+            json: { contractVersion: CONTRACT },
+            allowMissing: original.action === "delete",
+          },
         );
         assertActive();
+        if (result === null) {
+          packet ??= await instance.loadSourceMutation(sourceId);
+          const fresh = await readCurrent(signal);
+          assertActive();
+          if (
+            !packet ||
+            packet.operationId !== original.operationId ||
+            !(await reconcileRemovedSource(instance, fresh, packet, signal, assertActive))
+          )
+            throw new WorkspaceError("invalid_response");
+          return showAfterDeletion(fresh, signal, assertActive);
+        }
+        receipt = mutationReceipt(result, target, original.operationId);
         if (receipt.state !== "acknowledged" || receipt.action !== original.action)
           throw new WorkspaceError("invalid_response");
       }
       packet ??= await instance.loadSourceMutation(sourceId);
       assertActive();
+      const current = await readCurrent(signal);
+      assertActive();
+      const source = current.sources.find((item) => item.resourceRef.resourceId === sourceId);
+      if (!current.vault) throw new WorkspaceError("invalid_response");
+      if (receipt.action === "delete") {
+        await instance.acceptVault(current.vault);
+        assertActive();
+        if (
+          current.vault.userAuthority?.sources.some((item) =>
+            sameSource(item.binding.ref, receipt.resourceRef),
+          )
+        )
+          throw new WorkspaceError("source_change_blocked");
+      }
       if (packet?.operationId === receipt.operationId) {
         await instance.finishSourceMutation(packet, receipt, signal);
         assertActive();
       }
-      const current = await readCurrent(signal);
-      assertActive();
-      const source = current.sources.find((item) => item.resourceRef.resourceId === sourceId);
-      if (!source || !current.vault) throw new WorkspaceError("invalid_response");
+      if (!source && receipt.action === "delete") {
+        return showAfterDeletion(current, signal, assertActive);
+      }
+      if (!source) throw new WorkspaceError("invalid_response");
       setState((previous) => ({
         ...previous,
         vault: current.vault,
@@ -2688,7 +2858,7 @@ export function useHoldingsWorkspace(
       assertActive();
       setState((previous) => ({ ...previous, notice: "source_change_acknowledged" }));
     },
-    [api, readCurrent, readSaved],
+    [api, readCurrent, readSaved, reconcileRemovedSource, showAfterDeletion],
   );
 
   const resumeSourceChange = useCallback(
@@ -2696,6 +2866,18 @@ export function useHoldingsWorkspace(
       perform("changing-source", async ({ signal, assertActive }) => {
         const visible = stateRef.current.sourceMutation;
         if (!visible) throw new WorkspaceError("invalid_operation");
+        if (visible.action === "delete" && stateRef.current.selectedSourceId) {
+          const id = stateRef.current.selectedSourceId;
+          const instance = liveSession();
+          const packet = await instance.loadSourceMutation(id);
+          const current = await readCurrent(signal);
+          assertActive();
+          if (
+            packet?.operationId === visible.operationId &&
+            (await reconcileRemovedSource(instance, current, packet, signal, assertActive))
+          )
+            return showAfterDeletion(current, signal, assertActive);
+        }
         const fresh = await freshSource(signal, assertActive, false);
         const sourceId = fresh.source.resourceRef.resourceId;
         const target = { ...fresh.source, sourceEpoch: visible.sourceEpoch };
@@ -2760,7 +2942,16 @@ export function useHoldingsWorkspace(
         }));
         await completeSourceChange(fresh.instance, receipt, packet, signal, assertActive);
       }),
-    [api, freshSource, perform, completeSourceChange],
+    [
+      api,
+      freshSource,
+      perform,
+      completeSourceChange,
+      readCurrent,
+      liveSession,
+      reconcileRemovedSource,
+      showAfterDeletion,
+    ],
   );
 
   const confirmSourceChange = useCallback(
@@ -3442,6 +3633,11 @@ export function useHoldingsWorkspace(
   const finishTaskCenterPending = useCallback(
     (taskId: string, receipt: Record<string, any>) =>
       taskCall((instance) => instance.finishTaskCenterPending(taskId, receipt)),
+    [taskCall],
+  );
+  const clearConfirmedPurge = useCallback(
+    (taskId: string, operationId: string) =>
+      taskCall((instance) => instance.clearConfirmedPurge(taskId, operationId)),
     [taskCall],
   );
   const inspectAgentCredential = useCallback(
@@ -5739,6 +5935,7 @@ export function useHoldingsWorkspace(
     prepareTaskCenterControl,
     loadTaskCenterPending,
     finishTaskCenterPending,
+    clearConfirmedPurge,
     inspectAgentCredential,
     inspectAgentCredentialSetup,
     verifyHistoricalPolicy,
