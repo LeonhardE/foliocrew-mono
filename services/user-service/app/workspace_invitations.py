@@ -148,9 +148,23 @@ class InvitationStore:
             if admitted and bind and member is None:
                 transaction.set(
                     membership,
-                    {"googleSubject": google_subject, "state": "active", "joinedAt": now},
+                    {
+                        "googleSubject": google_subject,
+                        "state": "active",
+                        "joinedAt": now,
+                        "invitationId": invitation.id,
+                    },
                 )
-                transaction.set(invitation, {**invite, "status": "joined", "updatedAt": now})
+                transaction.set(
+                    invitation,
+                    {
+                        **invite,
+                        "status": "joined",
+                        "updatedAt": now,
+                        "joinedOwner": membership.id,
+                        "joinedGoogleSubject": google_subject,
+                    },
+                )
             return admitted
 
         return operation(BoundedTransaction(self.client, max_attempts=2))
