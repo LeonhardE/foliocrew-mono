@@ -23,6 +23,23 @@
 - Follow the naming and content convention in `changelog/README.md`.
 - Run `npm run check` from the repository root before committing.
 
+## Browser flow acceptance
+
+- Test the user’s actual workflow through the UI. Open the browser Network panel before the
+  first action, enable log preservation, and capture the whole flow with all request types
+  visible. Watch the UI during intermediate states as well as at completion.
+- A successful flow requires a clean UI, zero failed requests in the flow, and the expected
+  outcome on the original item. A transient error banner, a cancelled or rejected request,
+  or a retry that eventually succeeds still requires investigation. Keep the run marked failed
+  until the cause is fixed and a fresh run passes. Record deliberately tested error paths separately.
+- Record request counts and timings per action, check repeated reads and polling intervals,
+  and verify that requests settle when the work is complete. Explain repeats using the flow’s
+  actual needs. Include the counts, delays, and outcome in the acceptance record. Redact
+  credentials and private data from evidence.
+- For background work, also verify the exact trigger and a durable result on the original task
+  after closing the requested pages, including whether a user approval was needed. If network
+  capture or an end-to-end check is missing, report that part as unverified.
+
 ## Branch tracking
 
 - Create feature branches without tracking `main` or `origin/main`; use `--no-track` when
