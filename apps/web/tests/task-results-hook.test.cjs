@@ -319,6 +319,9 @@ test("title preload never marks read; presentation performs exactly one signed u
   assert.equal(h.stats().decrypts, 0, "overview does not preload private report bodies");
   m.wantTitle(m.rows[0]);
   m = await h.ready();
+  const recordReads = () =>
+    h.calls.filter((c) => c.path === "/api/v2/persistent-results/vault_A/presult_A");
+  assert.equal(recordReads().length, 1);
   assert.equal(m.title(m.rows[0]), "PRIVATE_REPORT");
   assert.equal(h.stats().signs, 0);
   assert.equal(m.unreadCounts.task_A, 1);
@@ -326,13 +329,128 @@ test("title preload never marks read; presentation performs exactly one signed u
   await m.open(m.rows[0]);
   m = h.render();
   assert.equal(h.stats().signs, 0);
+  assert.equal(recordReads().length, 2);
+  assert.equal(recordReads()[1].options.fresh, true);
   m.presented(m.detail);
   m = await h.ready();
+  assert.equal(recordReads().length, 2);
+  const [ack] = h.calls.filter((c) => c.options.method === "PATCH");
+  assert.deepEqual({ ...ack.options.json.command.metadata }, meta());
   assert.equal(h.stats().signs, 1);
   assert.equal(m.unreadCounts.task_A, undefined);
   assert.equal(m.detail.row.metadata.read, true);
   assert.equal(h.stats().decrypts, 1);
   h.close();
+});
+test("a concurrent report edit rebases the displayed read acknowledgement without changing other flags", async () => {
+  for (const alreadyRead of [true, false]) {
+    let first = true;
+    const h = harness({
+      transport(path, options, metadata) {
+        if (options.method === "PATCH" && first) {
+          first = false;
+          metadata.stateVersion++;
+          metadata.starred = true;
+          metadata.read = alreadyRead;
+          return Response.json(
+            { contractVersion: C, error: { code: "version_conflict" } },
+            { status: 409 },
+          );
+        }
+      },
+    });
+    try {
+      let m = await h.ready();
+      await m.open(m.rows[0]);
+      m = h.render();
+      m.presented(m.detail);
+      m = await h.ready();
+      const writes = h.calls.filter((c) => c.options.method === "PATCH");
+      assert.equal(writes.length, alreadyRead ? 1 : 2);
+      if (!alreadyRead) {
+        assert.equal(writes[1].options.json.command.metadata.stateVersion, 1);
+        assert.equal(writes[1].options.json.command.metadata.starred, true);
+      }
+      assert.equal(m.detail.row.metadata.starred, true);
+      assert.equal(m.detail.row.metadata.read, true);
+      assert.equal(m.error, "");
+      assert.equal(m.pending, false);
+    } finally {
+      h.close();
+    }
+  }
+});
+test("an unrelated conflict does not re-sign the read acknowledgement", async () => {
+  const h = harness({
+    transport(path, options, metadata) {
+      if (options.method === "PATCH") {
+        metadata.stateVersion++;
+        return Response.json(
+          { contractVersion: C, error: { code: "registry_conflict" } },
+          { status: 409 },
+        );
+      }
+    },
+  });
+  try {
+    let m = await h.ready();
+    await m.open(m.rows[0]);
+    m = h.render();
+    m.presented(m.detail);
+    m = await h.ready();
+    assert.equal(m.pending, true);
+    assert.equal(m.detail.row.metadata.read, false);
+    assert.equal(h.stats().signs, 1);
+    assert.equal(
+      h.calls.filter((c) => c.path === "/api/v2/persistent-results/vault_A/presult_A").length,
+      1,
+    );
+  } finally {
+    h.close();
+  }
+});
+test("presenting a closed report sends no read acknowledgement", async () => {
+  const h = harness();
+  try {
+    let m = await h.ready();
+    await m.open(m.rows[0]);
+    m = h.render();
+    m.close();
+    m.presented(m.detail);
+    await h.ready();
+    assert.equal(h.stats().signs, 0);
+  } finally {
+    h.close();
+  }
+});
+test("an ambiguous read acknowledgement retains its signed packet for exact retry", async () => {
+  let lost = true;
+  const h = harness({
+    transport(path, options) {
+      if (options.method === "PATCH" && lost) {
+        lost = false;
+        throw Error("lost response");
+      }
+    },
+  });
+  try {
+    let m = await h.ready();
+    await m.open(m.rows[0]);
+    m = h.render();
+    m.presented(m.detail);
+    m = await h.ready();
+    assert.equal(m.pending, true);
+    m.retryState();
+    m = await h.ready();
+    assert.equal(m.pending, false);
+    assert.equal(m.detail.row.metadata.read, true);
+    assert.equal(h.stats().signs, 1);
+    const writes = h.calls.filter((c) => c.options.method === "PATCH");
+    assert.equal(writes.length, 2);
+    assert.deepEqual(writes[0].options.json, writes[1].options.json);
+  } finally {
+    h.close();
+  }
 });
 test("returning to a loaded task preserves filters and avoids reloading metadata or decrypting titles", async () => {
   const h = harness();
