@@ -773,3 +773,85 @@ test("combined legacy evidence is checked against the original task and optional
     }
   }
 });
+
+const retired = {
+  ownerSubject: "subject_A",
+  vaultId: "vault_A",
+  taskId: "task_A",
+  taskVersion: 1,
+  executionEpoch: 1,
+  definitionVersion: 4,
+  lifecycleEpoch: 2,
+  deletedAt: 10,
+  status: "trashed",
+};
+const trashRow = {
+  taskId: "task_A",
+  title: "My task",
+  canRestore: true,
+  definition: retired,
+  envelope: { metadata: { vaultId: "vault_A", taskId: "task_A", taskVersion: 1 } },
+};
+test("permanent deletion binds the reviewed task and its version before signing", async () => {
+  let version = 5;
+  const h = harness({
+    transport: async (path) => {
+      if (path.endsWith("/tasks/task_A"))
+        return Response.json(
+          state("task_A", { rules: { definition: { ...retired, definitionVersion: version } } }),
+        );
+      if (path.endsWith("/commands")) return Response.json({ accepted: true });
+      if (path.endsWith("/maintenance"))
+        return Response.json({ contractVersion: CONTRACT, complete: true, reviewRequired: false });
+    },
+  });
+  const m = await h.ready();
+  await assert.rejects(m.purgeTrashTask(trashRow, "foreign-scope"), /unlock_required/);
+  await assert.rejects(m.purgeTrashTask(trashRow, m.scope), /version_conflict/);
+  assert.equal(h.calls.filter((c) => c.path.endsWith("/commands")).length, 0);
+  version = 4;
+  assert.equal(await m.purgeTrashTask(trashRow, m.scope), "purgeComplete");
+  assert.equal(h.calls.filter((c) => c.path.endsWith("/commands")).length, 1);
+  assert.equal(h.calls.filter((c) => c.path.endsWith("/maintenance")).length, 1);
+  h.close();
+});
+test("an erased original receipt is reconciled only by an authenticated maintenance outcome", async () => {
+  for (const missing of [true, false]) {
+    const pending = new Map([
+      [
+        "task_A",
+        {
+          taskId: "task_A",
+          action: "purge",
+          definition: retired,
+          operationId: "original",
+          body: {},
+        },
+      ],
+    ]);
+    const h = harness({
+      pending,
+      transport: async (path) => {
+        if (path.endsWith("/commands")) return new Response(null, { status: 404 });
+        if (path.endsWith("/maintenance"))
+          return missing
+            ? new Response(null, { status: 404 })
+            : Response.json({ contractVersion: CONTRACT, complete: true, reviewRequired: false });
+      },
+    });
+    h.workspace.clearConfirmedPurge = async (task, operation) => {
+      assert.equal(operation, "original");
+      pending.delete(task);
+    };
+    const m = await h.ready();
+    if (missing) {
+      await assert.rejects(m.purgeTrashTask(trashRow, m.scope), /purge_unconfirmed/);
+      assert.equal(pending.size, 1);
+    } else {
+      assert.equal(await m.purgeTrashTask(trashRow, m.scope), "purgeComplete");
+      assert.equal(pending.size, 0);
+    }
+    assert.equal(h.calls.filter((c) => c.path.endsWith("/commands")).length, 1);
+    h.close();
+  }
+});

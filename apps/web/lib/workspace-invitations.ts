@@ -39,5 +39,6 @@ export function invitationRoute(path: string, method: string) {
     if (suffix === "" || /^\/[a-f0-9]{64}\/[a-f0-9]{32}\/(?:retry|revoke)$/.test(suffix))
       return suffix;
   }
+  if (method === "DELETE" && /^\/[a-f0-9]{64}\/[a-f0-9]{32}$/.test(suffix)) return suffix;
   return null;
 }

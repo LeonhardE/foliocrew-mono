@@ -93,6 +93,11 @@ export function TaskCenterView({
     }),
     [progress, setProgress] = useState(false),
     [deleting, setDeleting] = useState(false),
+    [purgeReview, setPurgeReview] = useState<{ scope: string; row: J } | null>(null),
+    [purgeNotice, setPurgeNotice] = useState<{
+      scope: string;
+      message: "purgePending" | "purgeComplete" | "purgeReview";
+    } | null>(null),
     [localBusy, setLocalBusy] = useState(false),
     [localError, setLocalError] = useState(""),
     [activation, setActivation] = useState<"schedule" | "prepare" | null>(null),
@@ -154,6 +159,8 @@ export function TaskCenterView({
     return rows.length === 1 ? rows : [];
   });
   useEffect(() => {
+    setPurgeReview(null);
+    setPurgeNotice(null);
     if (!center.scope) {
       setMode("browse");
       setProgress(false);
@@ -429,6 +436,39 @@ export function TaskCenterView({
       setLocalBusy(false);
     }
   };
+  const purge = async () => {
+    const review = purgeReview;
+    if (!review || live.current.scope !== review.scope || busy) return;
+    setLocalBusy(true);
+    setLocalError("");
+    try {
+      const message = await center.purgeTrashTask(review.row, review.scope);
+      if (live.current.scope !== review.scope) return;
+      setPurgeNotice({ scope: review.scope, message });
+      setPurgeReview(null);
+      window.dispatchEvent(
+        new CustomEvent("folioview-task-lifecycle", {
+          detail: {
+            taskId: review.row.taskId,
+            vaultId: workspace.vault!.vaultId,
+            rootKeyId: workspace.vault!.rootKeyId,
+            action: "trash",
+          },
+        }),
+      );
+      await center.trashList();
+    } catch (e) {
+      if (live.current.scope === review.scope) {
+        setLocalError(e instanceof Error ? e.message : "request_failed");
+        if (e instanceof Error && e.message === "version_conflict") {
+          setPurgeReview(null);
+          await center.trashList();
+        }
+      }
+    } finally {
+      if (live.current.scope === review.scope) setLocalBusy(false);
+    }
+  };
   const copyRequest = async (provider: string) => {
     if (!task || !currentRequest) return;
     try {
@@ -513,7 +553,11 @@ export function TaskCenterView({
       <header className={styles.heading}>
         <h1 id="task-center-title">{t("title")}</h1>
         <div className={styles.actions}>
-          <button className={styles.textButton} disabled={busy} onClick={() => void model.reload()}>
+          <button
+            className={styles.textButton}
+            disabled={busy}
+            onClick={() => void (mode === "trash" ? center.trashList() : model.reload())}
+          >
             {t("refresh")}
           </button>
           <button
@@ -629,6 +673,11 @@ export function TaskCenterView({
             hasContent={center.trash.length > 0}
             label={t("loading")}
           />
+          {purgeNotice?.scope === center.scope && purgeNotice && (
+            <p className={styles.notice} role="status">
+              {t(purgeNotice.message)}
+            </p>
+          )}
           {!center.loading && !center.trash.length && (
             <p className={styles.empty}>{t("trashEmpty")}</p>
           )}
@@ -660,6 +709,21 @@ export function TaskCenterView({
               >
                 {t("restore")}
               </button>
+              {r.canRestore && r.title && (
+                <button
+                  className={styles.danger}
+                  disabled={busy || !model.canWrite || !center.scope}
+                  onClick={() => {
+                    if (center.scope) {
+                      setPurgeNotice(null);
+                      setLocalError("");
+                      setPurgeReview({ scope: center.scope, row: r });
+                    }
+                  }}
+                >
+                  {t("purge")}
+                </button>
+              )}
             </div>
           ))}
           {center.trashCursor && (
@@ -1325,6 +1389,37 @@ export function TaskCenterView({
           )}
           <small>{t("canLeave")}</small>
         </div>
+      </ReportDialog>
+      <ReportDialog
+        id="purge-task"
+        identity={`${center.scope}:${purgeReview?.row.taskId}:${purgeReview?.row.definition?.definitionVersion}:purge`}
+        open={mode === "trash" && Boolean(purgeReview && purgeReview.scope === center.scope)}
+        title={t("purge")}
+        closeLabel={t("close")}
+        onClose={() => {
+          if (!busy) setPurgeReview(null);
+        }}
+      >
+        {purgeReview && purgeReview.scope === center.scope && (
+          <>
+            <p>{t("purgeConfirm", { title: purgeReview.row.title })}</p>
+            {localError && (
+              <p role="alert">
+                {t(
+                  t.has(`errors.${localError}`) ? `errors.${localError}` : "errors.request_failed",
+                )}
+              </p>
+            )}
+            <div className={styles.footer}>
+              <button disabled={busy} onClick={() => setPurgeReview(null)}>
+                {t("cancel")}
+              </button>
+              <button className={styles.danger} disabled={busy} onClick={() => void purge()}>
+                {t("purge")}
+              </button>
+            </div>
+          </>
+        )}
       </ReportDialog>
       <ReportDialog
         id="delete-task"

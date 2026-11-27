@@ -190,6 +190,11 @@ without a monitoring account. The event carries only the operation, entry type, 
 
 ## Resource library
 
+Deleting a holdings source clears its saved snapshots and releases its place in the vault.
+The browser can reconcile a lost response using its pending signed request and the current
+owner's vault and Portfolio state. After confirmation it clears the selection and cached
+holdings and opens another available source, if one exists.
+
 Resources presents holdings, the existing Market watchlist, and a manually maintained YouTube
 creator list in three tabs. The watchlist reuses the shell's Market controller and existing
 User `/api/v1/watchlist`; add/remove acts on that same list without a duplicate list read. Rows carry no
@@ -571,7 +576,8 @@ revisits reuse their brief display cache; writes still fetch fresh authority.
 The editor uses Goal → Resources and execution → Review. Advanced output options
 stay collapsed. Optional Hub capabilities enable zero or more provider assignments,
 Manual/Scheduled modes, user-selected days/time/IANA zone, task-local manual
-requests, and Trash/restore. Schedule previews skip DST gaps and choose the first
+requests, and Trash/restore. Tasks in Trash can be restored for 30 days. An owner can
+confirm permanent removal of the selected task and its reports earlier. Schedule previews skip DST gaps and choose the first
 fold occurrence. An Agent-reported enabled plan is distinct from a proven native
 schedule or a completed Run. Existing rollout gates remain unchanged.
 After capabilities load successfully, task details explain when immediate execution is not

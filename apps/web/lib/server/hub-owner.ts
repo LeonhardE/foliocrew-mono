@@ -324,6 +324,11 @@ function route(
     new RegExp(`^/api/v2/vaults/${ID}/archive-deletion-checks$`).test(path)
   )
     rule = { kind: "lifecycle-control", max: 8192, responseStatus: 200 };
+  else if (
+    request.method === "POST" &&
+    new RegExp(`^/api/v2/vaults/${ID}/retired-archive-cleanup$`).test(path)
+  )
+    rule = { kind: "small", max: 1024, responseStatus: 200 };
   else if (request.method === "PUT" && new RegExp(`^/api/v2/vaults/${ID}/archive$`).test(path))
     rule = { kind: "archive", max: 65536, operation: true, vaultId: path.split("/")[4] };
   else if (

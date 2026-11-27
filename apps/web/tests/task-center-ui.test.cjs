@@ -15,6 +15,7 @@ function render({
   workspacePatch = {},
   navigating = false,
   unreadPartial = false,
+  trashOpen = false,
   centerPatch = {},
   nextOccurrence = null,
 } = {}) {
@@ -23,7 +24,11 @@ function render({
   const mod = compile(
     "../components/TaskCenterPanel.tsx",
     {
-      react: React,
+      react: {
+        ...React,
+        useState: (initial) =>
+          React.useState(trashOpen && initial === "browse" ? "trash" : initial),
+      },
       "react/jsx-runtime": require("react/jsx-runtime"),
       "next-intl": {
         useLocale: () => locale,
@@ -119,6 +124,17 @@ function render({
   );
 }
 for (const locale of ["en", "zh", "zh-Hant"]) {
+  test(`the ${locale} trash gives a named recoverable task separate restore and permanent-delete actions`, () => {
+    const row = { taskId: "test-task", title: "My <brief>", canRestore: true };
+    const messages = require(`../messages/${locale}.json`).taskCenter;
+    const show = (rows) => render({ locale, trashOpen: true, centerPatch: { trash: rows } });
+    const visible = show([row]);
+    assert.ok(visible.includes("My &lt;brief&gt;"));
+    for (const action of [messages.restore, messages.purge])
+      assert.ok(visible.includes(">" + action + "</button>"));
+    assert.ok(!show([{ ...row, title: null }]).includes(">" + messages.purge + "</button>"));
+    assert.ok(!show([{ ...row, canRestore: false }]).includes(">" + messages.purge + "</button>"));
+  });
   test(`the actual ${locale} task-list empty state resolves its message without translation fallback`, () => {
     const html = render({ locale, home: true, modelPatch: { items: [], taskNames: {} } });
     const messages = require(`../messages/${locale}.json`).taskCenter;

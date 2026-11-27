@@ -457,8 +457,12 @@ test("source controls explain actual access effects without exposing internal so
   }
 });
 
-test("delete review states logical retention and copied-content limits in both languages", () => {
-  for (const locale of ["en", "zh"]) {
+test("delete review identifies snapshots, backup expiry and downloaded copies in every language", () => {
+  for (const [locale, wording] of [
+    ["en", ["saved snapshots", "until they expire", "cannot be recalled", "Cancel and keep"]],
+    ["zh", ["历史快照", "到期", "无法收回", "取消"]],
+    ["zh-Hant", ["歷史快照", "到期", "無法收回", "取消"]],
+  ]) {
     const html = render(
       {
         ...managed,
@@ -468,9 +472,7 @@ test("delete review states logical retention and copied-content limits in both l
       true,
     );
     assert.ok(html.includes("fieldset"));
-    assert.ok(html.includes(locale === "en" ? "physical erasure" : "物理清除"));
-    assert.ok(html.includes(locale === "en" ? "cannot be recalled" : "无法收回"));
-    assert.ok(html.includes(locale === "en" ? "Cancel and keep" : "取消，保持"));
+    for (const phrase of wording) assert.ok(html.includes(phrase), phrase);
   }
 });
 

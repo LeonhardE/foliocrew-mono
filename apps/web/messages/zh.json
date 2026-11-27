@@ -170,6 +170,9 @@
       "review": "核对邀请",
       "confirmSend": "向 {email} 发送邀请？",
       "confirmRevoke": "撤销发给 {email} 的邀请？",
+      "confirmErase": "永久删除发给 {email} 的邀请记录？",
+      "erase": "删除记录",
+      "eraseFor": "删除发给 {email} 的邀请记录",
       "send": "发送邀请",
       "revoke": "撤销",
       "cancel": "取消",
@@ -384,6 +387,7 @@
       "receipt_recovered": "已找回并校验保存回执，云端历史保留。",
       "retry_discarded": "已移除本地重试，未删除云端历史；现在可重新选择 CSV 导入。",
       "source_change_pending": "变更请求已接收，正在等待确认。",
+      "source_deleted": "已删除这份持仓资料及其历史快照。",
       "source_change_acknowledged": "原变更已确认；请以资料管理中显示的当前状态为准。",
       "source_change_discarded": "本机失效请求已清理，服务器资料未被删除。",
       "new_source": "已准备新资料。检查 CSV 后明确保存，旧资料保持原状态。",
@@ -490,7 +494,7 @@
       "newHelp": "下一次保存将建立独立资料，不会恢复或修改旧资料的授权。",
       "add": "新建持仓资料",
       "newFromPreview": "将这份预览另存为新资料",
-      "limit": "最多保留 10 份资料的创建记录；删除不会释放记录名额。",
+      "limit": "这份资源库最多可同时保存 10 份持仓资料。删除一份资料后即可新增。",
       "historical": "当前显示的是旧范围下的历史持仓。旧授权已失效；如需继续使用，请检查预览账户并重新加密保存，再为 Agent 授权。",
       "creationPending": "新资料的创建结果尚未确认。继续检查原请求，不会重复创建。",
       "resumeCreation": "继续检查原创建",
@@ -518,13 +522,13 @@
       "effects": {
         "fence": "停止基于旧范围的后续访问和新任务，保留持仓历史。完成后重新保存当前账户范围，再为 Agent 授权。",
         "disconnect": "停止这份资料的后续使用和更新。解锁后仍可查看已有持仓；再次导入需新建独立资料。",
-        "delete": "隐藏这份资料及持仓历史并停止后续访问。服务端密文和备份可能保留，不代表立即物理清除。"
+        "delete": "删除这份持仓资料及已保存的历史快照，并停止后续访问。备份中的副本可能保留至到期。"
       },
       "states": {
         "active": "可使用和更新。",
         "revoking": "正在限制旧授权，等待变更确认。",
         "disconnected": "已断开，仅可查看已有持仓。",
-        "deleted": "已删除，持仓历史已隐藏。"
+        "deleted": "这份资料已停用，历史快照的清除尚待确认。"
       },
       "unknown": "尚未确认这份资料的状态。请重新检查，确认前不能保存或更改访问。",
       "initialize": "检查并准备这份资料",
@@ -1592,6 +1596,11 @@
     "unknownSave": "保存状态待确认，请先检查原请求。",
     "checkSave": "检查状态",
     "retryOriginal": "重试原保存",
+    "purge": "永久删除",
+    "purgeConfirm": "永久删除「{title}」及其全部报告？删除后无法恢复。",
+    "purgeComplete": "任务及其报告已从任务中心永久删除。",
+    "purgePending": "正在清除任务资料。你可以关闭此页面。",
+    "purgeReview": "部分资料仍需核查，删除尚未完成。",
     "trashEmpty": "回收站为空。",
     "back": "返回",
     "recoverable": "可恢复",
@@ -1682,6 +1691,7 @@
       "channel_follows": "YouTube 博主"
     },
     "errors": {
+      "purge_unconfirmed": "任务当前不可用，暂时无法确认是否已永久删除。",
       "request_failed": "未能完成，请重试。",
       "validation_failed": "请补全名称、目标及所需资料。",
       "invalid_schedule": "请选择有效的时间、时区和执行日期。",

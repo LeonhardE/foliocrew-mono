@@ -737,6 +737,13 @@ function deletionCheck(outcome = "unresolved") {
 }
 test("deletion, withdrawal and read-only checks have fixed owner routes and exact original bodies", async () => {
   for (const [path, body, result, status, operation] of [
+    [
+      "/retired-archive-cleanup",
+      { contractVersion: CONTRACT },
+      { contractVersion: CONTRACT, vaultId: "vault_A", remaining: 0 },
+      200,
+      undefined,
+    ],
     ["/archive-deletions", { contractVersion: CONTRACT, command: SIGNED }, deletionAck(), 201, OP],
     [
       "/archive-deletion-withdrawals",
@@ -771,6 +778,27 @@ test("deletion, withdrawal and read-only checks have fixed owner routes and exac
       assert.equal(h.hub().at(-1).init.headers.has("X-FolioView-Author-Key"), false);
     }
   }
+});
+test("archive cleanup accepts only a verified zero for the requested vault", async () => {
+  const route = BASE + "/retired-archive-cleanup";
+  const body = { contractVersion: CONTRACT };
+  for (const result of [
+    { ...body, vaultId: "other", remaining: 0 },
+    { ...body, vaultId: "vault_A", remaining: 1 },
+    { ...body, vaultId: "vault_A", remaining: 0, extra: true },
+  ]) {
+    const h = harness({ upstream: () => Response.json(result) });
+    await failure(
+      await h.proxy(request(route, { method: "POST", json: body })),
+      503,
+      "authorization_unavailable",
+    );
+  }
+  const h = harness();
+  await failure(
+    await h.proxy(request(route, { method: "POST", json: { ...body, ownerSubject: "other" } })),
+  );
+  assert.equal(h.hub().length, 0);
 });
 test("deletion checks accept only exact outcomes and reject author, idempotency, query and private fields", async () => {
   const body = { contractVersion: CONTRACT, command: SIGNED };

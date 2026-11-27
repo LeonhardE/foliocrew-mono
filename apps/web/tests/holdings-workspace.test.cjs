@@ -703,6 +703,22 @@ function harness({
     async loadSourceMutation(sourceId) {
       return sourcePackets.get(this.uid + ":" + sourceId) ?? null;
     }
+    async pendingRemovedSources(current) {
+      return [...sourcePackets.entries()]
+        .filter(
+          ([key, packet]) =>
+            key.startsWith(this.uid + ":") &&
+            packet.action === "delete" &&
+            !current.some((s) => s.resourceRef.resourceId === packet.source.resourceRef.resourceId),
+        )
+        .map(([, packet]) => packet);
+    }
+    async finishAbsentDeletion(packet) {
+      assert.equal(packet.action, "delete");
+      const key = this.uid + ":" + packet.source.resourceRef.resourceId;
+      assert.equal(sourcePackets.get(key)?.operationId, packet.operationId);
+      sourcePackets.delete(key);
+    }
     async prepareSourceMutation({ source: selected, expectedVersion, action }) {
       if (
         (await this.loadOutbox()) ||
@@ -796,6 +812,23 @@ function harness({
         : content;
     }
   }
+  let failRetiredCleanup = false;
+  const archiveState = () => ({
+    contractVersion: CONTRACT,
+    profile: "folioview.vault-lifecycle.v1",
+    vaultId: remoteVault.vaultId,
+    rootKeyId: remoteVault.rootKeyId,
+    archive: remoteVault.archive,
+    lifecycleVersion: archiveLifecycle,
+    vaultVersion: remoteVault.version,
+    archiveRevision: Number(archiveApplied) + Number(deletionApplied),
+    archiveDigest: deletionApplied ? "0".repeat(64) : "a".repeat(64),
+    registrySequence: remoteVault.version,
+    checkpointDigest: "c".repeat(64),
+    keyEpoch: 1,
+    pendingAuthorization: null,
+    deletionOutcome: deletionApplied ? "deleted" : deletionWithdrawn ? "withdrawn" : "unresolved",
+  });
   const requestPrivate = async (service, route, owner, options = {}) => {
     requests.push({ service, route, owner, options });
     if (userVault && route === "/api/v3/private-resources/vaults/current/read")
@@ -803,6 +836,7 @@ function harness({
         ...options.json,
         vault: remoteVault,
         proof: {
+          archiveLifecycle: { state: archiveState(), originalCheckpoints: [] },
           sources: userVaultSources
             ? sources.map(({ resourceRef: ref, sourceEpoch }) => ({
                 state: "active",
@@ -811,6 +845,35 @@ function harness({
             : [],
         },
       });
+    if (
+      userVault &&
+      route === "/api/v3/private-resources/vaults/vault_a/archive-lifecycle/removal"
+    ) {
+      const { action, ...scope } = options.json;
+      if (action === "delete" && !deletionApplied) {
+        deletionApplied = true;
+        archiveLifecycle++;
+        remoteVault = { ...remoteVault, archive: null };
+      }
+      return Response.json({
+        ...scope,
+        result: {
+          operationId: scope.operationId,
+          commandFingerprint: "d".repeat(64),
+          vaultVersion: remoteVault.version,
+          lifecycleVersion: archiveLifecycle,
+          outcome: archiveState().deletionOutcome,
+        },
+      });
+    }
+    if (userVault && route === "/api/v2/vaults/vault_a/retired-archive-cleanup") {
+      if (failRetiredCleanup) return new Response("{}", { status: 503 });
+      return Response.json({
+        contractVersion: CONTRACT,
+        vaultId: remoteVault.vaultId,
+        remaining: 0,
+      });
+    }
     if (route.startsWith("/api/v3/holdings/sources/") && route.endsWith("/view/query")) {
       if (viewReply) return typeof viewReply === "function" ? viewReply(route, options) : viewReply;
       const resourceId = route.split("/")[5];
@@ -942,24 +1005,7 @@ function harness({
       }
       return new Response(
         JSON.stringify({
-          contractVersion: CONTRACT,
-          profile: "folioview.vault-lifecycle.v1",
-          vaultId: remoteVault.vaultId,
-          rootKeyId: remoteVault.rootKeyId,
-          archive: remoteVault.archive,
-          lifecycleVersion: archiveLifecycle,
-          vaultVersion: remoteVault.version,
-          archiveRevision: Number(archiveApplied) + Number(deletionApplied),
-          archiveDigest: deletionApplied ? "0".repeat(64) : "a".repeat(64),
-          registrySequence: remoteVault.version,
-          checkpointDigest: "c".repeat(64),
-          keyEpoch: 1,
-          pendingAuthorization: null,
-          deletionOutcome: deletionApplied
-            ? "deleted"
-            : deletionWithdrawn
-              ? "withdrawn"
-              : "unresolved",
+          ...archiveState(),
         }),
       );
     }
@@ -1068,7 +1114,7 @@ function harness({
       }
       if (pathId === "synchronize") {
         if (mutationHold) await mutationHold.promise;
-        if (synchronizeFail) throw { code: "service_unavailable" };
+        if (synchronizeFail === true) throw { code: "service_unavailable" };
         const op = route.split("/").at(-2);
         const receipt = mutations.get(op);
         if (receipt.state !== "acknowledged") {
@@ -1082,6 +1128,11 @@ function harness({
           sources = sources.map((s) =>
             s.resourceRef.resourceId === sourceId ? { ...s, sourceEpoch: meta.epoch } : s,
           );
+          if (receipt.action === "delete") {
+            sources = sources.filter((s) => s.resourceRef.resourceId !== sourceId);
+            mutations.delete(op);
+            if (synchronizeFail === "after") throw { code: "service_unavailable" };
+          }
         }
         return new Response(JSON.stringify(receipt));
       }
@@ -1305,6 +1356,9 @@ function harness({
       finishes: deletionFinishes,
       withdrawals: withdrawalPrepares,
     }),
+    failRetiredCleanup(value) {
+      failRetiredCleanup = value;
+    },
     failDeletion(value) {
       deletionFailure = value;
     },
@@ -1520,6 +1574,26 @@ test("lost committed deletion reply is checked against verified history and ente
   assert.equal(h.render().content, null);
   assert.equal(h.render().canWriteState, false);
   h.unmount();
+});
+test("User archive deletion stays retryable until Hub verifies its old copy was erased", async () => {
+  const h = harness({ userVault: true, hasSource: false });
+  try {
+    await unlocked(h);
+    await h.render().reviewArchiveDeletion();
+    h.failRetiredCleanup(true);
+    await h.render().confirmArchiveDeletion(true);
+    assert.equal(h.render().phase, "archive-pending");
+    assert.equal(h.deletionCounts().finishes, 0);
+    assert(h.deletionPending());
+    h.failRetiredCleanup(false);
+    await h.render().resumeArchiveDeletion();
+    assert.equal(h.render().phase, "archive-deleted");
+    assert.equal(h.deletionPending(), null);
+    assert.equal(h.deletionCounts().prepares, 1);
+    assert.equal(h.requests.filter((r) => r.route.endsWith("/retired-archive-cleanup")).length, 2);
+  } finally {
+    h.unmount();
+  }
 });
 test("archive deletion review cannot authorize a changed directory or survive a lock", async () => {
   const h = harness();
@@ -2867,7 +2941,7 @@ test("confirmed fence automatically acknowledges and retains account preview for
   assert.equal(sync.options.headers["Idempotency-Key"], undefined);
 });
 
-test("disconnect retains readable history and deletion hides it without reactivating writes", async () => {
+test("disconnect retains readable history and acknowledged erasure removes the source", async () => {
   const h = harness();
   await unlocked(h);
   await h.render().importFile(file);
@@ -2882,9 +2956,33 @@ test("disconnect retains readable history and deletion hides it without reactiva
   assert.equal(h.commits.length, count);
   await h.render().reviewSourceChange("delete");
   await h.render().confirmSourceChange();
-  assert.equal(h.render().sourceMetadata.state, "deleted");
+  assert.equal(h.render().sourceMetadata, null);
   assert.equal(h.render().content, null);
-  assert.equal(h.sources()[0].sourceEpoch, 3);
+  assert.equal(h.render().notice, "source_deleted");
+  assert.equal(h.sources().length, 0);
+});
+
+test("deletion with lost acknowledgement retires the original retry without recreating the source", async () => {
+  for (const relock of [false, true]) {
+    const h = harness();
+    await unlocked(h);
+    h.failSynchronize("after");
+    await h.render().reviewSourceChange("delete");
+    await h.render().confirmSourceChange();
+    assert.equal(h.sources().length, 0);
+    assert.equal(h.sourcePackets.size, 1);
+    if (relock) {
+      h.render().lock();
+      await h.render().unlock();
+    } else {
+      await h.render().resumeSourceChange();
+      assert.equal(h.render().notice, "source_deleted");
+    }
+    assert.equal(h.sourcePackets.size, 0);
+    assert.equal(h.render().sourceMutation, null);
+    assert.equal(h.requests.filter((r) => r.route.endsWith("/mutations/delete")).length, 1);
+    h.unmount();
+  }
 });
 
 test("unacknowledged fence reload reads Portfolio before sync and retries the exact original operation", async () => {

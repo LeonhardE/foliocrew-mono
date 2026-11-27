@@ -308,6 +308,8 @@ function hubOwnerRule(path: string, method: PrivateMethod): EncryptedRule | null
       maxBytes: 65536,
       rootCommand: true,
     };
+  } else if (method === "POST" && matches(`/api/v2/vaults/${id}/retired-archive-cleanup`)) {
+    rule = { method, keys: ["contractVersion"], maxBytes: 1024 };
   } else if (method === "POST" && matches(`/api/v2/vaults/${id}/archive-deletion-withdrawals`)) {
     rule = {
       method,

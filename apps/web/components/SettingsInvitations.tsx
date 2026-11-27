@@ -13,7 +13,7 @@ import styles from "./SettingsInvitations.module.css";
 
 type Confirmation =
   | { action: "send"; email: string; replaceRevision?: string }
-  | { action: "revoke"; invitation: Invitation };
+  | { action: "revoke" | "erase"; invitation: Invitation };
 
 function Invitations({ sessionKey }: { sessionKey: string }) {
   const { requestPrivate } = useAuth();
@@ -44,7 +44,7 @@ function Invitations({ sessionKey }: { sessionKey: string }) {
 
   async function operation(
     suffix: string,
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "DELETE",
     json: unknown,
     apply: (response: Response) => Promise<void>,
   ) {
@@ -119,7 +119,20 @@ function Invitations({ sessionKey }: { sessionKey: string }) {
   }
 
   function confirm() {
-    if (confirmation?.action === "revoke") {
+    if (confirmation?.action === "erase") {
+      const { id, revision } = confirmation.invitation;
+      void operation(`/${id}/${revision}`, "DELETE", undefined, async (reply) => {
+        if (reply.status !== 204) throw Error("Unexpected invitation response");
+        setPage(
+          (previous) =>
+            previous && {
+              ...previous,
+              items: previous.items.filter((item) => item.id !== id),
+            },
+        );
+        setConfirmation(null);
+      });
+    } else if (confirmation?.action === "revoke") {
       const { id, revision } = confirmation.invitation;
       void change(`/${id}/${revision}/revoke`);
     } else if (confirmation?.action === "send") {
@@ -163,11 +176,13 @@ function Invitations({ sessionKey }: { sessionKey: string }) {
               <p>
                 {confirmation.action === "send"
                   ? t("confirmSend", { email: confirmation.email })
-                  : t("confirmRevoke", { email: confirmation.invitation.email })}
+                  : t(confirmation.action === "revoke" ? "confirmRevoke" : "confirmErase", {
+                      email: confirmation.invitation.email,
+                    })}
               </p>
               <div className={styles.actions}>
                 <button type="button" onClick={confirm} disabled={busy}>
-                  {t(confirmation.action === "send" ? "send" : "revoke")}
+                  {t(confirmation.action)}
                 </button>
                 <button type="button" onClick={() => setConfirmation(null)} disabled={busy}>
                   {t("cancel")}
@@ -234,20 +249,30 @@ function Invitations({ sessionKey }: { sessionKey: string }) {
                           </button>
                         )}
                         {(item.status === "expired" || item.status === "revoked") && (
-                          <button
-                            type="button"
-                            disabled={busy || confirmation !== null}
-                            onClick={() =>
-                              setConfirmation({
-                                action: "send",
-                                email: item.email,
-                                replaceRevision: item.revision,
-                              })
-                            }
-                            aria-label={t("reissueFor", { email: item.email })}
-                          >
-                            {t("reissue")}
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              disabled={busy || confirmation !== null}
+                              onClick={() =>
+                                setConfirmation({
+                                  action: "send",
+                                  email: item.email,
+                                  replaceRevision: item.revision,
+                                })
+                              }
+                              aria-label={t("reissueFor", { email: item.email })}
+                            >
+                              {t("reissue")}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busy || confirmation !== null}
+                              onClick={() => setConfirmation({ action: "erase", invitation: item })}
+                              aria-label={t("eraseFor", { email: item.email })}
+                            >
+                              {t("erase")}
+                            </button>
+                          </>
                         )}
                       </div>
                     </li>
