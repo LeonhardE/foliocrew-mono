@@ -92,3 +92,22 @@ managed execution; Owner history and disconnect remain available. Malformed list
 fail closed. Installations that omit this optional restriction retain their prior
 admission behavior. The list grants no resource consent and bypasses no Root,
 lease, scope, freshness or revocation checks. No new cloud resource is required.
+
+### Expired OAuth data
+
+The Hub retention worker inspects both native and foreground OAuth stores. It clears expired
+authorization attempts, unused one-time codes and credentials after their final use. The
+same job leaves current connections, authorization generations and reports accessible.
+
+A spent code or rotated refresh token can still detect replay against its live credential
+family. Until that family expires, the worker retains the lookup hash, protocol bindings
+and revocation state needed by the original flow. Rotating a native refresh token can
+extend this window. The stored deadline on a compacted record is its next cleanup date.
+The protocol always rejects it for data access.
+
+Native OAuth also lets an expired token disconnect the same enrolled agent. If that
+connection can still be revoked, the worker retains minimal revocation references even
+after the transport expires. After the family's deadline, disconnecting the connection
+or replacing its authorization generation releases those references on the next run.
+Verified account erasure includes these references at any time. The worker logs aggregate
+counts only.

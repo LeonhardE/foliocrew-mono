@@ -50,21 +50,30 @@ def process_due(store, *, apply, clock=time.time):
     return counts
 
 
-def main():
+def main(*, clock=time.time):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--apply",
         action="store_true",
-        help="Apply deletion for expired trash and owner-confirmed purges.",
+        help="Apply eligible task, source and OAuth data cleanup.",
     )
+    from .oauth_expiry import process_oauth_expiry
     from .source_erasure import process_sources
 
     apply = parser.parse_args().apply
     store = get_store()
-    counts = process_due(store, apply=apply)
+    counts = process_due(store, apply=apply, clock=clock)
     counts["sources"] = process_sources(store, apply=apply)
+    counts["oauth"] = process_oauth_expiry(store, apply=apply, clock=clock)
     print(json.dumps(counts, sort_keys=True))
-    return int(bool(counts["failed"] or counts["reviewRequired"] or counts["sources"]["failed"]))
+    return int(
+        bool(
+            counts["failed"]
+            or counts["reviewRequired"]
+            or counts["sources"]["failed"]
+            or counts["oauth"]["reviewRequired"]
+        )
+    )
 
 
 if __name__ == "__main__":
