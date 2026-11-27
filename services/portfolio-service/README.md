@@ -146,18 +146,59 @@ never runs within a transaction or its retries.
 
 Failures, mismatches, restart, a lost Hub response or a failed local commit retain pending state.
 The next explicit synchronization sends the same immutable operation to obtain Hub's idempotent ACK.
-Already completed operations return the original local receipt without token/network access, and
+Completed fences and disconnections return their original local receipt without token/network access, and
 replaying an older acknowledged operation never clears a newer pending operation. The automated
 tests use synthetic identities/transports; real workload/owner acceptance is tracked separately.
 Web forwarding and lifecycle controls remain independently scoped Web work.
 
 A completed ordinary fence permits new writes at the new source epoch. Disconnect retains owner
 history while denying future source use; it cannot reconnect through authority installation. The
-owner can subsequently request deletion. Delete is a **logical tombstone**, immediately hides owner
-snapshot/receipt history while pending, and stays terminal after ACK. Ciphertext/operation records
-are retained, not physically purged from storage or backups. No purge or deletion-compliance claim
-is made. Source IDs/incarnations cannot be replaced via the authority replica adapter. A future
-explicit reconnect/recreation flow must use a safely new resource incarnation and preserve fences.
+owner can subsequently request deletion. A signed deletion immediately hides snapshots and
+receipts. After the remote authority acknowledges it, Portfolio physically deletes the source's
+encrypted snapshots, upload operations, entries in the vault-wide upload cancellation ledger,
+past source mutations, latest pointer, authority replica and lifecycle row. Unrelated owners
+and sources keep their records. Each batch rechecks the terminal deletion, and the last batch
+removes the temporary acknowledgement and resume state atomically. A synchronization request
+returns an acknowledged deletion only after the batches finish.
+
+For a source transferred to User, Portfolio keeps its signed deletion in the existing mutation
+record until both User and the former Hub have acknowledged the exact source and epoch. A lost
+Hub response leaves the record available for retry across process restarts. Deploy Hub support
+for terminal transferred-source cleanup before this consumer. The existing User writer admits
+only transferred owners. The operator repair uses the same configured Hub workload identity.
+
+An interrupted purge can resume through the same synchronization POST. While cleanup is pending,
+the mutation GET reports pending even if the remote authority has already acknowledged it.
+After full removal the mutation GET and synchronization POST return `404 not_found`.
+Following a lost final response, clients check that the authoritative vault listing succeeded
+and the original source is absent. The service retains no per-source deletion receipt for this
+purpose. Missing local authority on other read routes still uses the existing uninitialized-replica
+response. A database-wide generation counter prevents an authority request started before removal
+from writing back its stale response. The counter contains no owner or source information.
+
+**Release order.** Deploy authority producers that omit deleted sources and deny new authority
+reads for them, then deploy clients that reconcile an absent source. Drain older Portfolio writers
+before running legacy cleanup. Once records have been removed, a release that still allows
+deleted sources to synchronize is not a safe rollback target.
+
+**Previously deleted sources.** From the service directory with the common package on
+`PYTHONPATH`, run `python -m app.erase_deleted_sources --project PROJECT --database portfolio`
+to count acknowledged deletions left by older versions. With `--apply` the command resumes only
+stored terminal deletions and checks the remaining count. Each batch verifies the exact owner,
+source, terminal operation and acknowledged epoch. Operators can retry following interruption.
+
+**Verified account erasure.** Supply exactly one verified Firebase UID on standard input to
+`python -m app.erase_account --project PROJECT --database portfolio` for a count. Freeze that
+identity, revoke execution and drain pending writers before applying. With `--apply` the command
+checks the account is disabled in the selected Firebase project, removes owner-scoped documents
+from all seven Portfolio data collections, and independently reads each collection again.
+Documents for sources missing from the current catalogue are included. Both operator tools
+return JSON containing the scope and remaining count and accept `--sqlite PATH` to target an
+existing offline local database. Firebase identity deletion, other services, processor-held
+copies, Firestore history windows and exports have separate erasure and verification steps.
+For a restore rehearsal, read-only account inventory also accepts an isolated named database
+matching `portfolio-restore-<suffix>`. A loopback Firestore emulator is supported for this
+read-only check with a `demo-` project.
 
 Source permission epochs are separate from registry key epochs and the vault `active` lock. A source
 fence/disconnect does not remove the owner's access to retained history in an unlocked vault. Reads
@@ -388,8 +429,8 @@ it is signed and echoed without the server reconstructing or guessing the local 
 complete resource reference must match the trusted source incarnation, and the original source
 epoch cannot exceed its current epoch. The command has no TTL or registry/device binding: it
 permanently denies only its named operation under this owner/vault/root generation. A future
-root reset must change the root key or epoch. Cancellation needs no active device or active source,
-and never restores a disconnected/deleted source, changes its epoch, or returns saved ciphertext.
+root reset must change the root key or epoch. Cancellation remains available to the root for
+disconnected sources. Beginning source deletion blocks new cancellations for that source.
 
 The response is exactly `{contractVersion,profile,command,receipt}`, where receipt is
 `{cancellationId,ownerSubject,vaultId,rootKeyId,rootEpoch,target,commandFingerprint,outcome,acceptedAt}`.
@@ -401,7 +442,7 @@ the quota; it keeps the first global fence unchanged and must join back to that 
 The operation's original vault-wide namespace intentionally omits source and snapshot IDs. A
 cancelled decision atomically places a tombstone in that same `portfolio_operations` document and
 stores the signed command/response in a `portfolio_upload_cancellations` ledger. Every vault ledger
-holds at most 32 cancellation IDs and never evicts records. Original retries still succeed at the
+holds at most 32 cancellation IDs and retains records until source or account erasure. Original retries still succeed at the
 limit; new decisions fail closed. This shared document also makes an older in-flight writer retry
 and reject after a transaction conflict. New commits return 409 for a verified tombstone; ordinary
 upload receipt reads return 404. Each original upload commit and receipt read checks the bounded vault ledger, even when its
@@ -409,7 +450,6 @@ operation document is absent or has a legacy shape. Missing/corrupt saved, ledge
 associations return 503, so losing a fence cannot revive a cancelled upload.
 
 If the original immutable upload won first, cancellation records `saved` and leaves it intact.
-Consumers must still verify the original upload proof before removing a local retry copy. Deleted
-history remains hidden; its cancellation receipt may report `saved` without exposing the history,
-and consumers must retain their local packet when its required original proof cannot be read.
+Consumers must still verify the original upload proof when completing an upload retry.
+Permanent source deletion removes its cancellation receipts and upload proofs.
 The service-local contract adds no shared schema snapshot or generic root signing endpoint.

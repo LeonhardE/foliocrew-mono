@@ -107,7 +107,15 @@ def mutation_record(value, *, owner, source, operation, resource_ref):
         raise ContractError("not_found")
     if (
         type(value) is not dict
-        or set(value) != _MUTATION_FIELDS
+        or set(value) not in (_MUTATION_FIELDS, _MUTATION_FIELDS | {"legacyHubPending"})
+        or (
+            "legacyHubPending" in value
+            and (
+                value["legacyHubPending"] is not True
+                or value["state"] != "acknowledged"
+                or value["action"] != "delete"
+            )
+        )
         or value["ownerSubject"] != owner
         or value["sourceId"] != source
         or value["resourceRef"] != resource_ref

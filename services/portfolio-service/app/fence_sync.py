@@ -239,6 +239,16 @@ def _configured_user_client(origin):
     return UserFenceClient(origin)
 
 
+def confirm_legacy_hub_retirement(acknowledged):
+    """The terminal User ACK remains durable until the previous Hub also confirms."""
+    if acknowledged["action"] != "delete" or acknowledged["state"] != "acknowledged":
+        raise ContractError("source_unavailable")
+    request = fence_request(acknowledged)
+    client = configured_client(os.getenv("PORTFOLIO_HUB_AUTHORITY_ORIGIN", ""))
+    reply = asyncio.run(client.invalidate(request))
+    validate_ack(reply, request)
+
+
 def fence_client_for_owner(owner, hub_origin, user_origin, selected_owner):
     destination = user_authority_origin(owner, hub_origin, user_origin, selected_owner)
     return _configured_user_client(destination) if destination else configured_client(hub_origin)
@@ -247,9 +257,13 @@ def fence_client_for_owner(owner, hub_origin, user_origin, selected_owner):
 async def synchronize(service, uid, source, operation, client_factory):
     mutation = await run_in_threadpool(service.fence_mutation, uid, source, operation)
     if mutation["state"] == "acknowledged":
+        await run_in_threadpool(
+            service._purge_acknowledged_delete, owner_key(uid), source, mutation
+        )
         return {"contractVersion": CONTRACT_VERSION, **public_mutation(mutation)}
     request = fence_request(mutation)
-    ack = await client_factory().invalidate(request)
+    client = client_factory()
+    ack = await client.invalidate(request)
     # Retain validation at the commit boundary even for injected transports.
     validate_ack(ack, request)
     return await run_in_threadpool(
@@ -260,6 +274,7 @@ async def synchronize(service, uid, source, operation, client_factory):
         resource_ref=request["ref"],
         source_epoch=request["newSourceEpoch"],
         expected_mutation=mutation,
+        acknowledged_by_user=isinstance(client, UserFenceClient),
     )
 
 

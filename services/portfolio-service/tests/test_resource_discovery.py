@@ -103,9 +103,8 @@ class SignedPortfolioDiscoveryTests(SignedPortfolioMetadataFixture):
         )
         self.fixture.ack(self.service, operation="synthetic_delete_000001", epoch=3)
         response = self.read()
-        self.assert_private(response, 200)
-        self.assertEqual(response.json()["states"]["items"][0]["state"], "deleted")
-        self.assertEqual(response.json()["projections"]["items"], [])
+        self.assert_private(response, 503)
+        self.assertEqual(response.json()["error"]["code"], "authorization_unavailable")
 
     def test_old_epoch_snapshot_is_omitted_until_a_current_epoch_upload(self):
         self.fixture.mutate(self.service)

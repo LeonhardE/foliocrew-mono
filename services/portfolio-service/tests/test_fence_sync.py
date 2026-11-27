@@ -575,6 +575,9 @@ print(json.dumps(result))
             )
             self.deliver(client, operation=operation)
             self.assertEqual(json.loads(self.calls[-1].content)["reason"], terminal)
+            if action == "delete":
+                self.code("not_found", lambda op=operation: self.deliver(client, operation=op))
+                continue
             self.assertEqual(self.service.metadata(UID, SOURCE)["state"], terminal)
             self.deliver(client, operation=operation)
             self.assertEqual(self.service.metadata(UID, SOURCE)["state"], terminal)

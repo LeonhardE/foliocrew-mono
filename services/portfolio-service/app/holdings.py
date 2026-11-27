@@ -39,6 +39,7 @@ from ._metadata_history import (
     _own_authority,
     _OwnedAuthority,
 )
+from .erasure import authority_generation, purge_source
 from .lifecycle import (
     ACTIONS,
     MAX_SOURCE_MUTATIONS,
@@ -534,7 +535,7 @@ class PortfolioService:
 
         return self.store.transact(install)
 
-    def synchronize_authority(self, uid: str, source: str, document: dict):
+    def synchronize_authority(self, uid: str, source: str, document: dict, *, generation=None):
         """Install a public projection fetched by the authenticated Hub adapter.
 
         This method has no direct HTTP body binding. The caller must obtain its
@@ -546,6 +547,8 @@ class PortfolioService:
 
         def install(unit):
             now = self.now()
+            if generation is not None and authority_generation(unit) != generation:
+                raise ContractError("version_conflict")
             verified = _authority(document, owner, source, now)
             if document["active"]:
                 for key in document["writerKeyIds"]:
@@ -933,6 +936,13 @@ class PortfolioService:
 
         return cancel_upload(self, uid, source, body, cancellation_id)
 
+    def _purge_acknowledged_delete(self, owner, source, mutation):
+        if mutation["action"] == "delete" and mutation["state"] == "acknowledged":
+            purge_source(
+                self.store, owner, source, operation=mutation["operationId"], now=self.now()
+            )
+        return mutation
+
     def upload_cancellation(self, uid, source, cancellation_id):
         from .upload_cancellations import upload_cancellation
 
@@ -1073,13 +1083,15 @@ class PortfolioService:
             unit.put(path, mutation)
             return {"contractVersion": CONTRACT_VERSION, **public_mutation(mutation)}
 
-        return self.store.transact(write)
+        return self._purge_acknowledged_delete(owner, source, self.store.transact(write))
 
     def mutation(self, uid: str, source: str, operation_id: str):
-        result = {
-            "contractVersion": CONTRACT_VERSION,
-            **public_mutation(self.fence_mutation(uid, source, operation_id)),
-        }
+        mutation = public_mutation(self.fence_mutation(uid, source, operation_id))
+        if mutation["action"] == "delete" and mutation["state"] == "acknowledged":
+            # The upstream ACK is durable, but a previous purge was interrupted.
+            # A GET remains read-only and the ordinary synchronize POST resumes.
+            mutation.update(state="pending", completedAt=None)
+        result = {"contractVersion": CONTRACT_VERSION, **mutation}
         check_read_response(result)
         return result
 
@@ -1090,9 +1102,12 @@ class PortfolioService:
         owner = owner_key(uid)
 
         def read(unit):
+            mutation = unit.get(mutation_path(owner, source, operation_id))
+            if mutation is None:
+                raise ContractError("not_found")
             authority = _current_authority(unit, owner, source, self.now())
             saved = mutation_record(
-                unit.get(mutation_path(owner, source, operation_id)),
+                mutation,
                 owner=owner,
                 source=source,
                 operation=operation_id,
@@ -1114,6 +1129,7 @@ class PortfolioService:
         resource_ref: dict,
         source_epoch: int,
         expected_mutation: dict | None = None,
+        acknowledged_by_user: bool = False,
     ):
         """Commit after the server adapter authenticates and validates a Hub ACK.
 
@@ -1147,7 +1163,7 @@ class PortfolioService:
             if expected_mutation is not None and any(
                 saved[key] != expected_mutation.get(key)
                 for key in saved
-                if key not in {"state", "completedAt"}
+                if key not in {"state", "completedAt", "legacyHubPending"}
             ):
                 raise ContractError("version_conflict")
             if saved["sourceEpoch"] > row["sourceEpoch"]:
@@ -1167,6 +1183,8 @@ class PortfolioService:
                 ],
                 pendingMutationId=None,
             )
+            if acknowledged_by_user and saved["action"] == "delete":
+                saved["legacyHubPending"] = True
             saved.update(
                 state="acknowledged",
                 completedAt=datetime.fromtimestamp(now, UTC).isoformat().replace("+00:00", "Z"),
@@ -1179,4 +1197,4 @@ class PortfolioService:
             unit.put(mutation_path(owner, source, operation_id), saved)
             return {"contractVersion": CONTRACT_VERSION, **public_mutation(saved)}
 
-        return self.store.transact(write)
+        return self._purge_acknowledged_delete(owner, source, self.store.transact(write))
