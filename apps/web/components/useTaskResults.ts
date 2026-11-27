@@ -197,7 +197,8 @@ export function useTaskResults(
           );
           check();
         }
-        if (!response.ok) {
+        const stateConflict = method === "PATCH" && response.status === 409;
+        if (!response.ok && !stateConflict) {
           void response.body?.cancel().catch(() => {});
           throw Error(
             response.headers.get("X-FolioView-Read-Failure") === "deadline"
@@ -238,6 +239,12 @@ export function useTaskResults(
           check();
           if (!data || typeof data !== "object" || Array.isArray(data))
             throw Error("invalid_response");
+          if (stateConflict)
+            throw Error(
+              data.contractVersion === C && data.error?.code === "version_conflict"
+                ? "result_state_version_conflict"
+                : "version_conflict",
+            );
           return data;
         } finally {
           abort.signal.removeEventListener("abort", cancel);
@@ -523,54 +530,94 @@ export function useTaskResults(
     [merge],
   );
   const change = useCallback(
-    async (row: ResultRow, changes: J, retry = false) => {
+    async (row: ResultRow, changes: J, mode: "edit" | "retry" | "presented" = "edit") => {
       const start = live.current;
       if (!start.scope || !start.workspace.canWriteState || writeBusy.current) return;
+      const scope = start.scope;
+      const selection = selectedSerial.current;
+      const assertCurrent = () => {
+        if (
+          live.current.scope !== scope ||
+          !live.current.workspace.canWriteState ||
+          (mode === "presented" &&
+            (!live.current.visible || !live.current.active || selection !== selectedSerial.current))
+        )
+          throw Error("cancelled");
+      };
       writeBusy.current = true;
-      update({ busy: true, error: "" }, start.scope);
+      update({ busy: true, error: "" }, scope);
       try {
-        if (pending.current && !retry) throw Error("state_pending");
-        if (!retry) {
-          const raw = await api(
-              resultRecordPath(start.workspace.vault!.vaultId, row.metadata.resultId),
-              { fresh: true },
-              start.scope,
-            ),
-            meta = persistentResultMetadata(raw.metadata);
+        if (pending.current && mode !== "retry") throw Error("state_pending");
+        const path = resultRecordPath(start.workspace.vault!.vaultId, row.metadata.resultId);
+        const readMetadata = async () => {
+          const raw = await api(path, { fresh: true }, scope);
+          const meta = persistentResultMetadata(raw.metadata);
           if (
             JSON.stringify(immutableMetadata(meta)) !==
             JSON.stringify(immutableMetadata(row.metadata))
           )
             throw Error("version_conflict");
+          return meta;
+        };
+        const prepare = async (meta: J) => {
+          assertCurrent();
           const current = { ...row, metadata: meta };
-          publishState(current, start.scope);
-          if (Object.keys(changes).every((k) => meta[k] === changes[k])) return;
+          publishState(current, scope);
+          if (Object.keys(changes).every((k) => meta[k] === changes[k])) return false;
           const packet = await start.workspace.signPersistentResultState({
             metadata: meta,
             changes,
           });
-          if (live.current.scope !== start.scope) throw Error("cancelled");
-          pending.current = { scope: start.scope, row: current, changes, packet };
-          update({ pending: true }, start.scope);
-        }
-        const p = pending.current;
-        if (!p || p.scope !== start.scope) throw Error("cancelled");
-        const ack = await api(
-          resultRecordPath(start.workspace.vault!.vaultId, p.row.metadata.resultId) + "/state",
-          {
-            method: "PATCH",
-            json: { contractVersion: C, command: p.packet.command },
-            headers: {
-              "Idempotency-Key": p.packet.operationId,
-              "X-FolioView-Author-Key": p.packet.authorKeyId,
+          assertCurrent();
+          pending.current = { scope, row: current, changes, packet };
+          update({ pending: true }, scope);
+          return true;
+        };
+        const submit = async () => {
+          const p = pending.current;
+          if (!p || p.scope !== scope) throw Error("cancelled");
+          const ack = await api(
+            path + "/state",
+            {
+              method: "PATCH",
+              json: { contractVersion: C, command: p.packet.command },
+              headers: {
+                "Idempotency-Key": p.packet.operationId,
+                "X-FolioView-Author-Key": p.packet.authorKeyId,
+              },
             },
-          },
-          start.scope,
-        );
-        const saved = stateReceipt(p.row, p.changes, ack);
+            scope,
+          );
+          return stateReceipt(p.row, p.changes, ack);
+        };
+        if (
+          mode !== "retry" &&
+          !(await prepare(mode === "presented" ? row.metadata : await readMetadata()))
+        )
+          return;
+        let saved: ResultRow;
+        try {
+          saved = await submit();
+        } catch (error) {
+          // Rebase just the read acknowledgement after a definite version rejection.
+          // A lost response must retain its original signed packet for exact replay.
+          if (
+            mode !== "presented" ||
+            !(error instanceof Error) ||
+            error.message !== "result_state_version_conflict"
+          )
+            throw error;
+          const meta = await readMetadata();
+          assertCurrent();
+          if (meta.stateVersion <= row.metadata.stateVersion) throw error;
+          pending.current = null;
+          update({ pending: false }, scope);
+          if (!(await prepare(meta))) return;
+          saved = await submit();
+        }
         pending.current = null;
-        publishState(saved, start.scope);
-        update({ pending: false }, start.scope);
+        publishState(saved, scope);
+        update({ pending: false }, scope);
       } catch (e) {
         update(
           {
@@ -590,10 +637,17 @@ export function useTaskResults(
     },
     [api, publishState, update],
   );
+  const displayedSelection = selectedSerial.current;
   const presented = useCallback(
     (detail: ResultDetail) => {
       const key = `${live.current.scope}:${resultKey(detail.row)}:${detail.row.metadata.stateVersion}`;
       if (
+        !live.current.scope ||
+        live.current.scope !== state.scope ||
+        !live.current.visible ||
+        !live.current.active ||
+        displayedSelection !== selectedSerial.current ||
+        detail.row.metadata !== state.detail?.row.metadata ||
         !live.current.workspace.canWriteState ||
         detail.row.metadata.read ||
         attemptedRead.current.has(key) ||
@@ -601,9 +655,9 @@ export function useTaskResults(
       )
         return;
       attemptedRead.current.add(key);
-      void change(detail.row, { read: true });
+      void change(detail.row, { read: true }, "presented");
     },
-    [change],
+    [change, displayedSelection, state.scope, state.detail],
   );
   const task = model.selected?.taskId ?? "",
     f = (scope && active && state.scope === scope ? filters[task] : null) ?? {
@@ -1130,10 +1184,10 @@ export function useTaskResults(
       clearInboxResultLink();
     },
     presented,
-    change,
+    change: (row: ResultRow, changes: J) => change(row, changes),
     retryState: () => {
       const p = pending.current;
-      if (p) void change(p.row, p.changes, true);
+      if (p) void change(p.row, p.changes, "retry");
     },
     discardState: () => {
       if (!writeBusy.current) {
