@@ -381,7 +381,9 @@ def plan_task_lifecycle(
         value.update(status="trashed", deletedAt=now, purgeAfter=now + TRASH_RETENTION_SECONDS)
     elif action == "restore" and old["status"] == "trashed" and now < old["purgeAfter"]:
         value.update(status="active", deletedAt=None, purgeAfter=None)
-    elif action == "purge" and old["status"] == "trashed" and now >= old["purgeAfter"]:
+    elif action == "purge" and old["status"] == "trashed":
+        # _control verified the owner's explicit purge command against this exact revision.
+        # purgeAfter governs automatic cleanup, not an owner's choice to end recovery early.
         value.update(status="purged", schedule=None)
     else:
         raise ContractError("version_conflict")
