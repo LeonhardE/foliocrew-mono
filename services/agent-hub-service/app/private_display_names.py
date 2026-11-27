@@ -187,12 +187,11 @@ class PrivateDisplayNameService:
             now = self.now()
             row, _ = self._current(unit, owner, vault, now)
             ref = self._source(row, source)
+            if _state(unit, owner, ref)["state"] == "deleted":
+                raise ContractError("not_found")
             if operation is None:
-                if _state(unit, owner, ref)["state"] == "deleted":
-                    raise ContractError("not_found")
                 path = name_path(owner, vault, row["rootKeyId"], ref)
             else:
-                # Owner history only, even after source deletion; never an Agent grant.
                 path = operation_path(owner, vault, row["rootKeyId"], ref, operation)
             item = _item(unit.get(path), owner=owner, vault=vault, root=row["rootKeyId"], ref=ref)
             if operation is not None and (
@@ -222,13 +221,13 @@ class PrivateDisplayNameService:
             saved = _item(
                 unit.get(op_path), owner=owner, vault=vault, root=row["rootKeyId"], ref=ref
             )
+            if _state(unit, owner, ref)["state"] == "deleted":
+                raise ContractError("not_found")
             if saved is not None:
                 # Original admission already verified the signature. Match exact
                 # signing input/current scope; age cannot replace an unknown commit.
                 check_display_name_replay(saved["state"], signed, context=p)
                 return self._response(saved)
-            if _state(unit, owner, ref)["state"] == "deleted":
-                raise ContractError("not_found")
             previous = _item(previous, owner=owner, vault=vault, root=row["rootKeyId"], ref=ref)
             state = plan_display_name_update(
                 signed,

@@ -77,12 +77,41 @@ def _selection(registry, now):
     return writers, recipients
 
 
+def capacity_exhausted(row):
+    # Removed incarnations still advance signed optimistic-concurrency versions.
+    return (
+        row["operationCount"] - row.get("retiredSourceCount", 0) >= MAX_OPERATIONS
+        or row["operationCount"] >= 9_007_199_254_740_991
+    )
+
+
+def remove_source(row, ref):
+    active = [s for s in row["sources"] if s["resourceRef"] != ref]
+    if len(active) == len(row["sources"]):
+        return row
+    return {
+        **row,
+        "sources": active,
+        "retiredSourceCount": row.get("retiredSourceCount", 0) + len(row["sources"]) - len(active),
+    }
+
+
 def _verify_row(row, owner, now, *, unit=None, registry_cache=None):
-    if type(row) is not dict or set(row) != _VAULT_FIELDS or row["ownerSubject"] != owner:
+    if (
+        type(row) is not dict
+        or set(row) - {"retiredSourceCount"} != _VAULT_FIELDS
+        or row["ownerSubject"] != owner
+    ):
         raise StoreUnavailable
     identifier(row["vaultId"])
     positive(row["version"])
-    if type(row["operationCount"]) is not int or not 1 <= row["operationCount"] <= MAX_OPERATIONS:
+    removed = row.get("retiredSourceCount", 0)
+    if (
+        type(removed) is not int
+        or removed < 0
+        or type(row["operationCount"]) is not int
+        or not 1 <= row["operationCount"] - removed <= MAX_OPERATIONS
+    ):
         raise StoreUnavailable
     validate_schema("PublicJWK", row["rootJwk"])
     if jwk_thumbprint(row["rootJwk"]) != row["rootKeyId"]:
@@ -150,7 +179,7 @@ def _verify_row(row, owner, now, *, unit=None, registry_cache=None):
             raise StoreUnavailable
         seen.add(ref["resourceId"])
     if (
-        row["version"] != len(history) + len(row["sources"])
+        row["version"] != len(history) + len(row["sources"]) + removed
         or row["operationCount"] != row["version"]
     ):
         raise StoreUnavailable
@@ -161,8 +190,13 @@ def _verify_row(row, owner, now, *, unit=None, registry_cache=None):
 
         if unit is None:
             raise StoreUnavailable
+        from .retired_archive import verified_retirement
+
         lifecycle = unit.get(document_path("hub_vault_lifecycle", owner, row["vaultId"]))
-        if not _history_state(row, registry, lifecycle)["deleted"]:
+        if (
+            not verified_retirement(unit, row, registry, lifecycle, now)
+            and not _history_state(row, registry, lifecycle)["deleted"]
+        ):
             raise StoreUnavailable
     if cached is None:
         # Publish only after the entire history and current row have passed.
@@ -190,9 +224,12 @@ def _source_projection(unit, owner, source):
     # The vault row retains the immutable creation anchor at epoch 1. Source
     # invalidation lives in its own namespace and must be read in this same
     # transaction, including on operation replays and registry-only responses.
+    fence = _state(unit, owner, source["resourceRef"])
+    if fence["state"] == "deleted":
+        return None
     return {
         "resourceRef": source["resourceRef"],
-        "sourceEpoch": _state(unit, owner, source["resourceRef"])["sourceEpoch"],
+        "sourceEpoch": fence["sourceEpoch"],
     }
 
 
@@ -214,7 +251,9 @@ def _response(row, unit):
             )
         },
         "sources": [
-            _source_projection(unit, row["ownerSubject"], source) for source in row["sources"]
+            projected
+            for source in row["sources"]
+            if (projected := _source_projection(unit, row["ownerSubject"], source)) is not None
         ],
     }
     check_read_response(value)
@@ -352,10 +391,7 @@ class VaultService:
                 return _response(row, unit)
             if row["version"] != body["expectedVersion"]:
                 raise ContractError("version_conflict")
-            if (
-                len(row["registryHistory"]) >= MAX_HISTORY
-                or row["operationCount"] >= MAX_OPERATIONS
-            ):
+            if len(row["registryHistory"]) >= MAX_HISTORY or capacity_exhausted(row):
                 raise ContractError("version_conflict")
             next_registry = verify_registry(
                 body["registryBundle"],
@@ -425,25 +461,34 @@ class VaultService:
                 (item for item in row["sources"] if item["resourceRef"]["resourceId"] == source),
                 None,
             )
-            if replay:
-                if existing is None:
-                    raise StoreUnavailable
-                return {
-                    "contractVersion": CONTRACT_VERSION,
-                    "source": _source_projection(unit, owner, existing),
-                }
-            if (
-                existing is not None
-                or len(row["sources"]) >= MAX_SOURCES
-                or row["operationCount"] >= MAX_OPERATIONS
-            ):
-                raise ContractError("version_conflict")
             ref = {
                 "kind": "holdings",
                 "sourceService": "portfolio",
                 "resourceId": source,
                 "incarnation": "inc_" + digest[:32],
             }
+            if replay:
+                if _state(unit, owner, ref)["state"] == "deleted":
+                    raise ContractError("not_found")
+                if existing is None or existing["resourceRef"] != ref:
+                    raise StoreUnavailable
+                return {
+                    "contractVersion": CONTRACT_VERSION,
+                    "source": _source_projection(unit, owner, existing),
+                }
+            # Release terminal slots even before the next scheduled cleanup.
+            # A distinct signed create yields a new incarnation for a reused ID.
+            if existing is not None or len(row["sources"]) >= MAX_SOURCES:
+                for item in row["sources"]:
+                    selected_ref = item["resourceRef"]
+                    if _state(unit, owner, selected_ref)["state"] == "deleted":
+                        row = remove_source(row, selected_ref)
+            if (
+                any(s["resourceRef"]["resourceId"] == source for s in row["sources"])
+                or len(row["sources"]) >= MAX_SOURCES
+                or capacity_exhausted(row)
+            ):
+                raise ContractError("version_conflict")
             selected = {"resourceRef": ref, "sourceEpoch": 1}
             next_row = {
                 **row,
@@ -452,6 +497,8 @@ class VaultService:
                 "sources": [*row["sources"], selected],
             }
             projected = _source_projection(unit, owner, selected)
+            if projected is None:
+                raise ContractError("not_found")
             require_legacy_private_writer(unit, owner)
             unit.put(document_path("hub_vaults", owner), next_row)
             _record(unit, op_path, owner, "source", fingerprint)
@@ -472,6 +519,8 @@ class VaultService:
             if selected is None:
                 raise ContractError("not_found")
             selected = _source_projection(unit, owner, selected)
+            if selected is None:
+                raise ContractError("not_found")
             writers, recipients = _selection(registry, self.now())
             value = {
                 "version": row["version"],

@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from fixtures import BOOT, OTHER_UID, SOURCE, UID
+from fixtures import BOOT, OTHER_UID, SOURCE, UID, tamper_with_stored_document
 from vault_lifecycle_fixtures import LifecycleFixture, archive_digest
 
 from app.store import SQLiteHubStore, StoreUnavailable, document_path
@@ -529,7 +529,7 @@ class VaultLifecycleTests(unittest.TestCase):
         ):
             altered = copy.deepcopy(saved)
             mutate(altered)
-            self.store.transact(lambda u, altered=altered: u.put(path, altered))
+            tamper_with_stored_document(self.store, path, altered)
             with self.subTest(mutate=mutate), self.assertRaises(StoreUnavailable):
                 self.state()
         self.store.transact(lambda u: u.put(path, saved))

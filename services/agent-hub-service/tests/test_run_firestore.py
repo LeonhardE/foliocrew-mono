@@ -40,9 +40,12 @@ class RunFirestoreTests(unittest.TestCase):
                 "hub_run_indexes",
                 "hub_run_operations",
                 "hub_run_quotas",
+                "hub_account_ownership",
             },
         )
-        self.assertEqual(len(batches[0]), 9)
+        self.assertEqual(
+            sum("/hub_account_ownership/" not in write.update.name for write in batches[0]), 9
+        )
         restarted = RunService(self.case.oauth)
         self.assertEqual(
             restarted.get(self.case.tokens["access_token"], response["run"]["runId"]), response

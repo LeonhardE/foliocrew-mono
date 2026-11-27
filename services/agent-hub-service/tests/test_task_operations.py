@@ -11,7 +11,7 @@ from unittest.mock import patch
 import test_firestore_store as firestore_fixtures
 import test_tasks as task_fixtures
 from fastapi.testclient import TestClient
-from fixtures import BOOT, OTHER_UID, UID
+from fixtures import BOOT, OTHER_UID, UID, tamper_with_stored_document
 from key_renewal_fixtures import RENEW, KeyRenewalFixture
 
 from app.api import require_owner
@@ -195,9 +195,7 @@ class TaskOperationTests(OperationSetup, unittest.TestCase):
             {"unexpected": True},
         ]:
             with self.subTest(change=change):
-                self.store.transact(
-                    lambda unit, change=change: unit.put(self.op_path(), {**saved, **change})
-                )
+                tamper_with_stored_document(self.store, self.op_path(), {**saved, **change})
                 before = self.snapshot()
                 with self.assertRaises(StoreUnavailable):
                     self.service.operation(UID, TASK, OP)

@@ -13,6 +13,7 @@ from app.fences import FenceService, fence_path
 from app.store import FirestoreHubStore, SQLiteHubStore, StoreUnavailable, document_path
 from app.vaults import VaultService
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
+from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.identity import owner_key
 
 
@@ -115,21 +116,58 @@ class VaultFenceProjectionTests(unittest.TestCase):
             operation=second_op,
             command=self.fixture.control(source=second_id, operation=second_op),
         )["source"]
-        for epoch, reason in [(1, "disconnected"), (2, "deleted")]:
-            self.invalidate(epoch=epoch, reason=reason)
-            current = self.vaults.current(UID)
-            authority = self.vaults.authority(UID, SOURCE)["authority"]
-            self.assertIsNotNone(current["vault"])
-            self.assertEqual(
-                current["sources"], [{**self.selected, "sourceEpoch": epoch + 1}, second]
+        self.invalidate(reason="disconnected")
+        self.assertEqual(self.source()["source"]["sourceEpoch"], 2)
+        self.assertEqual(self.vaults.authority(UID, SOURCE)["authority"]["sourceEpoch"], 2)
+        self.invalidate(epoch=2, reason="deleted")
+        current = self.vaults.current(UID)
+        self.assertIsNotNone(current["vault"])
+        self.assertEqual(current["sources"], [second])
+        self.assertEqual(self.vaults.bootstrap(UID, self.bootstrap, BOOT)["sources"], [second])
+        self.assertEqual(self.vaults.authority(UID, second_id)["authority"]["sourceEpoch"], 1)
+        for read in (self.source, lambda: self.vaults.authority(UID, SOURCE)):
+            with self.assertRaises(ContractError) as error:
+                read()
+            self.assertEqual(error.exception.code, "not_found")
+
+    def test_permanent_removal_releases_slot_without_reviving_original_incarnation(self):
+        from app.source_erasure import erase_source
+
+        old = self.selected["resourceRef"]
+        self.invalidate(reason="deleted")
+        erase_source(self.store, owner_key(UID), old)
+        path = document_path("hub_vaults", owner_key(UID))
+        row = self.store.transact(lambda u: u.get(path))
+        self.assertEqual(row["sources"], [])
+        self.assertEqual(row["retiredSourceCount"], 1)
+        self.assertEqual(self.vaults.current(UID)["vault"]["version"], 2)
+        new_op = "synthetic_later_incarnation"
+        new = self.source(operation=new_op, command=self.fixture.control(operation=new_op))[
+            "source"
+        ]
+        self.assertNotEqual(new["resourceRef"], old)
+        with self.assertRaisesRegex(ContractError, "not_found"):
+            self.source()
+        self.assertEqual(self.vaults.current(UID)["sources"], [new])
+
+    def test_ten_active_sources_remain_the_limit_after_removals(self):
+        for number in range(1, 10):
+            source = f"portfolio_synthetic_{number}"
+            op = f"synthetic_source_op_{number:08d}"
+            self.source(
+                source=source,
+                operation=op,
+                command=self.fixture.control(source=source, operation=op),
             )
-            self.assertIs(authority["active"], True)
-            self.assertTrue(authority["writerKeyIds"])
-            self.assertTrue(authority["recipientKeyIds"])
-            self.assertEqual(self.vaults.authority(UID, second_id)["authority"]["sourceEpoch"], 1)
-            self.assertEqual(self.source()["source"]["sourceEpoch"], epoch + 1)
-            context = CatalogueService(self.vaults, None).context(UID)
-            self.assertEqual(context["sources"][0]["fence"]["state"], reason)
+        op = "synthetic_eleventh_source"
+        command = self.fixture.control(source="new_source", operation=op)
+        with self.assertRaisesRegex(ContractError, "version_conflict"):
+            self.source(source="new_source", command=command, operation=op)
+        # The signed producer delete has committed, but the sweeper has not run.
+        self.invalidate(reason="deleted")
+        self.source(source="new_source", command=command, operation=op)
+        self.assertEqual(len(self.vaults.current(UID)["sources"]), 10)
+        self.assertEqual(self.vaults.current(UID)["vault"]["version"], 12)
 
     def test_foreign_owner_fence_does_not_change_owner_projection(self):
         request = {

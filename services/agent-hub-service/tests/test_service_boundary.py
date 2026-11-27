@@ -96,6 +96,7 @@ class AgentHubBoundaryTests(unittest.TestCase):
                     "/api/v2/vaults/{vault_id}/registry",
                     "/api/v2/vaults/{vault_id}/archive",
                     "/api/v2/vaults/{vault_id}/archive-deletions",
+                    "/api/v2/vaults/{vault_id}/retired-archive-cleanup",
                     "/api/v2/vaults/{vault_id}/archive-deletion-withdrawals",
                     "/api/v2/vaults/{vault_id}/archive-deletion-checks",
                     "/api/v2/vaults/{vault_id}/archive-operations/{operation_id}",

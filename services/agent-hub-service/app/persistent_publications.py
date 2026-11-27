@@ -20,6 +20,7 @@ from folioview_shared.encrypted.resource_consents import check_resource_consent
 from folioview_shared.encrypted.schema import validate_schema
 from folioview_shared.identity import owner_key
 
+from .fences import _state
 from .persistent_agents import snapshot
 from .preparations import KINDS, source_versions
 from .resource_consents import ResourceConsentService, stored_consent
@@ -222,6 +223,9 @@ class PersistentPublicationService(ResourceConsentService):
             saved = stored_publication(unit, owner, vault, operation)
             if saved is None or saved["context"]["connectionId"] != connection:
                 raise ContractError("not_found")
+            ref = saved["context"].get("ref")
+            if ref is not None and _state(unit, owner, ref)["state"] == "deleted":
+                raise ContractError("not_found")
             return {
                 **saved["receipt"],
                 "envelope": strict_json_loads(saved["carrierJson"], max_bytes=524288),
@@ -256,6 +260,9 @@ class PersistentPublicationService(ResourceConsentService):
             saved = stored_publication(unit, owner, vault, operation)
             if saved is None:
                 return None
+            ref = saved["context"].get("ref")
+            if ref is not None and _state(unit, owner, ref)["state"] == "deleted":
+                raise ContractError("not_found")
             if (
                 saved["fingerprint"] != fingerprint
                 or saved["context"]["connectionId"] != connection

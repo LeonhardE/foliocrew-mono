@@ -99,7 +99,9 @@ class TransactionReadReuseTests(unittest.TestCase):
             self.assertTrue(unit.get_many([self.a])[self.a]["nested"]["active"])
 
         self.store.transact(write)
-        self.assertEqual(len(self.reads()), 1)
+        self.assertEqual(self.reads()[0], [self.client.document(self.a)._document_path])
+        self.assertEqual(len(self.reads()), 2)
+        self.assertIn("/hub_account_write_holds/", self.reads()[1][0])
         self.assertFalse(self.store.transact(lambda unit: unit.get(self.a))["nested"]["active"])
 
     def test_incomplete_duplicate_or_malformed_stream_is_not_partially_remembered(self):

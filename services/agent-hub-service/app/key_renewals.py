@@ -44,10 +44,10 @@ from .store import StoreUnavailable, document_path, require_legacy_private_write
 from .vault_lifecycle import VaultLifecycleService, _history_state
 from .vaults import (
     MAX_HISTORY,
-    MAX_OPERATIONS,
     _archive,
     _fingerprint,
     _verify_row,
+    capacity_exhausted,
     identifier,
     positive,
 )
@@ -229,7 +229,7 @@ class VaultKeyRenewalService:
                 raise ContractError("key_authorization_required")
             if (
                 len(row["registryHistory"]) >= MAX_HISTORY
-                or row["operationCount"] >= MAX_OPERATIONS
+                or capacity_exhausted(row)
                 or state["version"] >= legacy_archive.MAX_LIFECYCLE_OPERATIONS
             ):
                 raise ContractError("version_conflict")

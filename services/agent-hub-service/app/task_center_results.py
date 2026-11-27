@@ -210,7 +210,7 @@ class TaskCenterResultService(TaskCenterOwnerService):
             ):
                 raise ContractError("unsupported_query")
             begin = max(0, before - limit)
-            ids = list(reversed(page["resultIds"][begin:before]))
+            ids = [r for r in reversed(page["resultIds"][begin:before]) if r is not None]
             batch = _Batch(unit.get_many([result_path(owner, vault, r) for r in ids]))
             records = []
             preparations = {}

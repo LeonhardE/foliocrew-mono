@@ -397,6 +397,24 @@ it cannot recreate the deleted archive. The directory and certificates remain se
 The Web BFF, existing owner Worker, encrypted historical keyring and Settings renewal
 review consume these routes. See the [Web key-management guide](../../../apps/web/docs/key-management.md).
 
+### Erasing the frozen copy of a transferred archive
+
+When User confirms that it accepted an owner-signed archive deletion, the owner's client can
+call `POST /api/v2/vaults/{vault_id}/retired-archive-cleanup` with the contract version.
+This also works for an earlier deletion after a later recovery. The Hub independently checks
+the authenticated User reply and verifies the signature, locally frozen vault, public history
+and original archive digest before removing its ciphertext. Confirmation returns the vault ID
+and `remaining: 0`. A timeout or unavailable User authority can be retried, including from a
+new session without the original browser's deletion journal.
+
+For previously completed deletions, use the configured Hub workload identity and its original
+User-authority settings. Feed one verified `{"uid":"…","vaultId":"…"}` via standard input to
+`python -m app.repair_retired_archive --project PROJECT --database agent-hub`.
+Inventory returns the number of eligible copies for that vault. With `--apply` the tool removes
+the frozen ciphertext, verifies the result with a fresh read, and returns an aggregate count.
+An unavailable or mismatched transfer, signed receipt or current authority stops the repair.
+No replacement archive, recipient key, ID list or ciphertext belongs in operator output.
+
 The current Web client uses a versioned encrypted historical keyring, retains prior
 recovery/device readers and decrypt-tests the new archive before authorization. Its restricted
 renewal-only session supports expired operational certificates. The backend cannot inspect

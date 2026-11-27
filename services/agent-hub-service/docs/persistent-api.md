@@ -635,30 +635,82 @@ their wire formats. Read the provider's native history for actual dispatch and
 start times. A schedule-shaped identifier without a verified occurrence remains
 unknown. Manual intent attribution continues to use the verified Owner intent.
 
-### Task trash and request-driven retention
+### Task trash and permanent erasure
 
-Signed `trash`, `restore` and `purge` commands use the same Owner endpoint. Trash
-atomically increments the lifecycle epoch and hides all actors' results from both
-ordinary and historical Owner entry points. Existing Begin/input/result writes
-fail closed; legacy foreground writers cannot resume after a restore. Restore
-within 30 days recovers Owner history only, requiring fresh assignment approval.
-A paused or archived legacy task may initialize signed rules solely to enter this
-lifecycle; its business task status stays inactive, with no assignments or execution.
-The explicit purge control is allowed only after that retention deadline.
+Signed `trash`, `restore` and `purge` commands use the Owner endpoint. Trash advances
+the lifecycle epoch, hides the task and its results, and rejects stale writes. The
+Owner can restore a task for 30 days. Restoring requires fresh assignment approval.
+An Owner-confirmed purge or elapsed restore deadline makes the task eligible for
+physical erasure. The shared signed-command contract governs immediate purge.
 
-`POST /{vault}/trash/query` accepts `{contractVersion,cursor}`. Start with a null
-cursor and advance using the nullable `nextCursor`. Each page contains at most one
-task and its encrypted original until expiry.
-`POST /{vault}/tasks/{task}/maintenance` with `{contractVersion}` processes at most
-four Owner-scoped documents in one cleanup phase, in the current request. It can
-be safely repeated; no background response thread, worker or scheduler is created.
-The optional Web Trash view is the maintenance trigger. Thirty days is the restore
-deadline, **not a promise of precise physical cleanup at that instant**. Copies
-are retired as authenticated maintenance runs. Shared resource publications and
-public certificates are retained. Legacy uncommitted copies without a provable
-task association produce `reviewRequired:true` rather than a false completion.
-Minimal task/receipt tombstones remain to prevent ID and request resurrection.
-All maintenance is local-test only until separately authorized for real data.
+`POST /{vault}/trash/query` accepts `{contractVersion,cursor}`. Each page contains at
+most one task with its original encrypted body until expiry. A cursor still advances
+if the previous entry has since been erased. Authorized maintenance at
+`POST /{vault}/tasks/{task}/maintenance` takes `{contractVersion}` and advances a
+bounded transaction. The `complete` flag represents physical cleanup. Protected
+references that cannot be attributed return `reviewRequired`.
+
+The worker can run without an open browser. Set `AGENT_HUB_STORE_BACKEND=firestore`,
+`FIREBASE_PROJECT_ID` and the named `FIRESTORE_DATABASE`. Run
+`python -m app.task_retention_worker` for a count or add `--apply` to process
+Owner-confirmed purges, expired trash, and producer-confirmed deleted sources.
+Each transaction rechecks eligibility. An interrupted job resumes from database
+progress. The worker removes the task body, versions, results, receipts, task grants
+and proven copies, including foreground and persistent run inputs. A one-way key
+rejects admission of the original signed task creation after erasure. Its empty
+body retains no task details. Account erasure also removes this key. An ambiguous
+legacy association remains under review. Source snapshots used by several tasks
+follow the source's lifecycle. Independently authored reports follow the task's lifecycle.
+
+When the producer marks a source incarnation deleted, Hub rejects new and replayed
+source authority and name reads. The worker removes its encrypted display names,
+historical rename operations, persistent source publications, foreground preparation and
+run input ciphertexts. The source is removed from the vault's ten available slots.
+A cumulative count preserves the original monotonic version without recording the removed
+sources. An acknowledged source invalidation still fences the original incarnation until
+account erasure. Deploy the User migration reader that supports optional `retiredSourceCount`
+before enabling Hub source erasure or the new source writer. Old baselines omit this field
+and retain their original signed bytes. During an outstanding authority migration the worker
+defers deletion until the frozen baseline is released. Deploy this Hub terminal-fence receiver
+before enabling the Portfolio sender. For transferred accounts, Portfolio confirms the mutation
+at User, then delivers the same deletion to Hub. Missing intermediate local epochs are allowed
+only on a terminal notification for a confirmed transfer. Hub returns the terminal ACK after erasing the matching ciphertext and source slot. Each delivery advances at most eight pages. A partial delivery leaves Portfolio pending and resumes on the next delivery or maintenance run. An exact retry after completion returns the original Hub ACK.
+The current User source mutation API requires a transferred authority. A future User-only
+enrollment needs an independently verified authority path before enabling this dual delivery.
+
+For deletions recorded at User before dual delivery, supply one verified Firebase UID on
+standard input to `python -m app.repair_retired_sources --project PROJECT --database agent-hub`.
+Select the configured Hub project via `FIREBASE_PROJECT_ID` and `FIRESTORE_DATABASE=agent-hub`.
+The restricted operator needs read access to `user-data` and write access only to `agent-hub`
+for apply. It verifies the original Root-signed transfer, User's immutable receipt and the exact
+deleted incarnation's current fence. By default it counts matched receipts. Add `--apply` to
+retire verified copies and read their cleanup progress. Conflicting or unproven receipts require
+review, including a resource ID now serving another incarnation. An absent source alone cannot
+authorize deletion. Repeated execution is safe.
+
+### Account erasure
+
+Use the restricted operator `python -m app.erase_account --project PROJECT --database
+agent-hub`. Supply the verified Firebase UID on standard input. The default command
+counts matching documents. The operator emits aggregate counts and the time when an
+active write hold may be released. Begin live erasure with `--hold-writes`, which verifies the
+disabled identity and reads back the owner-scoped write hold. Stop and erase upstream writers
+and outboxes while it is in force. The lock survives the drain deadline until the final
+`--apply` verifies a clean inventory and releases it. `--apply` verifies the Firebase account is
+disabled, freezes writes from Owner and Agent credentials for that account, and
+checks every supported collection and document ownership before removal. Deploy
+the writer guard to every Hub revision and worker before enabling this operator.
+Sparse new documents have a separate ownership index. Known older keys are
+reconstructed from their original, owner-bound relationships. An unrecognized
+collection, nested descendant or row whose ownership cannot be established blocks
+completion and requires review. Requests already in flight have a 65-minute drain
+window. The operator removes its own temporary hold after that time and a fresh
+empty inventory. Other accounts' ordinary scoped writes can continue.
+
+The release process must also cover every other service database, controlled
+backup, staging export and applicable log sink. The Hub command reports its
+single database. A verified quarantined restoration can run the same scrub via
+the repository recovery operator before any workload can read or write it.
 
 ### Manual request pickup (client 1.2.0)
 

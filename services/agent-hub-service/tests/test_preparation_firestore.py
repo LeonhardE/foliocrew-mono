@@ -71,7 +71,7 @@ class PreparationFirestoreTests(unittest.TestCase):
         self.assertEqual(len(self.batches()), 1)
         self.assertEqual(
             {w.update.name.split("/documents/")[1].split("/")[0] for w in self.batches()[0]},
-            {"hub_preparations", "hub_task_deliveries"},
+            {"hub_preparations", "hub_task_deliveries", "hub_account_ownership"},
         )
         restarted = PreparationService(
             OAuthService(self.store, configuration(), self.sources, clock=lambda: self.now)

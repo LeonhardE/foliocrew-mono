@@ -6,7 +6,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from fixtures import BOOT, OTHER_UID, SOURCE, UID, VaultFixture
+from fixtures import BOOT, OTHER_UID, SOURCE, UID, VaultFixture, tamper_with_stored_document
 
 from app.store import SQLiteHubStore, StoreUnavailable, document_path
 from app.vaults import MAX_SOURCES, VaultService
@@ -265,8 +265,9 @@ class VaultTests(unittest.TestCase):
         self.create()
         self.source()
         path = document_path("hub_vaults", owner_key(UID))
-        self.service.store.transact(
-            lambda unit: unit.put(path, {**unit.get(path), "ownerSubject": owner_key(OTHER_UID)})
+        saved = self.service.store.transact(lambda unit: unit.get(path))
+        tamper_with_stored_document(
+            self.service.store, path, {**saved, "ownerSubject": owner_key(OTHER_UID)}
         )
         with self.assertRaises(StoreUnavailable):
             self.service.authority(UID, SOURCE)

@@ -44,7 +44,7 @@ class ResultFirestoreTests(unittest.TestCase):
         self.assertEqual(status, 201)
         batches = self.case.batches()
         self.assertEqual(len(batches), 1)
-        self.assertEqual(len(batches[0]), 8)
+        self.assertEqual(len(batches[0]), 10)
         self.assertEqual(
             {w.update.name.split("/documents/")[1].split("/")[0] for w in batches[0]},
             {
@@ -54,6 +54,7 @@ class ResultFirestoreTests(unittest.TestCase):
                 "hub_result_indexes",
                 "hub_runs",
                 "hub_oauth_connections",
+                "hub_account_ownership",
             },
         )
         self.assertTrue(

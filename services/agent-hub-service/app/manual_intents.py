@@ -280,6 +280,7 @@ class ManualOwnerService(TaskLifecycleService):
                 raise ContractError("idempotency_conflict")
             cancelled = old is None or old.get("cancelled", False) and command is not None
             if old is None:
+                require_visible(unit, owner, vault, task)
                 unit.put(
                     path,
                     {
@@ -287,6 +288,7 @@ class ManualOwnerService(TaskLifecycleService):
                         "fingerprint": fingerprint,
                         "cancelled": True,
                         "receipt": None,
+                        "operationId": operation,
                     },
                 )
             return {
