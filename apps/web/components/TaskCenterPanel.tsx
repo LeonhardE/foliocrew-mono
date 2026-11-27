@@ -108,6 +108,7 @@ export function TaskCenterView({
     [activation, setActivation] = useState<"schedule" | "prepare" | null>(null),
     [copied, setCopied] = useState("");
   const finishing = useRef(false),
+    removals = useRef(new Map<string, number>()),
     reopen = useRef<string | null>(null),
     live = useRef({ scope: center.scope, task: model.selected?.taskId });
   live.current = { scope: center.scope, task: model.selected?.taskId };
@@ -167,6 +168,7 @@ export function TaskCenterView({
     setPurgeReview(null);
     setPurgeNotice(null);
     if (!center.scope) {
+      removals.current.clear();
       setMode("browse");
       setProgress(false);
       setChoosingRun(false);
@@ -198,6 +200,7 @@ export function TaskCenterView({
     content.outputSpec.label = t("report");
     content.outputSpec.language = locale.startsWith("zh") ? "zh" : "en";
     model.startNew(seed, content);
+    removals.current.clear();
     setProviders([]);
     setScheduled(false);
     setSchedule((s) => ({ ...s, localTime: "", days: [], frequency: "daily" }));
@@ -267,13 +270,16 @@ export function TaskCenterView({
           assertScope();
         }
         for (const row of state.assignments) {
-          if (row.assignment.status === "active" && !providers.includes(row.assignment.provider)) {
+          const reviewedVersion = removals.current.get(row.assignment.assignmentId);
+          if (row.assignment.status === "active" && reviewedVersion !== undefined) {
+            if (row.assignment.assignmentVersion !== reviewedVersion)
+              throw Error("version_conflict");
             assertScope();
             await center.command(
               selected.taskId,
               "remove_assignment",
               row.assignment.assignmentId,
-              undefined,
+              state,
               false,
             );
           }
@@ -300,9 +306,13 @@ export function TaskCenterView({
                   if (
                     credential &&
                     verified.assignments.some(
-                      ({ assignment }: J) =>
+                      ({ assignment, plan }: J) =>
+                        plan?.currentAssignment === true &&
                         assignment.status === "active" &&
                         assignment.provider === provider &&
+                        ["taskVersion", "executionEpoch", "ruleVersion", "lifecycleEpoch"].every(
+                          (key) => assignment[key] === verified.rules.definition[key],
+                        ) &&
                         assignment.authorityFingerprint === fingerprint &&
                         Object.keys(credential).every(
                           (key) => credential[key] === assignment.credential[key],
@@ -655,6 +665,7 @@ export function TaskCenterView({
               key={d.slot}
               disabled={busy}
               onClick={() => {
+                removals.current.clear();
                 void model.restoreDraft(d.slot);
                 setMode("edit");
                 setStep(1);
@@ -936,13 +947,24 @@ export function TaskCenterView({
                             type="checkbox"
                             disabled={!center.enabled || !model.bindings.length}
                             checked={providers.includes(v.connection.provider)}
-                            onChange={(e) =>
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              const row = assignments.find(
+                                ({ assignment }) =>
+                                  assignment.status === "active" &&
+                                  assignment.provider === v.connection.provider,
+                              );
+                              if (row) {
+                                const { assignmentId, assignmentVersion } = row.assignment;
+                                if (checked) removals.current.delete(assignmentId);
+                                else removals.current.set(assignmentId, assignmentVersion);
+                              }
                               setProviders((p) =>
-                                e.target.checked
+                                checked
                                   ? [...p, v.connection.provider]
                                   : p.filter((x) => x !== v.connection.provider),
-                              )
-                            }
+                              );
+                            }}
                           />
                           {providerName(v.connection.provider)}
                         </label>
@@ -1177,6 +1199,7 @@ export function TaskCenterView({
                       (center.enabled && (!record || center.executors.status !== "ready"))
                     }
                     onClick={() => {
+                      removals.current.clear();
                       setProviders(center.executors.providers);
                       setMode("edit");
                       setStep(1);
