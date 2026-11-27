@@ -24,6 +24,8 @@ FIELDS = {
     "browser_origin_aliases",
     "native_edge_public_key",
     "prefer_branded_workspace",
+    "task_retention_image",
+    "task_retention_schedule_enabled",
     *FLAGS,
 }
 DEPLOYMENT = {
@@ -136,6 +138,17 @@ def validate_full_input(value):
     require(
         value.get("bootstrap_image") in (None, deployment["creation_image"]),
         "conflicting_creation_image",
+    )
+    retention = value.get("task_retention_image", "")
+    repository = (
+        f"{deployment['region']}-docker.pkg.dev/{deployment['project_id']}/"
+        f"{deployment['artifact_repository']}/agent-hub-api@sha256:"
+    )
+    require(
+        type(retention) is str
+        and (retention == "" or re.fullmatch(re.escape(repository) + r"[a-f0-9]{64}", retention))
+        and (not boolean(value, "task_retention_schedule_enabled") or retention),
+        "invalid_task_retention",
     )
     sources = value.get("sources", {})
     fields(sources, SOURCES)

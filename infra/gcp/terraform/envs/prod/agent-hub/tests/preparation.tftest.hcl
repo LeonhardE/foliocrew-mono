@@ -6,6 +6,66 @@ override_resource {
   target          = google_kms_key_ring.delegation
   values          = { id = "projects/example-project-1234/locations/europe-west3/keyRings/folioview-agent-hub" }
 }
+
+run "retention_omitted_by_default" {
+  command = plan
+  assert {
+    condition     = length(google_cloud_run_v2_job.task_retention) == 0 && length(google_cloud_scheduler_job.task_retention) == 0
+    error_message = "Existing deployments must opt in before any retention resources appear."
+  }
+}
+
+run "retention_prepares_paused_with_dedicated_identities" {
+  command = plan
+  variables {
+    task_retention_image = "europe-west3-docker.pkg.dev/example-project-1234/example-images/agent-hub-api@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }
+  assert {
+    condition = (
+      google_cloud_scheduler_job.task_retention[0].paused &&
+      google_cloud_run_v2_job.task_retention[0].template[0].task_count == 1 &&
+      google_cloud_run_v2_job.task_retention[0].template[0].template[0].service_account == "fa-hub-retention-worker@example-project-1234.iam.gserviceaccount.com" &&
+      google_cloud_run_v2_job.task_retention[0].template[0].template[0].containers[0].image == var.task_retention_image &&
+      join(" ", google_cloud_run_v2_job.task_retention[0].template[0].template[0].containers[0].command) == "python -m app.task_retention_worker" &&
+      one(google_cloud_run_v2_job.task_retention[0].template[0].template[0].containers[0].args) == "--apply" &&
+      { for e in google_cloud_run_v2_job.task_retention[0].template[0].template[0].containers[0].env : e.name => e.value } == {
+        AGENT_HUB_STORE_BACKEND = "firestore"
+        FIREBASE_PROJECT_ID     = "example-project-1234"
+        FIRESTORE_DATABASE      = "agent-hub"
+      }
+    )
+    error_message = "Prepare one task executing the versioned Hub worker against the selected database, with scheduling paused."
+  }
+}
+run "retention_schedule_requires_an_image" {
+  command = plan
+  variables { task_retention_schedule_enabled = true }
+  expect_failures = [var.task_retention_schedule_enabled]
+}
+run "retention_rejects_mutable_image" {
+  command = plan
+  variables { task_retention_image = "europe-west3-docker.pkg.dev/example-project-1234/example-images/agent-hub-api:latest" }
+  expect_failures = [var.task_retention_image]
+}
+run "retention_opt_in_invokes_only_the_selected_job" {
+  command = plan
+  variables {
+    task_retention_image            = "europe-west3-docker.pkg.dev/example-project-1234/example-images/agent-hub-api@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    task_retention_schedule_enabled = true
+  }
+  assert {
+    condition = (
+      !google_cloud_scheduler_job.task_retention[0].paused &&
+      google_cloud_scheduler_job.task_retention[0].schedule == "17 * * * *" &&
+      google_cloud_scheduler_job.task_retention[0].http_target[0].http_method == "POST" &&
+      google_cloud_scheduler_job.task_retention[0].http_target[0].uri == "https://run.googleapis.com/v2/projects/example-project-1234/locations/europe-west3/jobs/agent-hub-task-retention:run" &&
+      google_cloud_scheduler_job.task_retention[0].http_target[0].oauth_token[0].service_account_email == "fa-hub-retention-trigger@example-project-1234.iam.gserviceaccount.com" &&
+      base64decode(google_cloud_scheduler_job.task_retention[0].http_target[0].body) == "{}"
+    )
+    error_message = "The hourly scheduler must invoke the exact job with the dedicated OAuth identity."
+  }
+}
+
 override_resource {
   override_during = plan
   target          = google_kms_crypto_key.delegation

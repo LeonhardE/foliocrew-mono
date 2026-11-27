@@ -143,6 +143,7 @@ class ProfileTests(unittest.TestCase):
             "agent_hub_public_connector_enabled",
             "portfolio_image_deployment_enabled",
             "agent_hub_image_deployment_enabled",
+            "agent_hub_retention_stage",
             "shared_image_build_legacy_binding",
             "market_cache_database_enabled",
             "user_data_database_enabled",

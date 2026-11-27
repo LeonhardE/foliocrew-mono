@@ -8,6 +8,16 @@ resetting protected resources to `none`. Native OAuth and personal Agent gates r
 The application contains encrypted Owner APIs, native account OAuth/MCP, tasks, Runs and
 results; image health alone does not establish their production acceptance.
 
+## Task retention
+
+An hourly retention job can finish signed permanent task deletions and clear tasks whose recycle-bin deadline has passed, including when the owner's browser is closed. To provision it with an administrator who can attach the two named service accounts:
+
+1. Build an Agent Hub image containing `app.task_retention_worker`. Verify a complete cleanup with synthetic tasks and confirm that unrelated and unexpired tasks survive. Record the tested image digest.
+2. In bootstrap retain the existing Hub service stage and set `agent_hub_retention_stage = "prepare"`. This enables the Scheduler API and creates a database-scoped worker identity and a separate invocation identity.
+3. In the Hub target select that digest in `task_retention_image`. Keep `task_retention_schedule_enabled = false` while creating the single-task Cloud Run job and its paused schedule.
+4. Set the bootstrap retention stage to `"invoker"` to grant the scheduler identity access to this job. Review the number of eligible production tasks by running the worker in inventory mode (omit `--apply`) against the named database before enabling deletion.
+5. Set `task_retention_schedule_enabled = true` in the Hub target for approved rollout. The schedule invokes the Google Cloud Run API using OAuth at minute 17 of every hour UTC. Monitor the execution's exit status and inspect aggregate counts. Setting the flag back to false pauses future invocations. A job that has already started can still finish.
+
 ## Existing-service image release
 
 The explicit administrator-only `agent_hub_image_deployment_enabled` defaults to
