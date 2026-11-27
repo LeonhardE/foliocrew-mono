@@ -169,6 +169,31 @@ select:focus-visible {
 #deck[data-index="4"] .atmosphere i {
   transform: translate(2%, -4%) scale(0.97);
 }
+.site-header {
+  position: absolute;
+  top: max(30px, env(safe-area-inset-top));
+  inset-inline: var(--pad);
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 14px;
+}
+.policy-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 clamp(12px, 2vw, 28px);
+  font-size: clamp(12px, 1vw, 15px);
+  color: var(--secondary);
+}
+.policy-links a {
+  padding-block: 8px;
+}
+.policy-links a:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
 .signature {
   display: inline-flex;
   align-items: center;
@@ -177,10 +202,6 @@ select:focus-visible {
   line-height: 1;
   font-weight: 650;
   letter-spacing: -0.065em;
-  position: absolute;
-  top: max(30px, env(safe-area-inset-top));
-  left: var(--pad);
-  z-index: 3;
 }
 .brand-mark {
   width: 30px;
@@ -565,12 +586,13 @@ html[lang="en"] .chapter h2 {
     grid-template-rows: auto auto minmax(0, 1fr) auto;
     min-height: 0;
   }
-  .signature {
+  .site-header {
     position: relative;
     top: auto;
-    left: auto;
+    inset-inline: auto;
     margin: max(19px, env(safe-area-inset-top)) var(--pad) 0;
-    width: fit-content;
+  }
+  .signature {
     font-size: 24px;
     gap: 8px;
   }
@@ -660,8 +682,10 @@ html[lang="en"] .chapter h2 {
   .js #deck {
     min-height: 305px;
   }
-  .signature {
+  .site-header {
     top: 12px;
+  }
+  .signature {
     font-size: 22px;
   }
   .js .narrative {
