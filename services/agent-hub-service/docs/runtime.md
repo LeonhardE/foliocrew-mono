@@ -109,5 +109,6 @@ Native OAuth also lets an expired token disconnect the same enrolled agent. If t
 connection can still be revoked, the worker retains minimal revocation references even
 after the transport expires. After the family's deadline, disconnecting the connection
 or replacing its authorization generation releases those references on the next run.
-Verified account erasure includes these references at any time. The worker logs aggregate
-counts only.
+Verified account erasure includes these references at any time. The worker reports
+aggregate task and source counts. For OAuth it reports only `ok` or `review_required`.
+Unexpected results or storage errors produce a fixed review status and a nonzero exit.

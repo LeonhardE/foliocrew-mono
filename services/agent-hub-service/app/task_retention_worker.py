@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import sys
 import time
 
 from folioview_shared.encrypted.errors import ContractError
@@ -9,6 +10,18 @@ from folioview_shared.encrypted.errors import ContractError
 from .store import StoreUnavailable, get_store
 from .task_center import task_path
 from .task_lifecycle_service import maintain_task
+
+TASK_COUNTS = ("eligible", "completed", "reviewRequired", "failed")
+SOURCE_COUNTS = ("eligible", "completed", "deferred", "failed")
+OAUTH_COUNTS = ("expiredEntries", "expiredRecords", "replayRecords", "reviewRequired")
+
+
+def valid_counts(result, fields):
+    return (
+        type(result) is dict
+        and result.keys() == set(fields)
+        and all(type(result[k]) is int and 0 <= result[k] <= sys.maxsize for k in fields)
+    )
 
 
 def process_due(store, *, apply, clock=time.time):
@@ -61,17 +74,32 @@ def main(*, clock=time.time):
     from .source_erasure import process_sources
 
     apply = parser.parse_args().apply
-    store = get_store()
-    counts = process_due(store, apply=apply, clock=clock)
-    counts["sources"] = process_sources(store, apply=apply)
-    counts["oauth"] = process_oauth_expiry(store, apply=apply, clock=clock)
-    print(json.dumps(counts, sort_keys=True))
+    try:
+        store = get_store()
+        tasks = process_due(store, apply=apply, clock=clock)
+        sources = process_sources(store, apply=apply)
+        oauth = process_oauth_expiry(store, apply=apply, clock=clock)
+        if not (
+            valid_counts(tasks, TASK_COUNTS)
+            and valid_counts(sources, SOURCE_COUNTS)
+            and valid_counts(oauth, OAUTH_COUNTS)
+        ):
+            raise ValueError
+    except Exception:
+        # Storage and protocol exceptions can carry record data. Expose only the job result.
+        print('{"status":"review_required"}')
+        return 1
+
+    report = {key: tasks[key] for key in TASK_COUNTS}
+    report["sources"] = {key: sources[key] for key in SOURCE_COUNTS}
+    report["oauth"] = "review_required" if oauth["reviewRequired"] else "ok"
+    print(json.dumps(report, sort_keys=True))
     return int(
         bool(
-            counts["failed"]
-            or counts["reviewRequired"]
-            or counts["sources"]["failed"]
-            or counts["oauth"]["reviewRequired"]
+            tasks["failed"]
+            or tasks["reviewRequired"]
+            or sources["failed"]
+            or oauth["reviewRequired"]
         )
     )
 

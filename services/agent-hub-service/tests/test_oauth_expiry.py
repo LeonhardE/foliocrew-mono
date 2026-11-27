@@ -5,7 +5,7 @@ import json
 import os
 import secrets
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
 import test_native_transport as native
@@ -83,7 +83,7 @@ class OAuthExpiryTests(unittest.TestCase):
             self.assertEqual(task_retention_worker.main(clock=lambda: now), 0)
         counts = json.loads(output.getvalue())
         self.assertEqual(counts["completed"], 1)
-        self.assertGreaterEqual(counts["oauth"]["expiredRecords"], 1)
+        self.assertEqual(counts["oauth"], "ok")
         self.assertNotIn(expired, output.getvalue())
         self.assertNotIn(legacy.TASK, output.getvalue())
         self.assertIsNone(self.read_credential(flow, "hub_native_oauth_codes", expired))
@@ -92,6 +92,61 @@ class OAuthExpiryTests(unittest.TestCase):
             disposed.fx.history.owner_get(UID, disposed.f.vault, report["resultId"])
         self.assertEqual(tasks.get(OTHER_UID, keep_id), kept_task)
         self.assertEqual(flow.refresh(tokens["refresh_token"])[0], 200)
+
+    def test_worker_logs_only_public_counts_and_fixed_oauth_status(self):
+        from app import task_retention_worker as worker
+
+        tasks = {"eligible": 2, "completed": 2, "reviewRequired": 0, "failed": 0}
+        sources = {"eligible": 1, "completed": 0, "deferred": 1, "failed": 0}
+        oauth = {
+            "expiredEntries": 0,
+            "expiredRecords": 99887766,
+            "replayRecords": 0,
+            "reviewRequired": 0,
+        }
+        private_value = "private-record-identifier"
+
+        def run(tasks, sources, oauth, error=None):
+            output = io.StringIO()
+            with (
+                patch.object(worker, "get_store"),
+                patch.object(worker, "process_due", return_value=tasks),
+                patch("app.source_erasure.process_sources", return_value=sources),
+                patch(
+                    "app.oauth_expiry.process_oauth_expiry", return_value=oauth, side_effect=error
+                ),
+                patch("sys.argv", ["retention"]),
+                redirect_stdout(output),
+                redirect_stderr(output),
+            ):
+                status = worker.main()
+            return status, json.loads(output.getvalue())
+
+        def report(tasks, sources, status):
+            return {**tasks, "sources": sources, "oauth": status}
+
+        self.assertEqual(run(tasks, sources, oauth), (0, report(tasks, sources, "ok")))
+        for stage, field in (
+            (tasks, "failed"),
+            (tasks, "reviewRequired"),
+            (sources, "failed"),
+            (oauth, "reviewRequired"),
+        ):
+            with self.subTest(field=field), patch.dict(stage, {field: 1}):
+                expected = "review_required" if stage is oauth else "ok"
+                self.assertEqual(run(tasks, sources, oauth), (1, report(tasks, sources, expected)))
+
+        fixed_failure = (1, {"status": "review_required"})
+        for stage in (tasks, sources, oauth):
+            for fields in (
+                {private_value: 17},
+                {next(iter(stage)): private_value},
+                {next(iter(stage)): -1},
+                {next(iter(stage)): True},
+            ):
+                with self.subTest(fields=fields), patch.dict(stage, fields):
+                    self.assertEqual(run(tasks, sources, oauth), fixed_failure)
+        self.assertEqual(run(tasks, sources, oauth, error=ValueError(private_value)), fixed_failure)
 
     def test_legacy_spent_code_preserves_family_replay_until_final_expiration(self):
         origin = self.setup_flow(legacy.OAuthTests)
