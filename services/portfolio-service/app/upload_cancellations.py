@@ -213,6 +213,31 @@ def is_fence(value):
     return type(value) is dict and set(value) != OPERATION_FIELDS
 
 
+def prune_source_cancellations(unit, owner, source, ack, now):
+    """A vault-wide ledger may also contain results for surviving sources."""
+    path = ledger_path(owner, ack["vaultId"])
+    if unit.get(path) is None:
+        return
+    authority = _trusted(unit, owner, source, now)
+    if (
+        authority.document["resourceRef"] != ack["resourceRef"]
+        or authority.document["vaultId"] != ack["vaultId"]
+    ):
+        raise StoreUnavailable
+    ledger = _ledger(unit, authority, now)
+    remaining = {
+        key: value
+        for key, value in ledger["records"].items()
+        if value["receipt"]["target"]["resourceRef"] != ack["resourceRef"]
+    }
+    if len(remaining) == len(ledger["records"]):
+        return
+    if remaining:
+        unit.put(path, {**ledger, "records": remaining})
+    else:
+        unit.delete(path)
+
+
 def validate_fence(unit, value, authority, operation, now, ledger=None):
     """Rejoin both immutable records, including on commit/receipt retries."""
     try:
@@ -426,6 +451,7 @@ def cancel_upload(service, uid, source, body, cancellation):
     def write(unit):
         now = service.now()
         authority = _trusted(unit, owner, source, now)
+        service._owner_history(unit, authority)
         payload = _intent(body["command"], authority)
         target = payload["target"]
         if (

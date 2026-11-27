@@ -256,8 +256,9 @@ class OwnerViewTests(unittest.TestCase):
             self.service, action="delete", operation="synthetic_delete_000001", version=3, epoch=2
         )
         self.fixture.ack(self.service, operation="synthetic_delete_000001", epoch=3)
-        self.assertEqual(self.read().json()["mode"], "sync_required")
-        self.assertEqual(self.service.metadata(UID, SOURCE)["state"], "deleted")
+        response = self.read()
+        self.assert_private(response, 503)
+        self.assertEqual(response.json()["error"]["code"], "authorization_unavailable")
 
     def test_acknowledged_fence_retains_original_historical_owner_snapshot_epoch(self):
         self.fixture.mutate(self.service)

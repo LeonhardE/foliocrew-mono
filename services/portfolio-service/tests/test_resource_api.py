@@ -198,8 +198,8 @@ class SignedPortfolioMetadataTests(SignedPortfolioMetadataFixture):
         )
         self.fixture.ack(self.service, operation="synthetic_delete_000001", epoch=3)
         response = self.client.post(self.states, headers=self.headers, json=self.body)
-        self.assert_private(response, 200)
-        self.assertEqual(response.json()["items"][0]["state"], "deleted")
+        self.assert_private(response, 503)
+        self.assertEqual(response.json()["error"]["code"], "authorization_unavailable")
 
     def test_acknowledged_fence_requires_fresh_current_epoch_snapshot_for_projection(self):
         self.fixture.mutate(self.service)

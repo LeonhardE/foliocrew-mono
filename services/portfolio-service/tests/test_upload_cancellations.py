@@ -81,20 +81,17 @@ class UploadCancellationTests(unittest.TestCase):
         self.assertFalse(authority["active"])
         self.assertEqual(authority["version"], 2)
 
-    def test_deleted_source_saved_outcome_does_not_expose_or_reactivate_history(self):
+    def test_deleted_source_refuses_late_cancellation_without_recreating_any_rows(self):
         self.f.write(self.service, carrier=self.carrier)
         self.f.mutate(self.service, action="delete")
         self.f.ack(self.service)
-        metadata = self.service.metadata(UID, SOURCE)
-        self.assertEqual(metadata["state"], "deleted")
+        before = self.snapshot()
         self.clock = 6000
-        response = self.cancel()
-        self.assertEqual(response["receipt"]["outcome"], "saved")
-        self.assertNotIn("ciphertext", str(response))
-        self.assertEqual(self.service.upload_cancellation(UID, SOURCE, CANCEL), response)
-        self.assertEqual(self.service.metadata(UID, SOURCE), metadata)
-        self.code("not_found", lambda: self.service.snapshot(UID, SOURCE, "snapshot_1"))
-        self.code("not_found", lambda: self.service.receipt(UID, SOURCE, OPERATION))
+        with self.assertRaises(PortfolioError):
+            self.cancel()
+        with self.assertRaises(PortfolioError):
+            self.service.upload_cancellation(UID, SOURCE, CANCEL)
+        self.assertEqual(self.snapshot(), before)
 
     def test_global_operation_namespace_prevents_other_source_and_changed_packet_bypass(self):
         self.cancel()

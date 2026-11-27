@@ -26,9 +26,16 @@ COLLECTIONS = frozenset(
         "portfolio_source_states",
         "portfolio_source_mutations",
         "portfolio_upload_cancellations",
+        "portfolio_erasure_generation",
     }
 )
 MAX_BATCH_DOCUMENTS = 30
+ACCOUNT_COLLECTIONS = tuple(sorted(COLLECTIONS - {"portfolio_erasure_generation"}))
+SOURCE_HISTORY_COLLECTIONS = (
+    "portfolio_snapshots",
+    "portfolio_operations",
+    "portfolio_source_mutations",
+)
 _TRANSFER_HISTORY_FORMAT = "folioview.portfolio-authority-history.segments.v1"
 _HISTORY_PER_SEGMENT = 32
 _MAX_HISTORY_SEGMENTS = 4
@@ -214,6 +221,30 @@ class SQLiteTransaction:
             (path, canonical_json(data).decode()),
         )
 
+    def delete(self, path):
+        self.connection.execute("DELETE FROM portfolio_documents WHERE path = ?", (path,))
+
+    def erasure_page(self, collection, *, owner=None, source=None, limit=8, after=None):
+        if owner is None and source is None and collection == "portfolio_source_states":
+            condition, values = "json_extract(body, '$.state') = 'deleted'", ()
+        elif collection in SOURCE_HISTORY_COLLECTIONS and owner and source:
+            condition = (
+                "json_extract(body, '$.ownerSubject') = ? AND json_extract(body, '$.sourceId') = ?"
+            )
+            values = (owner, source)
+        elif collection in ACCOUNT_COLLECTIONS and owner and source is None:
+            condition, values = "json_extract(body, '$.ownerSubject') = ?", (owner,)
+        else:
+            raise StoreUnavailable
+        rows = self.connection.execute(
+            "SELECT path, json_extract(body, '$.ownerSubject'), json_extract(body, '$.sourceId') "
+            "FROM portfolio_documents WHERE path > ? AND path < ? AND "
+            + condition
+            + " ORDER BY path LIMIT ?",
+            (after or collection + "/", collection + "0", *values, limit),
+        )
+        return list(rows)
+
     def get_many(self, paths: list[str]) -> dict:
         _batch_paths(paths)
         result = dict.fromkeys(paths)
@@ -247,7 +278,13 @@ class SQLitePortfolioStore:
         Path(self.path).chmod(0o600)
 
     def connect(self):
-        return sqlite3.connect(self.path, timeout=4, isolation_level=None)
+        connection = sqlite3.connect(self.path, timeout=4, isolation_level=None)
+        connection.execute("PRAGMA secure_delete = ON")
+        return connection
+
+    def get(self, path):
+        with closing(self.connect()) as connection:
+            return SQLiteTransaction(connection, self).get(path)
 
     def transact(self, callback):
         with closing(self.connect()) as connection:
@@ -299,6 +336,31 @@ class FirestoreTransaction:
         )
         self.pending.append((path, _firestore_document(data, path=path)))
 
+    def delete(self, path):
+        self.pending.append((path, None))
+
+    def erasure_page(self, collection, *, owner=None, source=None, limit=8, after=None):
+        from google.cloud.firestore_v1.base_query import FieldFilter
+
+        query = self.store.client.collection(collection)
+        if owner is None and source is None and collection == "portfolio_source_states":
+            query = query.where(filter=FieldFilter("state", "==", "deleted"))
+        elif collection in SOURCE_HISTORY_COLLECTIONS and owner and source:
+            query = query.where(filter=FieldFilter("ownerSubject", "==", owner)).where(
+                filter=FieldFilter("sourceId", "==", source)
+            )
+        elif collection in ACCOUNT_COLLECTIONS and owner and source is None:
+            query = query.where(filter=FieldFilter("ownerSubject", "==", owner))
+        else:
+            raise StoreUnavailable
+        query = query.select(["ownerSubject", "sourceId"]).order_by("__name__").limit(limit)
+        if after:
+            query = query.start_after({"__name__": self.store.client.document(after)})
+        return [
+            (row.reference.path, row.get("ownerSubject"), row.to_dict().get("sourceId"))
+            for row in query.stream(transaction=self.transaction, timeout=4, retry=None)
+        ]
+
     def get_many(self, paths: list[str]) -> dict:
         _batch_paths(paths)
         result = {path: copy.deepcopy(self._reads.get(path)) for path in paths}
@@ -329,7 +391,11 @@ class FirestoreTransaction:
 
     def flush(self):
         for path, data in self.pending:
-            self.transaction.set(self.store.client.document(path), data)
+            reference = self.store.client.document(path)
+            if data is None:
+                self.transaction.delete(reference)
+            else:
+                self.transaction.set(reference, data)
 
 
 class FirestorePortfolioStore:
@@ -343,6 +409,10 @@ class FirestorePortfolioStore:
         self.client = (
             client if client is not None else firestore.Client(project=project, database=database)
         )
+
+    def get(self, path):
+        # A strong single-document read needs no begin/commit round trips.
+        return FirestoreTransaction(None, self).get(path)
 
     def transact(self, callback):
         from google.cloud import firestore

@@ -149,18 +149,20 @@ class SourceLifecycleTests(unittest.TestCase):
         self.assert_code("not_found", lambda: self.service.snapshot(UID, SOURCE))
         self.assert_code("not_found", lambda: self.service.receipt(UID, SOURCE, OPERATION))
         self.fixture.ack(self.service, operation=deleted["operationId"], epoch=3)
-        self.fixture.install(self.service, version=6, epoch=3, active=True)
-        self.assertEqual(self.service.metadata(UID, SOURCE)["state"], "deleted")
-        self.assert_code("insufficient_scope", lambda: self.fixture.write(self.service))
-        self.assert_code("not_found", lambda: self.service.snapshot(UID, SOURCE))
-        # A tombstone retains ciphertext and immutable evidence; no hard purge claim.
+        self.assert_code(
+            "version_conflict", lambda: self.fixture.install(self.service, version=6, epoch=3)
+        )
+        self.assert_code(
+            "not_found", lambda: self.service.mutation(UID, SOURCE, deleted["operationId"])
+        )
         with sqlite3.connect(self.path) as connection:
             self.assertEqual(
                 connection.execute(
                     "SELECT COUNT(*) FROM portfolio_documents "
-                    "WHERE path LIKE 'portfolio_snapshots/%'"
+                    "WHERE json_extract(body, '$.ownerSubject') = ?",
+                    (self.fixture.owner,),
                 ).fetchone()[0],
-                1,
+                0,
             )
 
     def test_replica_cannot_skip_pending_epoch_or_recreate_same_source_incarnation(self):

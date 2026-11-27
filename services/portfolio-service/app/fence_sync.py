@@ -247,6 +247,9 @@ def fence_client_for_owner(owner, hub_origin, user_origin, selected_owner):
 async def synchronize(service, uid, source, operation, client_factory):
     mutation = await run_in_threadpool(service.fence_mutation, uid, source, operation)
     if mutation["state"] == "acknowledged":
+        await run_in_threadpool(
+            service._purge_acknowledged_delete, owner_key(uid), source, mutation
+        )
         return {"contractVersion": CONTRACT_VERSION, **public_mutation(mutation)}
     request = fence_request(mutation)
     ack = await client_factory().invalidate(request)

@@ -30,6 +30,7 @@ from folioview_shared.http import PrivateRoute
 from folioview_shared.identity import owner_key
 
 from .api import _invoke, _read_json, _transport, get_service
+from .erasure import authority_generation
 from .holdings import PortfolioService
 
 MAX_AUTHORITY_BYTES = MAX_READ_BYTES
@@ -300,6 +301,7 @@ async def synchronize(
             os.getenv("PORTFOLIO_USER_AUTHORITY_ORIGIN", ""),
             os.getenv("PORTFOLIO_USER_AUTHORITY_OWNER", ""),
         )
+        generation = authority_generation(service.store)
         if user_origin is None:
             if body != {"contractVersion": CONTRACT_VERSION} or type(body) is not dict:
                 raise ContractError("malformed_request")
@@ -308,6 +310,6 @@ async def synchronize(
             authority = configured_user_client(user_origin).read_user(
                 user.uid, source_id, values[0], body
             )
-        return service.synchronize_authority(user.uid, source_id, authority)
+        return service.synchronize_authority(user.uid, source_id, authority, generation=generation)
 
     return await run_in_threadpool(_invoke, sync)
