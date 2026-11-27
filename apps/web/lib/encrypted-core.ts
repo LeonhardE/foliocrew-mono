@@ -6312,14 +6312,21 @@ export class VaultCore {
       exact(args, ["actor", "newerSource", "packet"]);
       const { actor, newerSource, packet } = args;
       const context = packet.context;
+      const objectType =
+        newerSource.kind === "holdings"
+          ? "holdings_snapshot"
+          : newerSource.kind === "channel_follows"
+            ? "channel_follows_evidence"
+            : null;
       if (
+        !objectType ||
+        newerSource.ref?.kind !== newerSource.kind ||
         packet.kind !== "publication" ||
         packet.connectionId !== actor.connectionId ||
-        context?.objectType !== "holdings_snapshot" ||
+        context?.objectType !== objectType ||
         context.connectionId !== actor.connectionId ||
         context.clientId !== actor.clientId ||
         context.stableOperationId !== packet.operationId ||
-        newerSource.kind !== "holdings" ||
         !equal(context.ref, newerSource.ref) ||
         context.sourceEpoch !== newerSource.sourceEpoch ||
         !Number.isSafeInteger(context.sourceRevision) ||
@@ -6327,10 +6334,13 @@ export class VaultCore {
         context.sourceRevision >= newerSource.revision
       )
         throw new VaultError("binding_mismatch");
-      // The original comes from the authenticated local outbox. A newer
-      // owner-signed producer snapshot prevents an uncommitted older write.
-      const snapshotId = newerSource.snapshot.receipt.snapshotId;
-      await this.agentResourceContent(newerSource, snapshotId);
+      // Preserve the sealed original in the outbox archive. Validate the newer
+      // owner-signed snapshot or revisioned User response used to replace it.
+      const copyId =
+        newerSource.kind === "holdings"
+          ? newerSource.snapshot.receipt.snapshotId
+          : newerSource.ref.resourceId;
+      await this.agentResourceContent(newerSource, copyId);
       return { operationId: packet.operationId, fingerprint: packet.fingerprint, superseded: true };
     }
     exact(args, ["actor", "current", "hubOrigin", "packet"]);

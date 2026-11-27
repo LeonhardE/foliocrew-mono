@@ -547,3 +547,33 @@ test("a verified holdings save stages only a version pointer and survives a new 
     await reopened.finishHoldingsAgentSync(newest);
     assert.deepEqual(await reopened.loadHoldingsAgentSync(), []);
   }));
+
+test("the channel update pointer resumes after unlock and a delayed receipt cannot erase a newer save", async () =>
+  withStorage(async () => {
+    const { f, store } = await seeded();
+    clock = 1000;
+    f.time(clock);
+    const { client } = browser(f, store);
+    await client.unlock(f.vault, f.material());
+    const attempt = { revision: 5, confirmed: false };
+    const confirmed = { ...attempt, confirmed: true };
+    await assert.rejects(
+      client.updateChannelFollowsAgentSync("different_vault", attempt, true),
+      /binding_mismatch/,
+    );
+    await client.updateChannelFollowsAgentSync(f.vault.vaultId, attempt, true);
+    await client.updateChannelFollowsAgentSync(
+      f.vault.vaultId,
+      { ...confirmed, revision: 4 },
+      true,
+    );
+    client.lock();
+    const { client: reopened } = browser(f, store);
+    await reopened.unlock(f.vault, f.material());
+    assert.deepEqual(await reopened.loadChannelFollowsAgentSync(), attempt);
+    await reopened.updateChannelFollowsAgentSync(f.vault.vaultId, confirmed, true);
+    await reopened.updateChannelFollowsAgentSync(f.vault.vaultId, attempt, false);
+    assert.deepEqual(await reopened.loadChannelFollowsAgentSync(), confirmed);
+    await reopened.updateChannelFollowsAgentSync(f.vault.vaultId, confirmed, false);
+    assert.equal(await reopened.loadChannelFollowsAgentSync(), null);
+  }));

@@ -8,7 +8,7 @@ import { useHoldingsWorkspace, type HoldingsWorkspace } from "@/components/useHo
 import { asFacts, factsContent, type SavedHoldings } from "@/lib/holdings-facts";
 import HoldingsEditor from "./HoldingsEditor";
 import styles from "./ResourcesPanel.module.css";
-import ResourceLibrary from "./ResourceLibrary";
+import ResourceLibrary, { type FollowsSync } from "./ResourceLibrary";
 import type { ResourceSelection } from "@/lib/resource-library";
 import { PasskeyHelp } from "./PasskeyHelp";
 import { useDisplayNames, type DisplayNamesModel } from "./useDisplayNames";
@@ -920,6 +920,9 @@ function ResourcesView({
   watchlist,
   holdingsSyncStatus,
   onRetryHoldingsSync,
+  followsSync,
+  beforeSaveFollows,
+  onSavedFollows,
 }: ResourcesProps & { model: HoldingsWorkspace }) {
   const t = useTranslations("resources"),
     names = useDisplayNames(model, active);
@@ -1020,6 +1023,9 @@ function ResourcesView({
         active={active}
         watchlist={watchlist}
         onOpenWatchlist={onOpenWatchlist}
+        followsSync={followsSync}
+        beforeSaveFollows={beforeSaveFollows}
+        onSavedFollows={onSavedFollows}
       >
         {(library) => (
           <div className={styles.workspace}>
@@ -1046,6 +1052,9 @@ function ResourcesView({
 type ResourcesProps = {
   holdingsSyncStatus?: "syncing" | "synced" | "pending";
   onRetryHoldingsSync?: () => void;
+  followsSync?: FollowsSync;
+  beforeSaveFollows?: (revision: number, owner: string) => Promise<void>;
+  onSavedFollows?: (revision: number, owner: string) => void;
   watchlist?: WatchlistModel;
   active?: boolean;
   onOpenWatchlist?: () => void;

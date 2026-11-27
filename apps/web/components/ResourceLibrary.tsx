@@ -13,8 +13,14 @@ import type { HoldingsPublication } from "@/lib/holdings-publication";
 
 const kinds: ResourceKind[] = ["holdings", "watchlist", "channel_follows"];
 const blank: ChannelInput = { name: "", handleOrUrl: "", note: "" };
-function FollowsEditor({ model }: { model: ResourceLibraryModel }) {
+export type FollowsSync = {
+  revision: number;
+  status: "syncing" | "synced" | "pending";
+  retry: () => void;
+};
+function FollowsEditor({ model, sync }: { model: ResourceLibraryModel; sync?: FollowsSync }) {
   const t = useTranslations("resourceLibrary");
+  const taskSync = useTranslations("resourceLibrary.followsSync");
   const [draft, setDraft] = useState<ChannelInput>(blank);
   const [editing, setEditing] = useState<string | null>(null);
   const [opened, setOpened] = useState(false);
@@ -66,6 +72,16 @@ function FollowsEditor({ model }: { model: ResourceLibraryModel }) {
       )}
       {data && (
         <>
+          {sync?.revision === data.revision && (
+            <div className={styles.note} role="status">
+              <p>{taskSync(sync.status)}</p>
+              {sync.status === "pending" && (
+                <button type="button" onClick={sync.retry}>
+                  {taskSync("retry")}
+                </button>
+              )}
+            </div>
+          )}
           {!data.items.length && <p className={styles.empty}>{t("noFollows")}</p>}
           <ul className={styles.list}>
             {data.items.map((item) => (
@@ -239,6 +255,7 @@ export function ResourceLibraryView({
   watchlist: sharedWatchlist,
   filter: selectedFilter,
   onFilterChange,
+  followsSync,
 }: {
   model: ResourceLibraryModel;
   watchlist?: WatchlistModel;
@@ -246,6 +263,7 @@ export function ResourceLibraryView({
   onOpenWatchlist?: () => void;
   filter?: ResourceKind;
   onFilterChange?: (kind: ResourceKind) => void;
+  followsSync?: FollowsSync;
 }) {
   const t = useTranslations("resourceLibrary");
   const [localFilter, setLocalFilter] = useState<ResourceKind>("holdings");
@@ -420,7 +438,7 @@ export function ResourceLibraryView({
           {!model.authenticated ? (
             <p className={styles.empty}>{t("signInLists")}</p>
           ) : (
-            <FollowsEditor key={model.owner} model={model} />
+            <FollowsEditor key={model.owner} model={model} sync={followsSync} />
           )}
         </section>
       )}
@@ -436,6 +454,8 @@ export default function ResourceLibrary({
   holdingsCatalogueNeeded = true,
   resumeCatalogueOnNavigation = false,
   resourceDisplay,
+  beforeSaveFollows,
+  onSavedFollows,
   ...props
 }: {
   active?: boolean;
@@ -448,6 +468,9 @@ export default function ResourceLibrary({
   watchlist?: WatchlistModel;
   children: ReactNode | ((model: ResourceLibraryModel) => ReactNode);
   onOpenWatchlist?: () => void;
+  beforeSaveFollows?: (revision: number, owner: string) => Promise<void>;
+  onSavedFollows?: (revision: number, owner: string) => void;
+  followsSync?: FollowsSync;
 }) {
   const auth = useAuth();
   const owner = auth.status === "authenticated" && auth.profile ? auth.sessionKey : null;
@@ -468,6 +491,8 @@ export default function ResourceLibrary({
     resumeCatalogueOnNavigation,
     resourceDisplay,
     holdingsPublication,
+    beforeSaveFollows,
+    onSavedFollows,
   });
   const previousVersion = useRef(holdingsVersion);
   useEffect(() => {

@@ -745,6 +745,12 @@
     "unreadCount": "{count} 份未读报告"
   },
   "resourceLibrary": {
+    "followsSync": {
+      "syncing": "正在检查已获授权的 Agent 是否需要这版 YouTube 关注。",
+      "synced": "已获授权的 Agent 可以读取这版 YouTube 关注。",
+      "pending": "YouTube 关注已保存，Agent 资料同步尚未完成。",
+      "retry": "重试同步"
+    },
     "filterLabel": "筛选资源",
     "kinds": {
       "all": "全部资源",

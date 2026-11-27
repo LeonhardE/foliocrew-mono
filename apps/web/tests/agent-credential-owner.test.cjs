@@ -485,6 +485,58 @@ async function consentReceipt(f, packet, resources, prior = null) {
     })),
   };
 }
+test("Owner Worker validates a newer revisioned YouTube response before preserving an older sealed update", async (t) => {
+  const f = await fixture(t);
+  const credentialPacket = await f.owner.session.prepareAgentCredential(f.args);
+  await install(f, credentialPacket);
+  const state = credential(f, credentialPacket);
+  const ref = {
+    kind: "channel_follows",
+    sourceService: "user",
+    resourceId: "synthetic_channels",
+    incarnation: "synthetic_incarnation",
+  };
+  const resources = [{ ref, sourceEpoch: 1, revision: 1, state: "active" }];
+  const common = { actor: f.args.actor, identityState: identityState(state) };
+  const approved = await f.owner.session.preparePersistentConsent({
+    ...common,
+    resourceState: resourceState(state),
+    receipts: [],
+    resources,
+  });
+  const receipt = await consentReceipt(f, approved, resources);
+  const source = {
+    kind: "channel_follows",
+    ref,
+    sourceEpoch: 1,
+    revision: 1,
+    fetchedAt: "1970-01-01T00:16:40Z",
+    sourceAsOf: null,
+    response: { revision: 1, items: [], limit: 50 },
+  };
+  const packet = await f.owner.session.preparePersistentResource({
+    ...common,
+    resourceState: resourceState(state, [receipt]),
+    receipts: [receipt],
+    source,
+  });
+  const newerSource = { ...source, revision: 2, response: { ...source.response, revision: 2 } };
+  const recovery = { actor: f.args.actor, packet, newerSource };
+  assert.deepEqual(await f.owner.session.verifySupersededPublicationPending(recovery), {
+    operationId: packet.operationId,
+    fingerprint: packet.fingerprint,
+    superseded: true,
+  });
+  for (const invalid of [
+    source,
+    { ...newerSource, sourceEpoch: 2 },
+    { ...newerSource, response: source.response },
+    { ...newerSource, ref: { ...ref, incarnation: "other_incarnation" } },
+  ])
+    await assert.rejects(
+      f.owner.session.verifySupersededPublicationPending({ ...recovery, newerSource: invalid }),
+    );
+});
 test("Root-verified renewal restores only original continuing scope; latest revocation and source changes prevent revival", async (t) => {
   const f = await fixture(t),
     first = await f.owner.session.prepareAgentCredential(f.args);

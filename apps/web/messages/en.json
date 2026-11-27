@@ -745,6 +745,12 @@
     "unreadCount": "{count} unread reports"
   },
   "resourceLibrary": {
+    "followsSync": {
+      "syncing": "Checking whether authorized Agents need this YouTube follows update.",
+      "synced": "This YouTube follows version is available to authorized Agents.",
+      "pending": "YouTube follows saved. The update for authorized Agents is still pending.",
+      "retry": "Retry update"
+    },
     "filterLabel": "Filter resources",
     "kinds": {
       "all": "All resources",

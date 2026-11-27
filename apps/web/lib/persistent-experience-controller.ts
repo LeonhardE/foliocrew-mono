@@ -5,7 +5,12 @@ import {
   readChannelFollows,
 } from "./resource-library";
 import { taskMetadata, taskPage } from "./task-types";
-import type { AgentPreparationSource, HoldingsAgentSync, TaskMetadata } from "./encrypted-types";
+import type {
+  AgentPreparationSource,
+  ChannelFollowsAgentSync,
+  HoldingsAgentSync,
+  TaskMetadata,
+} from "./encrypted-types";
 import { connectionSummary } from "./connection-summary";
 import type { HoldingsWorkspace } from "../components/useHoldingsWorkspace";
 export const PERSISTENT_CONTRACT = "folioview.agent-workspace.v2.0";
@@ -21,6 +26,10 @@ function credentialLifetime(packet: Json) {
 }
 type Json = Record<string, any>;
 export type SavedHoldingsRevision = HoldingsAgentSync & { owner: string };
+export type SavedChannelFollowsRevision = ChannelFollowsAgentSync & {
+  owner: string;
+  vaultId: string;
+};
 export type PersistentConnection = {
   connectionId: string;
   clientId: string;
@@ -847,12 +856,13 @@ export class PersistentExperienceController {
     context: Json,
     item: Json,
     discovered?: Awaited<ReturnType<PersistentExperienceController["catalogue"]>>,
+    preparedUserSource?: Extract<AgentPreparationSource, { kind: "watchlist" | "channel_follows" }>,
   ) {
     const before = discovered ?? (await this.catalogue()),
       find = (c: any) =>
         c.groups
           .flatMap((g: any) => g.items)
-          .find((v: any) => sourceKey(v.ref) === sourceKey(item.ref));
+          .find((v: any) => v.ref && sourceKey(v.ref) === sourceKey(item.ref));
     if (!same(find(before), item)) fail("source_unavailable");
     let source: Json;
     if (item.ref.kind === "holdings") {
@@ -892,29 +902,7 @@ export class PersistentExperienceController {
         revision: item!.revision,
         snapshot,
       };
-    } else {
-      const raw = await this.api(
-        "user",
-        item.ref.kind === "watchlist" ? "/api/v1/watchlist" : "/api/v1/channel-follows",
-      );
-      this.assert();
-      const response =
-        item.ref.kind === "watchlist" ? readResourceWatchlist(raw) : readChannelFollows(raw);
-      if (
-        item.ref.kind === "channel_follows" &&
-        (response as { revision: number }).revision !== item.revision
-      )
-        fail("source_unavailable");
-      source = {
-        kind: item.ref.kind,
-        ref: item.ref,
-        sourceEpoch: item!.sourceEpoch,
-        revision: item!.revision,
-        fetchedAt: new Date().toISOString(),
-        sourceAsOf: null,
-        response,
-      };
-    }
+    } else source = preparedUserSource ?? (await this.readUserResource(item));
     const after = await this.catalogue();
     if (!same(find(after), item)) fail("source_unavailable");
     const packet = await this.workspace().preparePersistentResource({
@@ -924,9 +912,49 @@ export class PersistentExperienceController {
     this.assert();
     await this.send(connection, packet);
   }
+
+  private async readUserResource(
+    item: Json,
+  ): Promise<Extract<AgentPreparationSource, { kind: "watchlist" | "channel_follows" }>> {
+    const kind = item.ref.kind;
+    const raw = await this.api(
+      "user",
+      kind === "watchlist" ? "/api/v1/watchlist" : "/api/v1/channel-follows",
+    );
+    this.assert();
+    const response = kind === "watchlist" ? readResourceWatchlist(raw) : readChannelFollows(raw);
+    if (
+      kind === "channel_follows" &&
+      (!("revision" in response) || response.revision !== item.revision)
+    )
+      fail("source_unavailable");
+    return {
+      kind,
+      ref: item.ref,
+      sourceEpoch: item.sourceEpoch,
+      revision: item.revision,
+      fetchedAt: new Date().toISOString(),
+      sourceAsOf: null,
+      response,
+    };
+  }
+
   async syncSavedHoldings(saved: SavedHoldingsRevision) {
+    return (await this.syncSavedResource(saved)) ?? fail("source_unavailable");
+  }
+
+  async syncSavedChannelFollows(saved: SavedChannelFollowsRevision) {
+    return this.syncSavedResource(saved);
+  }
+
+  private async syncSavedResource(saved: SavedHoldingsRevision | SavedChannelFollowsRevision) {
     const vaultId = this.vault().vaultId;
-    if (saved.vaultId !== vaultId || saved.owner !== this.workspace().owner)
+    if (
+      saved.vaultId !== vaultId ||
+      saved.owner !== this.workspace().owner ||
+      !Number.isSafeInteger(saved.revision) ||
+      saved.revision < 1
+    )
       fail("verification_failed");
     const summary = await this.request(`/api/v3/provider-connections/${vaultId}/summary`);
     if (!connectionSummary(summary, vaultId)) return fail("invalid_response");
@@ -945,16 +973,34 @@ export class PersistentExperienceController {
     });
     if (!connections.length) return 0;
     const catalogue = await this.catalogue();
-    const item = catalogue.groups
-      .flatMap((group) => group.items)
-      .find((entry) => same(entry.ref, saved.source.resourceRef));
+    const holdings = "source" in saved ? saved.source : null;
+    const unconfirmed = !("source" in saved) && !saved.confirmed;
+    const item = holdings
+      ? catalogue.groups
+          .flatMap((group) => group.items)
+          .find((entry) => same(entry.ref, holdings.resourceRef))
+      : catalogue.groups.find((group) => group.kind === "channel_follows")?.items[0];
     if (!item) return fail("source_unavailable");
-    if (item.sourceEpoch !== saved.source.sourceEpoch || item.state !== "active") return 0;
-    if (item.revision === null || item.revision < saved.revision || !item.snapshotId)
+    if (
+      unconfirmed &&
+      (item.state === "uninitialized" || (item.revision !== null && item.revision < saved.revision))
+    )
+      return null;
+    if (holdings && (item.sourceEpoch !== holdings.sourceEpoch || item.state !== "active"))
+      return 0;
+    if (
+      !item.ref ||
+      item.sourceEpoch === null ||
+      item.revision === null ||
+      item.revision < saved.revision ||
+      (holdings ? !item.snapshotId : !["ready", "empty"].includes(item.state))
+    )
       return fail("source_unavailable");
 
     let published = 0;
     let pendingError: unknown;
+    let userSource:
+      Awaited<ReturnType<PersistentExperienceController["readUserResource"]>> | undefined;
     for (const connection of connections) {
       try {
         const context = await this.context(connection);
@@ -980,23 +1026,32 @@ export class PersistentExperienceController {
         if (pending) {
           if (
             pending.kind !== "publication" ||
-            pending.context?.objectType !== "holdings_snapshot" ||
+            pending.context?.objectType !==
+              (holdings ? "holdings_snapshot" : "channel_follows_evidence") ||
             !same(pending.context.ref, item.ref) ||
             pending.context.sourceEpoch !== item.sourceEpoch ||
             pending.context.sourceRevision > item.revision
           )
             return fail("persistent_operation_pending");
           if (pending.context.sourceRevision < item.revision) {
-            await this.settleOlderHoldingsPublication(connection, context.actor, pending, {
-              kind: "holdings",
-              ref: saved.source.resourceRef,
-              sourceEpoch: item.sourceEpoch!,
-              revision: item.revision,
-              snapshot: await this.api(
-                "portfolio",
-                `/api/v2/holdings/sources/${saved.source.resourceRef.resourceId}/snapshots/${item.snapshotId}`,
-              ),
-            });
+            const newerSource: AgentPreparationSource = holdings
+              ? {
+                  kind: "holdings",
+                  ref: holdings.resourceRef,
+                  sourceEpoch: item.sourceEpoch,
+                  revision: item.revision,
+                  snapshot: await this.api(
+                    "portfolio",
+                    `/api/v2/holdings/sources/${holdings.resourceRef.resourceId}/snapshots/${item.snapshotId}`,
+                  ),
+                }
+              : (userSource ??= await this.readUserResource(item));
+            await this.settleOlderResourcePublication(
+              connection,
+              context.actor,
+              pending,
+              newerSource,
+            );
           } else {
             if (
               pending.context.permissionId !== permission.permissionId ||
@@ -1010,7 +1065,8 @@ export class PersistentExperienceController {
             }
           }
         }
-        await this.publishResource(connection, context, item, catalogue);
+        if (!holdings) userSource ??= await this.readUserResource(item);
+        await this.publishResource(connection, context, item, catalogue, userSource);
         published++;
       } catch (error) {
         this.assert();
@@ -1021,11 +1077,11 @@ export class PersistentExperienceController {
     return published;
   }
 
-  private async settleOlderHoldingsPublication(
+  private async settleOlderResourcePublication(
     connection: PersistentConnection,
     actor: { connectionId: string; clientId: string },
     pending: Json,
-    newerSource: Extract<AgentPreparationSource, { kind: "holdings" }>,
+    newerSource: AgentPreparationSource,
   ) {
     try {
       const receipt = await this.request(

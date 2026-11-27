@@ -18,6 +18,8 @@ function harness({
   followsNeeded = true,
   online = true,
   resumeCatalogueOnNavigation = false,
+  beforeSaveFollows,
+  onSavedFollows,
 } = {}) {
   let owner = "owner_A:1",
     workspaceScope = "vault_A:1",
@@ -136,6 +138,8 @@ function harness({
         workspaceScope,
         followsNeeded,
         resumeCatalogueOnNavigation,
+        beforeSaveFollows,
+        onSavedFollows,
       });
       if (flush)
         for (const entry of effects.splice(0)) {
@@ -376,7 +380,17 @@ test("account switch masks rows during render and stale body, write and task cal
 });
 
 test("follows replace uses current revision, normalizes locators and refreshes discovery only after success", async () => {
-  const h = harness();
+  const saved = [];
+  const h = harness({
+    beforeSaveFollows: async (...args) => {
+      assert.equal(
+        h.calls.some((call) => call.options.method === "PUT"),
+        false,
+      );
+      saved.push(["prepare", ...args]);
+    },
+    onSavedFollows: (...args) => saved.push(["confirm", ...args]),
+  });
   const before = await h.ready();
   assert.equal(
     await before.saveFollows([{ name: "New", handleOrUrl: "@MiXeD", note: "note" }]),
@@ -389,8 +403,36 @@ test("follows replace uses current revision, normalizes locators and refreshes d
   await settle();
   const after = h.render();
   assert.equal(after.follows.data.revision, 2);
+  assert.deepEqual(saved, [
+    ["prepare", 2, "owner_A:1"],
+    ["confirm", 2, "owner_A:1"],
+  ]);
   assert.equal(h.calls.filter((call) => call.route.includes("catalogue")).length, 2);
   h.unmount();
+});
+
+test("a follows no-op does not queue an Agent update", async () => {
+  const staged = [];
+  const h = harness({
+    beforeSaveFollows: async (...args) => {
+      staged.push(args);
+    },
+    onSavedFollows: () => assert.fail("unchanged revision cannot queue an update"),
+    transport: ({ route }) =>
+      route.endsWith("channel-follows") ? response(channels("CREATOR_A", 1)) : undefined,
+  });
+  try {
+    const model = await h.ready();
+    const same = model.follows.data.items.map(({ name, handleOrUrl, note }) => ({
+      name,
+      handleOrUrl,
+      note,
+    }));
+    assert.equal(await model.saveFollows(same), true);
+    assert.deepEqual(staged, []);
+  } finally {
+    h.unmount();
+  }
 });
 
 test("CAS conflict and uncertain write forbid repeat writes until explicit successful reload", async () => {
