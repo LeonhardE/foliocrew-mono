@@ -22,11 +22,22 @@ from folioview_shared.encrypted.reference_history_v2 import (
     decode_storage_history_v2,
 )
 
+from .account_writes import (
+    HOLDS,
+    OWNERSHIP,
+    OwnedPath,
+    index_path,
+    plan_write,
+    scoped_path,
+    validate_writes,
+)
 from .catalogue_paths import FenceKeyHints
 from .registry_reads import RegistryPrefixCache
 
 COLLECTIONS = frozenset(
     {
+        HOLDS,
+        OWNERSHIP,
         "hub_vaults",
         "hub_private_display_names",
         "hub_private_resource_writer_fences",
@@ -67,6 +78,7 @@ COLLECTIONS = frozenset(
         "hub_center_intents",
         "hub_center_intent_queues",
         "hub_center_lifecycle",
+        "hub_erased_task_keys",
         "hub_center_assignments",
         "hub_center_operations",
         "hub_center_preparations",
@@ -82,6 +94,7 @@ COLLECTIONS = frozenset(
         "hub_vault_lifecycle",
         "hub_operations",
         "hub_source_fences",
+        "hub_erased_sources",
         "hub_fence_mutations",
         "hub_tasks",
         "hub_task_versions",
@@ -126,7 +139,7 @@ def document_id(*parts: str) -> str:
 def document_path(collection: str, *parts: str) -> str:
     if collection not in COLLECTIONS:
         raise ValueError("Invalid Hub collection.")
-    return f"{collection}/{document_id(*parts)}"
+    return scoped_path(collection, f"{collection}/{document_id(*parts)}", parts)
 
 
 def private_resource_writer_fence_path(owner: str) -> str:
@@ -256,7 +269,7 @@ def _batch_paths(paths):
     if type(paths) not in {list, tuple} or len(paths) > 1024:
         raise StoreUnavailable
     for path in paths:
-        if type(path) is not str:
+        if type(path) not in (str, OwnedPath):
             raise StoreUnavailable
         parts = path.split("/")
         if (
@@ -296,13 +309,19 @@ class SQLiteTransaction:
     def __init__(self, connection, store):
         self.connection = connection
         self.store = store
+        self.write_owners = set()
         self.registry_history_cache = {}
         self.registry_prefix_cache = RegistryPrefixCache()
 
     def get(self, path: str) -> dict | None:
-        row = self.connection.execute(
-            "SELECT body FROM hub_documents WHERE path = ?", (path,)
-        ).fetchone()
+        if path.startswith(OWNERSHIP + "/"):
+            row = self.connection.execute(
+                "SELECT body FROM hub_account_ownership WHERE path = ?", (path,)
+            ).fetchone()
+        else:
+            row = self.connection.execute(
+                "SELECT body FROM hub_documents WHERE path = ?", (path,)
+            ).fetchone()
         if row is None:
             return None
         try:
@@ -334,9 +353,10 @@ class SQLiteTransaction:
         return result
 
     def scan_owner(self, collection, field, owner, *, after=None, limit=4):
-        from .task_lifecycle import CLEANUP_FIELDS
+        from .source_erasure import SCANS as SOURCE_SCANS
+        from .task_erasure import SCAN_FIELDS
 
-        if CLEANUP_FIELDS.get(collection) != field or limit != 4:
+        if (collection, field) not in SCAN_FIELDS.union(SOURCE_SCANS) or limit != 4:
             raise StoreUnavailable
         prefix = collection + "/"
         rows = self.connection.execute(
@@ -357,7 +377,25 @@ class SQLiteTransaction:
         except ContractError:
             raise StoreUnavailable from None
 
+    def delete(self, path: str) -> None:
+        _batch_paths((path,))
+        self.connection.execute("DELETE FROM hub_documents WHERE path = ?", (path,))
+        self.connection.execute(
+            "DELETE FROM hub_account_ownership WHERE path = ?", (index_path(path),)
+        )
+
     def put(self, path: str, value: dict) -> None:
+        owners, index = plan_write(self, path, value)
+        self.write_owners.update(owners)
+        if index:
+            self.connection.execute(
+                "INSERT INTO hub_account_ownership(path, body) VALUES (?, ?) "
+                "ON CONFLICT(path) DO UPDATE SET body = excluded.body",
+                (index[0], canonical_json(index[1]).decode()),
+            )
+        self._put(path, value)
+
+    def _put(self, path, value):
         data = stored_document(
             value, path=path, project=self.store.project, database=self.store.database
         )
@@ -382,16 +420,43 @@ class SQLiteHubStore:
                 "CREATE TABLE IF NOT EXISTS hub_documents "
                 "(path TEXT PRIMARY KEY, body TEXT NOT NULL)"
             )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS hub_account_ownership "
+                "(path TEXT PRIMARY KEY, body TEXT NOT NULL)"
+            )
         Path(self.path).chmod(0o600)
 
     def connect(self):
         return sqlite3.connect(self.path, timeout=4, isolation_level=None)
 
+    def deleted_source_candidates(self, *, after):
+        with closing(self.connect()) as connection:
+            records = connection.execute(
+                "SELECT path,body FROM hub_documents WHERE path LIKE 'hub_source_fences/%' "
+                "AND path > ? AND json_extract(body,'$.state') = 'deleted' ORDER BY path LIMIT 32",
+                (after or "hub_source_fences/",),
+            )
+            return [(path, strict_json_loads(body)) for path, body in records]
+
+    def task_retention_candidates(self, status, *, after):
+        if status not in {"trashed", "purged"}:
+            raise StoreUnavailable
+        with closing(self.connect()) as connection:
+            rows = connection.execute(
+                "SELECT path,json_extract(body,'$.definition') FROM hub_documents "
+                "WHERE path LIKE 'hub_center_tasks/%' AND path > ? "
+                "AND json_extract(body,'$.definition.status') = ? ORDER BY path LIMIT 32",
+                (after or "hub_center_tasks/", status),
+            )
+            return [(path, strict_json_loads(definition)) for path, definition in rows]
+
     def transact(self, callback):
         with closing(self.connect()) as connection:
             try:
                 connection.execute("BEGIN IMMEDIATE")
-                result = callback(SQLiteTransaction(connection, self))
+                unit = SQLiteTransaction(connection, self)
+                result = callback(unit)
+                validate_writes(unit, unit.write_owners)
                 connection.commit()
                 return result
             except Exception:
@@ -409,6 +474,7 @@ class FirestoreTransaction:
         self.transaction = transaction
         self.store = store
         self.pending = []
+        self.write_owners = set()
         self.registry_history_cache = {}
         self.registry_prefix_cache = RegistryPrefixCache()
         # A transaction attempt has one snapshot. Reusing it does not cache an
@@ -479,9 +545,10 @@ class FirestoreTransaction:
         return result
 
     def scan_owner(self, collection, field, owner, *, after=None, limit=4):
-        from .task_lifecycle import CLEANUP_FIELDS
+        from .source_erasure import SCANS as SOURCE_SCANS
+        from .task_erasure import SCAN_FIELDS
 
-        if CLEANUP_FIELDS.get(collection) != field or limit != 4:
+        if (collection, field) not in SCAN_FIELDS.union(SOURCE_SCANS) or limit != 4:
             raise StoreUnavailable
         from google.cloud.firestore_v1.base_query import FieldFilter
 
@@ -499,14 +566,31 @@ class FirestoreTransaction:
         ]
 
     def put(self, path: str, value: dict) -> None:
+        owners, index = plan_write(self, path, value)
+        self.write_owners.update(owners)
+        if index:
+            self._put(*index)
+        self._put(path, value)
+
+    def _put(self, path, value):
         data = stored_document(
             value, path=path, project=self.store.project, database=self.store.database
         )
         self.pending.append((path, _firestore_document(data, path=path)))
 
+    def delete(self, path: str) -> None:
+        _batch_paths((path,))
+        self.pending.append((path, None))
+        self.pending.append((index_path(path), None))
+
     def flush(self):
+        validate_writes(self, self.write_owners)
         for path, data in self.pending:
-            self.transaction.set(self.store.client.document(path), data)
+            reference = self.store.client.document(path)
+            if data is None:
+                self.transaction.delete(reference)
+            else:
+                self.transaction.set(reference, data)
 
 
 class FirestoreHubStore:
@@ -521,6 +605,39 @@ class FirestoreHubStore:
         self.client = (
             client if client is not None else firestore.Client(project=project, database=database)
         )
+
+    def deleted_source_candidates(self, *, after):
+        from google.cloud.firestore_v1.base_query import FieldFilter
+
+        query = (
+            self.client.collection("hub_source_fences")
+            .where(filter=FieldFilter("state", "==", "deleted"))
+            .order_by("__name__")
+            .select(["ref", "ownerSubject"])
+            .limit(32)
+        )
+        if after is not None:
+            query = query.start_after({"__name__": self.client.document(after)})
+        return [(r.reference.path, r.to_dict()) for r in query.stream(timeout=12, retry=None)]
+
+    def task_retention_candidates(self, status, *, after):
+        from google.cloud.firestore_v1.base_query import FieldFilter
+
+        if status not in {"trashed", "purged"}:
+            raise StoreUnavailable
+        query = (
+            self.client.collection("hub_center_tasks")
+            .where(filter=FieldFilter("definition.status", "==", status))
+            .order_by("__name__")
+            .select(["definition"])
+            .limit(32)
+        )
+        if after is not None:
+            query = query.start_after({"__name__": self.client.document(after)})
+        return [
+            (row.reference.path, row.to_dict()["definition"])
+            for row in query.stream(timeout=12, retry=None)
+        ]
 
     def transact(self, callback):
         from google.cloud import firestore

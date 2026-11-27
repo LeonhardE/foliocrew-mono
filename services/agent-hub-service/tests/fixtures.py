@@ -60,3 +60,15 @@ class VaultFixture(AuthorityFixture):
         }
         payload.update(changes)
         return {"contractVersion": CONTRACT_VERSION, "command": self.sign(payload)}
+
+
+def tamper_with_stored_document(store, path, row):
+    """Inject an already-corrupt SQLite row below normal owner-checked writes."""
+    import json
+    from contextlib import closing
+
+    with closing(store.connect()) as connection:
+        changed = connection.execute(
+            "UPDATE hub_documents SET body = ? WHERE path = ?", (json.dumps(row), path)
+        )
+        assert changed.rowcount == 1

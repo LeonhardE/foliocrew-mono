@@ -2,6 +2,7 @@
 
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from unittest.mock import patch
 
 import test_task_center_store as center_tests
@@ -65,6 +66,18 @@ class TaskLifecycleTests(unittest.TestCase):
             )
         )
 
+    def test_owner_requests_immediate_purge_while_trash_is_recoverable(self):
+        from app.task_retention_worker import process_due
+
+        self.lifecycle("trash")
+        self.assertGreater(self.fx.definition["purgeAfter"], self.fx.fx.now)
+        receipt = self.lifecycle("purge")
+        self.assertEqual(receipt["definition"]["status"], "purged")
+        progress = process_due(self.fx.store, apply=True, clock=lambda: self.fx.fx.now)
+        self.assertEqual(progress["completed"], 1)
+        self.assertEqual(self.owner.trash(UID, self.f.vault)["items"], [])
+        self.assertTrue(self.owner.maintenance(UID, self.f.vault, TASK)["complete"])
+
     def test_original_command_retry_cannot_retrash_or_restore(self):
         original = self.lifecycle("trash")
         packet, op = self.fx.last_signed, self.fx.last_op
@@ -108,7 +121,7 @@ class TaskLifecycleTests(unittest.TestCase):
         self.assertEqual(item["definition"]["status"], "purged")
 
     @patch("folioview_shared.encrypted.task_center.TRASH_RETENTION_SECONDS", 10)
-    def test_restore_deadline_and_bounded_idempotent_retention_without_new_jobs(self):
+    def test_restore_deadline_erases_storage_and_receipts_and_preserves_other_data(self):
         saved = self.fx.submit(self.fx.begin())
         # Cleanup must not retire another task or Owner's copies.
         from app.tasks import _paths
@@ -142,12 +155,68 @@ class TaskLifecycleTests(unittest.TestCase):
                 )
             )
         )
-        self.assertEqual(blob, {"retiredTaskContent": True})
+        self.assertIsNone(blob)
+        self.assertEqual(self.owner.trash(UID, self.f.vault)["items"], [])
+        self.assertEqual(self.fx.history.owner_list(UID, self.f.vault)["items"], [])
+        with closing(self.fx.store.connect()) as db:
+            for collection in (
+                "hub_center_operations",
+                "hub_center_assignments",
+                "hub_center_tasks",
+                "hub_center_triggers",
+                "hub_center_preparations",
+                "hub_center_result_pages",
+                "hub_persistent_results",
+                "hub_persistent_result_operations",
+                "hub_persistent_run_operations",
+                "hub_persistent_runs",
+                "hub_persistent_plans",
+                "hub_task_operations",
+                "hub_task_indexes",
+                "hub_center_lifecycle",
+                "hub_persistent_result_pages",
+                "hub_persistent_result_indexes",
+            ):
+                with self.subTest(collection=collection):
+                    self.assertEqual(
+                        db.execute(
+                            "select count(*) from hub_documents where path like ?",
+                            (collection + "/%",),
+                        ).fetchone(),
+                        (0,),
+                    )
+            self.assertEqual(
+                db.execute(
+                    "select count(*) from hub_documents where path like ?",
+                    ("hub_persistent_publications/%",),
+                ).fetchone(),
+                (2,),
+            )
         # The independently encrypted shared source is retained for other tasks.
         with self.assertRaises(ContractError):
             self.fx.history.owner_get(UID, self.f.vault, saved["resultId"])
-        self.lifecycle("purge")
-        self.assertFalse(self.owner.trash(UID, self.f.vault)["items"][0]["canRestore"])
+        with self.assertRaisesRegex(ContractError, "not_found"):
+            self.fx.p.create_task()
+
+    def test_worker_claims_only_expired_or_signed_purges_and_resumes_after_interrupt(self):
+        from app.store import SQLiteHubStore
+        from app.task_retention_worker import process_due
+
+        self.fx.submit(self.fx.begin())
+        self.lifecycle("trash")
+
+        def clock():
+            return self.fx.fx.now
+
+        self.assertEqual(process_due(self.fx.store, apply=True, clock=clock)["eligible"], 0)
+        self.fx.fx.now = self.fx.definition["purgeAfter"]
+        self.assertEqual(process_due(self.fx.store, apply=False, clock=clock)["eligible"], 1)
+        self.assertFalse(self.owner.maintenance(UID, self.f.vault, TASK)["complete"])
+        restarted = SQLiteHubStore(self.fx.store.path)
+        results = process_due(restarted, apply=True, clock=clock)
+        self.assertEqual(results, {"eligible": 1, "completed": 1, "reviewRequired": 0, "failed": 0})
+        self.assertEqual(process_due(restarted, apply=True, clock=clock)["eligible"], 0)
+        self.assertEqual(self.owner.trash(UID, self.f.vault)["items"], [])
 
     def test_begin_trash_race_cannot_leave_a_usable_run(self):
         def begin():

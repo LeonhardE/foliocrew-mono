@@ -437,6 +437,11 @@ class TaskService:
             vault, registry = self._authority(unit, owner, now, user_scope)
             vault_id = vault["vaultId"]
             require_visible(unit, owner, vault_id, task_id)
+            if mode == "create":
+                from .task_erasure import erased_key
+
+                if unit.get(erased_key(owner, vault_id, task_id)) is not None:
+                    raise ContractError("not_found")
             index = _index(unit, owner, vault_id)
             head = _head(unit, owner, vault_id, task_id, index)
             op_path = document_path("hub_task_operations", owner, vault_id, task_id, operation)

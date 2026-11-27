@@ -360,6 +360,8 @@ class TaskCenterOwnerService(PersistentPublicationService):
             }:
                 raise ContractError("key_authorization_required")
             row = definition_row(unit, owner, vault, task)
+            if row is not None and row.get("cleanup", {}).get("format") == 2:
+                raise ContractError("version_conflict")
             definition = None if row is None else row["definition"]
             args = dict(
                 registry=registry,

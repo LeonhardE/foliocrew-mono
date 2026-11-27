@@ -187,6 +187,19 @@ class _Server(AuthorizationServer):
     def save_token(self, token, request):
         now, unit = self.service.now(), self.unit
         context = request.user
+        if "grantRefs" in context:
+            from .task_erasure import erased_key
+            from .task_lifecycle import lifecycle_index
+
+            owner, vault = context["ownerSubject"], context["vaultId"]
+            states = lifecycle_index(unit, owner, vault)["tasks"]
+            refs = {
+                t: g
+                for t, g in context["grantRefs"].items()
+                if states.get(t) not in {"trashed", "purged"}
+                and unit.get(erased_key(owner, vault, t)) is None
+            }
+            context = {**context, "grantRefs": refs}
         family = _row(unit, "hub_oauth_families", context["familyId"])
         if family is None:
             family = {**context, "revoked": False, "issuedCount": 0}
@@ -712,6 +725,9 @@ class OAuthService(OwnerConnectionService):
                 raise ContractError("version_conflict")
             tasks = []
             for task in task_ids:
+                from .task_lifecycle import require_visible
+
+                require_visible(unit, owner, vault["vaultId"], task)
                 head = _head(unit, owner, vault["vaultId"], task, index)
                 if head is None or head["metadata"]["status"] != "active":
                     raise ContractError("not_found")
@@ -869,6 +885,9 @@ class OAuthService(OwnerConnectionService):
             grants = {}
             for prepared in selected:
                 task = prepared["taskId"]
+                from .task_lifecycle import require_visible
+
+                require_visible(unit, owner, vault["vaultId"], task)
                 head = _head(unit, owner, vault["vaultId"], task, index)
                 if (
                     head is None

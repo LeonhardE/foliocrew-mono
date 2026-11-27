@@ -41,7 +41,9 @@ class FenceKeyHints:
         if (
             type(paths) is not tuple
             or len(paths) > _MAX_KEYS
-            or any(type(path) is not str or _FENCE_PATH.fullmatch(path) is None for path in paths)
+            or any(
+                not isinstance(path, str) or _FENCE_PATH.fullmatch(path) is None for path in paths
+            )
             or len(set(paths)) != len(paths)
         ):
             return

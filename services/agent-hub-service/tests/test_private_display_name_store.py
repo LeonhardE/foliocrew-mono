@@ -145,7 +145,7 @@ class DisplayNameStoreTests(unittest.TestCase):
         with self.assertRaises(ContractError):
             self.write(self.packet(ref=foreign))
 
-    def test_delete_hides_name_and_fences_new_writes_but_retains_owner_original_receipt(self):
+    def test_delete_fences_name_history_and_replays(self):
         packet = self.packet()
         original = self.write(packet)
 
@@ -168,8 +168,26 @@ class DisplayNameStoreTests(unittest.TestCase):
             self.service.read(UID, self.f.vault, SOURCE)
         with self.assertRaises(ContractError):
             self.write(self.packet(state=original["item"]["state"]))
-        self.assertEqual(self.service.read(UID, self.f.vault, SOURCE, packet[1]), original)
-        self.assertEqual(self.write(packet), original)
+        with self.assertRaises(ContractError):
+            self.service.read(UID, self.f.vault, SOURCE, packet[1])
+        with self.assertRaises(ContractError):
+            self.write(packet)
+
+        from app.private_display_names import name_path, operation_path
+        from app.source_erasure import process_sources
+
+        self.assertEqual(process_sources(self.store, apply=True)["completed"], 1)
+        for path in (
+            name_path(self.f.owner, self.f.vault, self.f.root_id, self.ref),
+            operation_path(
+                self.f.owner,
+                self.f.vault,
+                self.f.root_id,
+                self.ref,
+                packet[1],
+            ),
+        ):
+            self.assertIsNone(self.store.transact(lambda unit, path=path: unit.get(path)))
 
     def test_recreated_incarnation_cannot_inherit_name_or_receipt(self):
         packet = self.packet()

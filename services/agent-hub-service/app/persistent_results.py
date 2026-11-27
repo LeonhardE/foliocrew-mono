@@ -242,7 +242,8 @@ class PersistentResultService(PersistentExecutionService):
             or page["pageId"] != page_id
             or type(page["resultIds"]) is not list
             or not 1 <= len(page["resultIds"]) <= PAGE_SIZE
-            or len(set(page["resultIds"])) != len(page["resultIds"])
+            or len({r for r in page["resultIds"] if r is not None})
+            != sum(r is not None for r in page["resultIds"])
             or page["previous"] == page_id
         ):
             raise StoreUnavailable
@@ -254,6 +255,7 @@ class PersistentResultService(PersistentExecutionService):
         if any(
             type(r) is not str or re.fullmatch(r"presult_[a-f0-9]{64}", r) is None
             for r in page["resultIds"]
+            if r is not None
         ):
             raise StoreUnavailable
         return page
@@ -649,7 +651,7 @@ class PersistentOwnerResultService:
             if not 0 < before <= len(page["resultIds"]):
                 raise ContractError("unsupported_query")
         begin = max(0, before - limit)
-        ids = list(reversed(page["resultIds"][begin:before]))
+        ids = [r for r in reversed(page["resultIds"][begin:before]) if r is not None]
         from .task_lifecycle import lifecycle_path, visible_metadata
 
         snapshot = _OwnerResultSnapshot(
@@ -730,7 +732,7 @@ class PersistentOwnerResultService:
             if current is not None:
                 current.require_current(unit, self.now())
             unit.put(result_path(owner, vault, result), {**row, "metadata": meta})
-            unit.put(path, {"fingerprint": fp, "metadata": meta})
+            unit.put(path, {"fingerprint": fp, "metadata": meta, "operationId": operation})
             return meta
 
         return self.store.transact(write)

@@ -17,9 +17,16 @@ from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import canonical_json, strict_json_loads
 from folioview_shared.encrypted.schema import validate_schema
 
-from .store import StoreUnavailable, document_path, require_legacy_private_writer
+from .private_authority import transferred_writer
+from .store import (
+    StoreUnavailable,
+    document_path,
+    private_resource_writer_fence_path,
+    require_legacy_private_writer,
+)
 
 MAX_FENCE_MUTATIONS = 128
+ERASURE_PAGES_PER_DELIVERY = 8
 _OWNER = re.compile(r"[0-9a-f]{64}\Z")
 _REASONS = {
     "account_scope_changed": "active",
@@ -197,7 +204,21 @@ class FenceService:
     def __init__(self, store, *, clock=time.time):
         self.store, self.clock = store, clock
 
-    def invalidate(self, request, *, source_service):
+    def deliver(self, request, *, source_service):
+        from .source_erasure import erase_source
+
+        ack = self.invalidate(request, source_service=source_service)
+        if request["reason"] == "deleted" and not erase_source(
+            self.store,
+            request["ownerSubject"],
+            request["ref"],
+            max_pages=ERASURE_PAGES_PER_DELIVERY,
+        ):
+            # The producer retains its pending mutation and retries this exact request.
+            raise ContractError("source_unavailable")
+        return ack
+
+    def invalidate(self, request, *, source_service, expected_writer=None):
         _mutation(request)
         # Route-selected namespace; never derived from request body, token
         # claims supplied by a user, URL, arbitrary service name or client ID.
@@ -212,12 +233,30 @@ class FenceService:
 
         def update(unit):
             op_path = receipt_path(owner, source_service, request["mutationId"])
+            writer = unit.get(private_resource_writer_fence_path(owner))
+            if expected_writer is not None and expected_writer != writer:
+                raise ContractError("authorization_unavailable")
             saved = unit.get(op_path)
             if saved is not None:
                 return _saved_ack(saved, request)
+            # After transfer, only the trusted producer's terminal notice retires Hub copies.
+            # User may have processed intermediate epochs that were never written to Hub.
+            mirror = writer is not None and request["reason"] == "deleted"
+            if mirror:
+                if (
+                    not isinstance(writer, dict)
+                    or not writer.get("vaultId")
+                    or not writer.get("rootKeyId")
+                    or not _OWNER.fullmatch(str(writer.get("transitionFingerprint", "")))
+                    or not transferred_writer(unit, owner, writer["vaultId"])
+                ):
+                    raise ContractError("authorization_unavailable")
+            else:
+                require_legacy_private_writer(unit, owner)
             current = _state(unit, owner, ref)
             if (
-                current["sourceEpoch"] != request["expectedSourceEpoch"]
+                current["sourceEpoch"] > request["expectedSourceEpoch"]
+                or (not mirror and current["sourceEpoch"] != request["expectedSourceEpoch"])
                 or current["state"] == "deleted"
                 or (current["state"] == "disconnected" and request["reason"] != "deleted")
             ):
@@ -231,7 +270,7 @@ class FenceService:
                     "deleted": 0,
                 }[request["reason"]]
             )
-            if current["mutationCount"] >= limit:
+            if request["expectedSourceEpoch"] > limit:
                 raise ContractError("version_conflict")
             now = self.clock()
             if (
@@ -249,7 +288,6 @@ class FenceService:
                 .isoformat()
                 .replace("+00:00", "Z"),
             }
-            require_legacy_private_writer(unit, owner)
             # Canonical field ordering keeps first/replayed HTTP bytes identical
             # across SQLite restarts and Firestore map decoding.
             ack = strict_json_loads(canonical_json(ack), max_bytes=8192)
@@ -260,7 +298,7 @@ class FenceService:
                     "ref": ref,
                     "sourceEpoch": request["newSourceEpoch"],
                     "state": _REASONS[request["reason"]],
-                    "mutationCount": current["mutationCount"] + 1,
+                    "mutationCount": request["newSourceEpoch"] - 1,
                     "lastMutationId": request["mutationId"],
                 },
             )

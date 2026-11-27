@@ -86,7 +86,9 @@ class NativeUnit:
 
     def _path(self, path):
         table, identifier = path.split("/", 1)
-        return AUTH_TABLES.get(table, table) + "/" + identifier
+        if table not in AUTH_TABLES:
+            return path
+        return AUTH_TABLES[table] + "/" + identifier
 
     def get(self, path):
         row = self.unit.get(self._path(path))

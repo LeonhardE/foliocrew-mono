@@ -348,6 +348,12 @@ class TaskUploadCancellationService:
             target = payload["target"]
             if target["taskId"] != task:
                 raise ContractError("recipient_binding_mismatch")
+            from .task_erasure import erased_key
+            from .task_lifecycle import require_visible
+
+            require_visible(unit, owner, vault["vaultId"], task)
+            if unit.get(erased_key(owner, vault["vaultId"], task)) is not None:
+                raise ContractError("not_found")
             ledger = _ledger(unit, vault)
             prior = ledger["records"].get(cancellation)
             if prior and prior["receipt"]["commandFingerprint"] != signing_input_fingerprint(

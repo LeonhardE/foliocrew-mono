@@ -30,6 +30,7 @@ from .signing import _EMAIL, get_signer, origin
 from .store import private_resource_writer_fence_path
 
 HUB_AUTHORITY_PATH = "/internal/v2/private-resources/hub-authority/read"
+ARCHIVE_RETIREMENT_PATH = "/internal/v2/private-resources/hub-archive-retirement/read"
 _AUTHORITY_FIELDS = {
     "ownerSubject",
     "vaultId",
@@ -53,6 +54,7 @@ class CurrentUserVault:
     cursor: PrivateRegistryCursor
     writer_fence: dict
     expires_at: float
+    retirement: dict | None = None
 
     def require_active_holdings(self, bindings):
         active = {
@@ -92,7 +94,7 @@ class UserVaultAuthority:
         self.signer_factory, self.token_factory = signer_factory, token_factory
         self.transport, self.clock, self.wall_clock = transport, clock, wall_clock
 
-    def read(self, uid, vault, writer_fence, *, minimum_epoch=2, deadline=None):
+    def read(self, uid, vault, writer_fence, *, minimum_epoch=2, deadline=None, retirement=False):
         owner = owner_key(uid)
         if (
             type(writer_fence) is not dict
@@ -124,14 +126,22 @@ class UserVaultAuthority:
             remaining(deadline, self.clock)
             raw = canonical_json(lookup)
             request_digest = hashlib.sha256(raw).hexdigest()
-            response = self._fetch(uid, lookup["nonce"], raw, request_digest, started_at, deadline)
+            path = ARCHIVE_RETIREMENT_PATH if retirement else HUB_AUTHORITY_PATH
+            response = self._fetch(
+                uid, lookup["nonce"], raw, request_digest, started_at, deadline, path
+            )
             expected = {
                 key: lookup[key] for key in ("contractVersion", "profile", "consumer", "nonce")
             }
             expected["requestDigest"] = request_digest
             if (
                 type(response) is not dict
-                or set(response) != {*expected, "authority"}
+                or set(response)
+                != (
+                    {*expected, "authority", "retirement"}
+                    if retirement
+                    else {*expected, "authority"}
+                )
                 or any(response[key] != value for key, value in expected.items())
             ):
                 raise ContractError("recipient_binding_mismatch")
@@ -140,18 +150,22 @@ class UserVaultAuthority:
             )
             remaining(deadline, self.clock)
             return CurrentUserVault(
-                response["authority"], verified, dict(writer_fence), started_at + 8
+                response["authority"],
+                verified,
+                dict(writer_fence),
+                started_at + 8,
+                response.get("retirement"),
             )
         except (ContractError, httpx.HTTPError, TypeError, ValueError, OverflowError):
             raise ContractError("source_unavailable") from None
 
-    def _fetch(self, uid, nonce, raw, request_digest, started_at, deadline):
+    def _fetch(self, uid, nonce, raw, request_digest, started_at, deadline, path):
         issuer = origin(self.issuer)
         user_origin = numbered_user_origin(issuer, self.user_origin)
         if _EMAIL.fullmatch(self.caller) is None:
             raise ContractError("authorization_unavailable")
         now = int(started_at)
-        url = user_origin + HUB_AUTHORITY_PATH
+        url = user_origin + path
         workload = self.token_factory(user_origin, deadline=deadline, clock=self.clock)
         delegation = self.signer_factory().sign(
             {

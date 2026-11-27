@@ -68,6 +68,28 @@ class FenceRouteTests(unittest.TestCase):
             json=mutation() if value is None else value,
         )
 
+    def test_terminal_ack_requires_physical_cleanup_and_retries_resume(self):
+        from app.private_display_names import name_path
+
+        scope = {
+            "ownerSubject": OWNER,
+            "vaultId": "synthetic_vault",
+            "rootKeyId": "synthetic_root",
+            "ref": REF,
+        }
+        target = name_path(OWNER, scope["vaultId"], scope["rootKeyId"], REF)
+        self.store.transact(
+            lambda unit: unit.put(target, {"state": scope, "ciphertext": "synthetic"})
+        )
+        value = mutation(reason="deleted")
+        with patch("app.fences.ERASURE_PAGES_PER_DELIVERY", 1):
+            self.failure(self.post(value), 503)
+            self.assertIsNotNone(self.store.transact(lambda unit: unit.get(target)))
+        response = self.post(value)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIsNone(self.store.transact(lambda unit: unit.get(target)))
+        self.assertEqual(self.post(value).content, response.content)
+
     def test_valid_workload_invalidates_only_and_returns_exact_historical_ack(self):
         with patch("app.api.get_signer", side_effect=AssertionError("No KMS needed")):
             first = self.post()

@@ -222,6 +222,16 @@ async def delete_archive(vault_id: str, request: Request, user: Owner, service: 
     )
 
 
+@owner_router.post("/{vault_id}/retired-archive-cleanup")
+async def retired_archive_cleanup(vault_id: str, request: Request, user: Owner, service: Service):
+    from .retired_archive import cleanup_retired_archive
+
+    await body(request, {"contractVersion"}, max_bytes=1024)
+    return await run_in_threadpool(
+        _invoke, lambda: cleanup_retired_archive(service, user.uid, vault_id)
+    )
+
+
 @owner_router.post("/{vault_id}/archive-deletion-withdrawals", status_code=201)
 async def withdraw_archive_deletion(
     vault_id: str, request: Request, user: Owner, service: Lifecycle
@@ -488,7 +498,7 @@ async def invalidate_fence(
         max_bytes=8192,
     )
     return await run_in_threadpool(
-        _invoke, lambda: service.invalidate(value, source_service="portfolio")
+        _invoke, lambda: service.deliver(value, source_service="portfolio")
     )
 
 
