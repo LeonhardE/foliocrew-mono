@@ -2,14 +2,19 @@
 
 import hashlib
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
 import httpx
 from fixtures import BOOT, UID, VaultFixture
+from google.auth.credentials import AnonymousCredentials
+from google.cloud import firestore
+from test_firestore_store import MemoryRpc
 
-from app.store import SQLiteHubStore, private_resource_writer_fence_path
+from app.catalogue import CatalogueService, item
+from app.store import FirestoreHubStore, SQLiteHubStore, private_resource_writer_fence_path
 from app.task_overview import TaskOverviewService
 from app.user_vault_authority import HUB_AUTHORITY_PATH, ScopedUserVaults, UserVaultAuthority
 from app.vaults import VaultService
@@ -144,6 +149,40 @@ class UserVaultAuthorityTests(unittest.TestCase):
         self.authority["registryHistory"].pop()
         with self.assertRaisesRegex(ContractError, "source_unavailable"):
             self.client.read(UID, self.f.vault, self.fence)
+
+    def test_catalogue_keeps_four_live_fence_checks_without_separate_begin_requests(self):
+        client = firestore.Client(
+            project="synthetic-hub", database="agent-hub", credentials=AnonymousCredentials()
+        )
+        self.addCleanup(client.close)
+        rpc = MemoryRpc(client)
+        client._firestore_api_internal = rpc
+        store = FirestoreHubStore("synthetic-hub", "agent-hub", client=client)
+        path = client.document(private_resource_writer_fence_path(self.f.owner))._document_path
+        rpc.documents[path] = self.fence
+        sources = Mock(clock=time.monotonic)
+        sources.discover.return_value = {
+            "portfolio": [],
+            "user": {
+                kind: item(None, state="uninitialized", evidence="not_prepared")
+                for kind in ("watchlist", "channel_follows")
+            },
+        }
+        catalogue = CatalogueService(
+            VaultService(store, clock=lambda: 1000),
+            sources,
+            user_vaults=ScopedUserVaults(store, owner=self.f.owner, client=self.client),
+        )
+        self.assertEqual(catalogue.read(UID)["groups"][0]["status"], "uninitialized")
+        self.assertEqual(self.wire.call_count, 2)
+        self.assertEqual([kind for kind, _ in rpc.calls], ["get", "commit"] * 4)
+        for kind, call in rpc.calls:
+            request = call["request"]
+            if kind == "get":
+                self.assertEqual(list(request["documents"]), [path])
+                self.assertEqual(request["new_transaction"]._pb.WhichOneof("mode"), "read_write")
+            else:
+                self.assertFalse(request["writes"])
 
     def test_owner_overview_uses_current_user_scope_when_the_original_vault_has_transferred(self):
         VaultService(self.store, clock=lambda: 1000).bootstrap(UID, self.f.bootstrap(), BOOT)

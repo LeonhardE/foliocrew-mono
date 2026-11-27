@@ -284,6 +284,11 @@ not the whole transaction: legitimate supplemental fence/lifecycle reads retain 
 bounds. SQLite retains its ordinary transaction. Other callers' write transactions, response
 budgets and the existing request-local static registry-verification memo are unchanged.
 
+For a transferred vault the Hub reads its current writer fence before each User authority
+lookup and rechecks it after that lookup. Each of the four single-document reads in a catalogue
+request starts its transaction with the fence BatchGet, followed by the normal zero-write Commit.
+The two nonce-bound User authority responses and the source comparison still bracket discovery.
+
 This reduces repeated Hub reads and HTTP calls; it does not establish a two-second UI result or
 remove external producer latency. The original cooperative deadline and blocking-SDK cancellation
 limits above still apply. No detached worker, producer prewarm, write, increased byte budget or
