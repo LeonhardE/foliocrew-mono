@@ -29,6 +29,15 @@ transaction boundary. Authoritative changes update the projection in the same
 transaction. The migrated vault uses the signed User registry start and the
 preserved original history for recovery.
 
+Install this reader before enabling removal of terminal source entries on the legacy Hub
+writer. Original baselines retain their exact byte representation. A new Hub baseline may
+include a non-negative `retiredSourceCount` to reconcile its monotonic vault version with
+the remaining source anchors and registry entries. Import fence mutation receipts only for
+the exact source incarnations still bound to that vault. Receipts for removed sources stay
+on the original Hub for retry handling. User deletion removes the entry from the active
+list in the fence transaction and retains the terminal incarnation and idempotency receipt
+to prevent reactivation.
+
 The private Owner reads require the original Firebase Owner token and the
 Web proxy's Google-signed workload identity. The server checks
 `X-FolioView-Proxy-Authorization` against `USER_PRIVATE_OWNER_AUDIENCE` and
@@ -97,3 +106,19 @@ through the ordinary consumer release operation.
 This is an inventory entry point. It reports zero deletable entries because
 the current archive verifier still needs the original chain and the remaining
 writers have not enrolled all their references. It has no deletion mode.
+
+## Permanent erasure
+
+Removing the last watchlist symbol or followed channel removes that item from the current list. A live empty list retains its identity and revision because tasks can reference it and another device can submit a concurrent edit. A verified account erasure removes the containing rows, their revisions and initialization receipts as well.
+
+For full-account requests, confirm both control of the account and the requested scope in the restricted case. Resolve the exact Firebase UID, verified email and Google identity before deleting any identity or lookup record. Pause the subject's workers, in-flight writes, delivery attempts and migration writers across services, revoke sessions and disable the identity. Before deleting the invitation, run the read-only `--delivery-refs` option separately against `user-data` and `(default)` using the verified live UID and email. Direct its private output into the restricted case for mail processor follow-up. It returns the database and matching provider message IDs only. Older or replaced invitations can require a separate provider search. The User operator runs with the case operator's existing Firebase and database permissions. There is no public account purge route.
+
+From the User service environment, supply a JSON object containing the verified `uid` and lowercase `email` through standard input. Keep its values out of shell arguments, unprotected files and logs. Use `python -m app.account_erasure --project PROJECT --database user-data` to inventory and repeat for `--database '(default)'` if the rollout used the older store. Run the same command with `--apply` for the approved databases. It checks the verified disabled account before each batch, uses document-version conditions, repeats the entire scan and prints counts only. A partial failure is retryable while the account remains suspended. Reconcile any historical email addresses known to the case and provider-held delivery records separately. Remove the Firebase identity only after all service jobs and verification have finished.
+
+Indexed lookups include watchlists, FX suppression and preferences, followed channels, membership, the current verified address's invitation, recovery heads, source/name history and authorization receipts. Three legacy formats carry ownership inside packed bytes. The operator pages through those collections in memory, validates their storage keys and retains only the matching references and versions. Inconsistent packed records stop the operation. Use the current User service release for any older database copied into an isolated restore environment. Keep it offline while applying the verified deletion instructions and checking the control account. Use the read-only `--restore-inventory` option with the archived verified `uid`, `email` and `googleSubject` on standard input. This works after the Firebase account is gone and accepts the restored database's actual name. For isolated Firestore tests use a `demo-*` project and loopback emulator. Only promote a restored copy after previously approved requests have been reapplied and fresh inventory reports zero, and unrelated control records remain intact. A successful result concerns the current User database contents; operators must separately track historical read windows, other services, backups and logs before confirming permanent erasure to the requester.
+
+A holdings-source deletion invalidates its eligibility and removes its display alias and all saved rename ciphertext before the User service acknowledges the deletion. Interrupted cleanup resumes on replay of the invalidation request. To repair sources deleted on an older release, use the same operator with `--database user-data --retired-names-only`. Review the count and repeat with `--apply`. This mode authorizes work only on the exact incarnation in an already deleted source fence; it does not require disabling the active account.
+
+Invitation administrators can remove an individually revoked or expired invitation using `DELETE /api/v1/workspace-invitations/{id}/{revision}`. An older revision cannot erase a replacement invitation. Removal is idempotent and the stored invitation disappears from the list. It does not change another membership or recall a previously delivered email.
+
+A migrated vault's cloud-key removal also clears all original wrapped-key copies staged in the User database for that owner, vault and Root. The signed handover and original registry checkpoints authenticate the old digest, and the complete signed lifecycle verifies the deletion and any later independent recovery. The removal endpoint and original-command retry finish interrupted cleanup before reporting a successful deletion. For older removals, run `--retired-archive-only` in `user-data` on the verified account and repeat with `--apply`. This checks for a verified post-handover deletion, including when independent recovery already created a newer archive. Reissuing the old staging operation cannot recreate the original envelope. Hub can obtain the applied deletion command and receipt using the Hub-only archive-retirement lookup. A restored database and any immutable exports still require their separate erasure checks.

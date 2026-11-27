@@ -223,7 +223,9 @@ class SourceInvalidationTests(unittest.TestCase):
         ):
             store = FirestoreUserResourceStore("synthetic-project", "user-data")
             writer = SourceInvalidations(store, clock=lambda: self.now)
-            ack = writer.invalidate(self.request)
+            with patch("app.private_resources.source_invalidations.erase_retired_names") as purge:
+                ack = writer.invalidate(self.request)
+                purge.assert_called_once_with(store, OWNER, self.ref)
             # Live replay conflicts retain their exact v2 errors across both stores.
             records = [call.args for call in transaction.set.call_args_list]
             created = transaction.create.call_args.args

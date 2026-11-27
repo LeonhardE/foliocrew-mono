@@ -6,7 +6,7 @@ from pydantic import ValidationError
 
 from folioview_shared.encrypted.budgets import check_read_response
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
-from folioview_shared.encrypted.crypto import signing_input_fingerprint
+from folioview_shared.encrypted.crypto import signing_input_fingerprint, verify_jws
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import canonical_json, strict_json_loads
 from folioview_shared.encrypted.legacy_archive import (
@@ -52,6 +52,61 @@ class PrivateArchiveLifecycle:
             "digest": state["digest"],
         }
 
+    def _after_removal(self, head, row, evidence, change, cursor, current_bundles, now):
+        # The original registry and signed handover anchor authenticate the pre-transfer
+        # digest and lifecycle length. The post-transfer row contains every signed command
+        # and receipt, so this path requires none of the original wrapped key bytes.
+        scope = {key: head[key] for key in ("ownerSubject", "vaultId", "rootKeyId")}
+        root = evidence["rootJwk"]
+        _, old_bundles = self.cutover.verifier.original_registry(
+            scope, root, change["previousHead"], now
+        )
+        vault_info = {
+            **scope,
+            "rootJwk": root,
+            "version": head["vaultVersion"],
+            "archive": row["archive"],
+            "registryHistory": [*old_bundles, *current_bundles],
+        }
+        if (
+            set(row) != {"archive", "lifecycle", "baselineDigest"}
+            or row["baselineDigest"] != head["handover"]["baselineDigest"]
+        ):
+            raise ContractError("authorization_unavailable")
+        lifecycle = row["lifecycle"]
+        state = verify_transferred_archive_history(vault_info, cursor, lifecycle)
+        entries = lifecycle["history"]
+        anchor = change["archive"]
+        original_count = anchor["version"] - 1
+        if not 0 <= original_count < len(entries):
+            raise ContractError("authorization_unavailable")
+        at_handover = (
+            entries[original_count - 1]["receipt"]["archiveDigest"]
+            if original_count
+            else lifecycle["initialArchiveDigest"]
+        )
+        if (
+            anchor["state"] != "active"
+            or anchor["digest"] != at_handover
+            or head["archive"] != self._boundary(state)
+        ):
+            raise ContractError("authorization_unavailable")
+        start = evidence["registryStart"]["registrySequence"]
+        for i, entry in enumerate(entries):
+            command = verify_legacy_archive_command(entry["command"], vault_info)
+            if (command["registrySequence"] < start) != (i < original_count):
+                raise ContractError("authorization_unavailable")
+            if (
+                i < original_count
+                and command["expectedVaultVersion"] > change["previousVaultVersion"]
+            ):
+                raise ContractError("authorization_unavailable")
+        if not any(
+            entry["receipt"]["action"] == "archive_delete" for entry in entries[original_count:]
+        ):
+            raise ContractError("authorization_unavailable")
+        return head, row, vault_info, cursor, state, lifecycle, old_bundles
+
     def _snapshot(self, uid, vault, now):
         self.cutover._named_store()
         owner = owner_key(uid)
@@ -61,6 +116,24 @@ class PrivateArchiveLifecycle:
         decoded = CurrentHead.model_validate(head)
         if (decoded.ownerSubject, decoded.vaultId) != (owner, vault) or decoded.handover is None:
             raise ContractError("not_found")
+        evidence, registry, current_bundles = current_registry(
+            self.cutover, uid, vault, now, allow_deleted=True
+        )
+        if not _matches_current(head, evidence):
+            raise ContractError("version_conflict")
+        cursor = PrivateRegistryCursor(registry, decoded.registry.registryEpoch)
+        if row is not None:
+            change = verify_jws(
+                evidence["signedTransition"],
+                evidence["rootJwk"],
+                typ="fv-control+jws",
+                expected_kid=decoded.rootKeyId,
+            )
+            entries = row["lifecycle"]["history"][change["archive"]["version"] - 1 :]
+            if any(item["receipt"]["action"] == "archive_delete" for item in entries):
+                return self._after_removal(
+                    head, row, evidence, change, cursor, current_bundles, now
+                )
         original = self.cutover.verifier.baselines.read(
             owner, vault, decoded.handover.baselineDigest
         )
@@ -74,11 +147,6 @@ class PrivateArchiveLifecycle:
         ):
             raise ContractError("authorization_unavailable")
         _, before, old_bundles = self.cutover.verifier.original_history(original, now)
-        evidence, registry, current_bundles = current_registry(
-            self.cutover, uid, vault, now, allow_deleted=True
-        )
-        if not _matches_current(head, evidence):
-            raise ContractError("version_conflict")
         original_lifecycle = original["archiveLifecycle"]
         current_archive = original["archive"]
         lifecycle = original_lifecycle
@@ -112,7 +180,6 @@ class PrivateArchiveLifecycle:
             "version": decoded.vaultVersion,
             "registryHistory": [*old_bundles, *current_bundles],
         }
-        cursor = PrivateRegistryCursor(registry, decoded.registry.registryEpoch)
         state = (
             verify_transferred_archive_history(vault_info, cursor, lifecycle)
             if row is not None
@@ -204,6 +271,23 @@ class PrivateArchiveLifecycle:
             pass
         raise ContractError("authorization_unavailable")
 
+    def retirement(self, uid, vault, now):
+        head, row, info, _, state, _, _ = self._snapshot(uid, vault, now)
+        start = head["registryStart"]["registrySequence"]
+        latest = None
+        for item in state["operations"].values():
+            if item["receipt"]["action"] != "archive_delete":
+                continue
+            command = verify_legacy_archive_command(item["command"], info)
+            if command["registrySequence"] >= start:
+                latest = item
+        if self.cutover._read(((HEADS, owner_key(uid)), (ARCHIVE_RECORDS, owner_key(uid)))) != [
+            head,
+            row,
+        ]:
+            raise ContractError("version_conflict")
+        return head, latest
+
     def check_removal(self, uid, vault, operation, command):
         head, row, vault_info, cursor, state, _, _ = self._snapshot(uid, vault, int(self.clock()))
         result = archive_deletion_outcome(vault_info, cursor.registry, state, command)
@@ -212,6 +296,8 @@ class PrivateArchiveLifecycle:
         owner = owner_key(uid)
         if self.cutover._read(((HEADS, owner), (ARCHIVE_RECORDS, owner))) != [head, row]:
             raise ContractError("version_conflict")
+        if result["outcome"] == "deleted":
+            self.cutover.verifier.baselines.erase_archives(owner, vault, head["rootKeyId"])
         return result
 
     def advance(
@@ -252,6 +338,8 @@ class PrivateArchiveLifecycle:
             if prior is not None:
                 if prior["receipt"]["commandFingerprint"] != signing_input_fingerprint(command):
                     raise ContractError("idempotency_conflict")
+                if action == "archive_delete":
+                    self.cutover.verifier.baselines.erase_archives(owner, vault, head["rootKeyId"])
                 return prior["receipt"]
             if (
                 state["version"] >= MAX_LIFECYCLE_OPERATIONS
@@ -315,9 +403,12 @@ class PrivateArchiveLifecycle:
                 write({cells[0]: next_head, cells[1]: next_record})
                 return receipt
 
-            return self.cutover._transaction(
+            saved = self.cutover._transaction(
                 commit, writes=True, replace=cells if previous is not None else cells[:1]
             )
+            if action == "archive_delete":
+                self.cutover.verifier.baselines.erase_archives(owner, vault, head["rootKeyId"])
+            return saved
         except ResourceUnavailable as error:
             if isinstance(error.__cause__, ContractError):
                 raise error.__cause__ from None

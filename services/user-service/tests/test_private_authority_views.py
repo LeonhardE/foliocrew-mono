@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.private_resources.api import (
+    HUB_ARCHIVE_RETIREMENT_PATH,
     HUB_AUTHORITY_PATH,
     PORTFOLIO_AUTHORITY_PATH,
     live_authority_views,
@@ -196,6 +197,26 @@ class AuthorityViewTests(unittest.TestCase):
                     verifier.verify_private_authority_read.call_args.kwargs["consumer"], "hub"
                 )
                 self.assertEqual(config.call_args.args[1], HUB_AUTHORITY_PATH)
+                response = client.post(
+                    HUB_ARCHIVE_RETIREMENT_PATH, headers=headers, json=self.request
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(config.call_args.args[1], HUB_ARCHIVE_RETIREMENT_PATH)
+                self.assertIsNone(response.json()["retirement"])
+                self.assertEqual(response.json()["nonce"], self.request["nonce"])
+                for changes in (
+                    {"consumer": "portfolio"},
+                    {"sourceId": "different"},
+                    {"ownerSubject": "0" * 64},
+                ):
+                    self.assertNotEqual(
+                        client.post(
+                            HUB_ARCHIVE_RETIREMENT_PATH,
+                            headers=headers,
+                            json={**self.request, **changes},
+                        ).status_code,
+                        200,
+                    )
                 response = client.post(
                     PORTFOLIO_AUTHORITY_PATH,
                     headers=headers,
