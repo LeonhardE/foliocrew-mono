@@ -23,7 +23,12 @@ function taskSchedule(
   rules: { schedule: Schedule | null } | undefined,
   expectation: NonNullable<TaskModel["form"]>["deliveryExpectation"] | undefined,
 ): Schedule | null {
-  if (rules) return rules.schedule;
+  if (rules) {
+    if (!rules.schedule) return null;
+    // Persisted rules also carry activation and DST metadata supplied by the signer.
+    const { frequency, days, localTime, timeZone } = rules.schedule;
+    return { frequency, days, localTime, timeZone };
+  }
   if (!expectation) return null;
   const { cadence, weekday, localTime, timeZone } = expectation;
   const days =

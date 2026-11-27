@@ -80,7 +80,12 @@ const text = (n) =>
       : n && typeof n === "object"
         ? text(n.props?.children)
         : "";
-function picker({ locale = "en", mode = "unavailable", credential = "active" } = {}) {
+function picker({
+  locale = "en",
+  mode = "unavailable",
+  credential = "active",
+  schedule = null,
+} = {}) {
   const h = hooks(),
     messages = require("../messages/" + locale + ".json");
   let retries = 0,
@@ -144,7 +149,7 @@ function picker({ locale = "en", mode = "unavailable", credential = "active" } =
     scope: "owner_A:vault_A:1",
     enabled: true,
     capabilityState: "ready",
-    selectedRecord: { rules: { definition: { schedule: null } }, assignments: [] },
+    selectedRecord: { rules: { definition: { schedule } }, assignments: [] },
     currentAssignments: [],
     executors: { status: "ready", providers: [] },
     manual: {},
@@ -196,6 +201,7 @@ function picker({ locale = "en", mode = "unavailable", credential = "active" } =
   return {
     draw,
     model,
+    center,
     messages: messages.taskCenter,
     rows,
     InlineError,
@@ -341,7 +347,7 @@ test("display reference does not invent a binding or relax catalogue validation"
     (v) => (v.groups[0].items[0].sourceEpoch = 0),
     (v) => (v.groups[0].items[0].sourceEpoch = true),
   ]) {
-    const value = catalogue();
+    const value = structuredClone(catalogue());
     mutate(value);
     assert.throws(
       () => types.taskCatalogue(value),
@@ -349,3 +355,65 @@ test("display reference does not invent a binding or relax catalogue validation"
     );
   }
 });
+
+for (const newTask of [false, true]) {
+  test(`saving a ${newTask ? "new" : "modified"} schedule after viewing a signed rule submits only editable fields`, async () => {
+    const p = picker({
+      schedule: {
+        frequency: "weekly",
+        days: [2, 4],
+        localTime: "22:00",
+        timeZone: "America/Toronto",
+        effectiveFrom: 1795489200,
+        graceMinutes: 60,
+        dstGap: "skip",
+        dstFold: "first",
+      },
+    });
+    try {
+      if (newTask) {
+        p.model.startNew = () => {
+          p.model.selected = null;
+        };
+        p.button(p.draw(), p.messages.new).props.onClick();
+        p.button(p.draw(), p.messages.next).props.onClick();
+        p.button(p.draw(), p.messages.scheduled).props.onClick();
+      }
+      const time = all(p.draw(), (n) => n.type === "input" && n.props.type === "time")[0];
+      time.props.onChange({ target: { value: "15:21" } });
+      p.button(p.draw(), p.messages.next).props.onClick();
+      if (newTask) {
+        p.model.selected = {
+          taskId: "task_B",
+          taskVersion: 1,
+          executionEpoch: 1,
+          status: "active",
+        };
+        p.center.selectedRecord = { rules: null, assignments: [] };
+      }
+      const commands = [];
+      p.center.base = (taskId) => taskId;
+      p.center.api = async () => p.center.selectedRecord;
+      p.center.command = async (taskId, action, schedule) => {
+        commands.push({ taskId, action, schedule });
+      };
+      p.center.load = async () => {};
+      p.button(p.draw(), p.messages.confirm).props.onClick();
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(JSON.parse(JSON.stringify(commands)), [
+        {
+          taskId: newTask ? "task_B" : "task_A",
+          action: "set_rules",
+          schedule: {
+            frequency: newTask ? "daily" : "weekly",
+            days: newTask ? [] : [2, 4],
+            localTime: "15:21",
+            timeZone: "America/Toronto",
+          },
+        },
+      ]);
+    } finally {
+      p.close();
+    }
+  });
+}
