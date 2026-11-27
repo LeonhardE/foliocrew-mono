@@ -102,7 +102,7 @@ class UserDisplayNameTests(unittest.TestCase):
             typ="fv-control+jws",
         )
 
-    def test_ciphertext_and_exact_replay_survive_source_retirement(self):
+    def test_source_deletion_erases_alias_and_each_rename_receipt(self):
         operation = "synthetic_display_name_001"
         command = self.sample(operation)
         original = self.names.write(UID, VAULT, self.source, operation, command)
@@ -126,10 +126,14 @@ class UserDisplayNameTests(unittest.TestCase):
             }
         )
         self.assertEqual(self.names.read(UID, VAULT, None, None)["items"], [])
-        self.assertEqual(self.names.read(UID, VAULT, self.source, operation), original)
-        self.assertEqual(self.names.write(UID, VAULT, self.source, operation, command), original)
+        for op in (operation, second):
+            with self.assertRaisesRegex(ContractError, "not_found"):
+                self.names.read(UID, VAULT, self.source, op)
+        with self.store.connection() as db:
+            for table in ("user_private_display_names", "user_private_display_name_operations"):
+                self.assertEqual(db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 0)
+        new = "synthetic_display_name_003"
         with self.assertRaisesRegex(ContractError, "not_found"):
-            new = "synthetic_display_name_003"
             self.names.write(
                 UID,
                 VAULT,

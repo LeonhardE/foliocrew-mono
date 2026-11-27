@@ -4,6 +4,7 @@ from pydantic import ValidationError
 
 from folioview_shared.encrypted.budgets import check_read_response
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
+from folioview_shared.encrypted.crypto import verify_jws
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.jsonutil import canonical_json, strict_json_loads
 from folioview_shared.encrypted.legacy_archive import validate_passkey_archive
@@ -76,17 +77,15 @@ class PrivateAuthorityViews:
             },
             now=now,
         )["authority"]
-        baseline = self.cutover.verifier.baselines.read(
-            owner, vault_id, head["handover"]["baselineDigest"]
-        )
-        if baseline is None:
-            raise ContractError("source_unavailable")
-        original = strict_json_loads(baseline)
-        archive = original["archive"]
         root = lookup["rootKeyId"]
         lifecycle = None
         boundary = lookup["archive"]
-        if boundary != original["archiveBoundary"]:
+        # The Root-signed handover authenticates the initial digest and lifecycle version.
+        # Do not load a retired copy of the wrapping keys after a lifecycle mutation.
+        transition = verify_jws(
+            lookup["signedTransition"], lookup["rootJwk"], typ="fv-control+jws", expected_kid=root
+        )
+        if boundary != transition["archive"]:
             snapshot = PrivateArchiveLifecycle(self.cutover.store, clock=lambda: now).read(
                 uid, vault_id, nonce, None
             )
@@ -104,6 +103,13 @@ class PrivateAuthorityViews:
                 raise ContractError("version_conflict")
             archive = state["archive"]
             lifecycle = {"state": state, "originalCheckpoints": snapshot["originalCheckpoints"]}
+        else:
+            baseline = self.cutover.verifier.baselines.read(
+                owner, vault_id, head["handover"]["baselineDigest"]
+            )
+            if baseline is None:
+                raise ContractError("source_unavailable")
+            archive = strict_json_loads(baseline)["archive"]
         if archive is not None:
             validate_passkey_archive(archive, owner=owner, vault=vault_id, root=root)
         if (archive is None) != (boundary["state"] == "deleted") or boundary["digest"] != _sha(
@@ -137,6 +143,19 @@ class PrivateAuthorityViews:
         }
         if lifecycle is not None:
             result["proof"]["archiveLifecycle"] = lifecycle
+        check_read_response(result)
+        return result
+
+    def hub_archive_retirement(self, uid, request, *, now):
+        if request.get("consumer") != "hub" or request.get("sourceId") is not None:
+            raise ContractError("insufficient_scope")
+        answer = self.lookup(uid, request, now=now)
+        head, retirement = PrivateArchiveLifecycle(self.cutover.store).retirement(
+            uid, request["vaultId"], now
+        )
+        if not _matches_current(head, answer["authority"]):
+            raise ContractError("version_conflict")
+        result = {**answer, "retirement": retirement}
         check_read_response(result)
         return result
 

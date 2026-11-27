@@ -17,9 +17,7 @@ class UserRegistryTransition:
         self.baselines = LegacyVaultBaselines(store)
         self.history = RegistryHistory(RecoveryHeads(store))
 
-    def original_history(self, baseline, now):
-        scope = {key: baseline[key] for key in ("ownerSubject", "vaultId", "rootKeyId")}
-        head = baseline["registry"]
+    def original_registry(self, scope, root_jwk, head, now):
         sequence = head["registrySequence"]
         if head["registryEpoch"] != 1 or type(sequence) is not int or not 1 <= sequence <= 32:
             raise ContractError("registry_conflict")
@@ -32,10 +30,10 @@ class UserRegistryTransition:
                 bundle = entry["bundle"]
                 previous = verify_registry(
                     bundle,
-                    root_jwk=baseline["rootJwk"],
-                    pinned_root_key_id=baseline["rootKeyId"],
-                    owner_subject=baseline["ownerSubject"],
-                    vault_id=baseline["vaultId"],
+                    root_jwk=root_jwk,
+                    pinned_root_key_id=scope["rootKeyId"],
+                    owner_subject=scope["ownerSubject"],
+                    vault_id=scope["vaultId"],
                     now=now,
                     previous=previous,
                     signature_memo=memo,
@@ -46,8 +44,15 @@ class UserRegistryTransition:
         cursor = PrivateRegistryCursor(previous, 1)
         if cursor.head() != head:
             raise ContractError("registry_conflict")
+        return cursor, bundles
+
+    def original_history(self, baseline, now):
+        scope = {key: baseline[key] for key in ("ownerSubject", "vaultId", "rootKeyId")}
+        cursor, bundles = self.original_registry(
+            scope, baseline["rootJwk"], baseline["registry"], now
+        )
         legacy = {**baseline, "registryHistory": bundles}
-        state = verify_legacy_archive_history(legacy, previous, baseline["archiveLifecycle"])
+        state = verify_legacy_archive_history(legacy, cursor.registry, baseline["archiveLifecycle"])
         archive = baseline["archiveBoundary"]
         if (
             state["deleted"]

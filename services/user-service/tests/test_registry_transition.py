@@ -500,6 +500,65 @@ class RegistryTransitionTests(unittest.TestCase):
             self.assertEqual(client.post(path + "/check", json={}).status_code, 404)
         self.assertIsNone(self.heads.read(OWNER))
 
+    def signed_registration(self, source_name, operation_id, head):
+        return sign_jws(
+            {
+                "contractVersion": CONTRACT_VERSION,
+                "ownerSubject": OWNER,
+                "vaultId": VAULT,
+                "artifactType": "control_command",
+                "stableOperationId": operation_id,
+                "action": "manual_source_create",
+                "targetId": source_name,
+                "expectedVersion": 0,
+                "expectedSourceEpoch": None,
+                "parameters": {},
+                "registrySequence": head["registrySequence"],
+                "checkpointDigest": head["checkpointDigest"],
+                "keyEpoch": head["keyEpoch"],
+            },
+            self.signing_keys["device_sig"],
+            typ="fv-control+jws",
+        )
+
+    def test_delete_releases_one_of_ten_current_slots_and_old_command_cannot_revive_it(self):
+        self.stage_frozen_scope()
+        self.stage_transferred_authority()
+        writer = HoldingsRegistrations(self.store, clock=lambda: 1000)
+        target = self.transition["nextHead"]
+
+        def register(number):
+            source = f"holdings_number_{number}"
+            operation = f"synthetic_registration_number_{number}"
+            signed = self.signed_registration(source, operation, target)
+            return (UID, VAULT, source, signed, operation)
+
+        first = register(0)
+        admitted = writer.register(*first)
+        for number in range(1, 10):
+            writer.register(*register(number))
+        next_command = register(10)
+        with self.assertRaisesRegex(ContractError, "version_conflict"):
+            writer.register(*next_command)
+        SourceInvalidations(self.store, clock=lambda: 1001).invalidate(
+            {
+                "contractVersion": CONTRACT_VERSION,
+                "ownerSubject": OWNER,
+                "mutationId": "synthetic_retirement_number_zero",
+                "ref": admitted["source"]["resourceRef"],
+                "expectedSourceEpoch": 1,
+                "newSourceEpoch": 2,
+                "reason": "deleted",
+            }
+        )
+        writer.register(*next_command)
+        self.assertEqual(writer.register(*first), admitted)
+        with self.store.connection() as db:
+            entries = self.store.value(db, SOURCE_INDEX, OWNER)["entries"]
+        self.assertEqual(len(entries), 10)
+        self.assertNotIn(first[2], [item["binding"]["ref"]["resourceId"] for item in entries])
+        self.assertIn(next_command[2], [item["binding"]["ref"]["resourceId"] for item in entries])
+
     def test_ten_retired_registrations_leave_capacity_for_a_new_signed_source(self):
         self.stage_frozen_scope()
         self.stage_transferred_authority()
@@ -530,36 +589,15 @@ class RegistryTransitionTests(unittest.TestCase):
         operation = "synthetic_holdings_registration_01"
         target = self.transition["nextHead"]
 
-        def command(source_name, operation_id, head):
-            return sign_jws(
-                {
-                    "contractVersion": CONTRACT_VERSION,
-                    "ownerSubject": OWNER,
-                    "vaultId": VAULT,
-                    "artifactType": "control_command",
-                    "stableOperationId": operation_id,
-                    "action": "manual_source_create",
-                    "targetId": source_name,
-                    "expectedVersion": 0,
-                    "expectedSourceEpoch": None,
-                    "parameters": {},
-                    "registrySequence": head["registrySequence"],
-                    "checkpointDigest": head["checkpointDigest"],
-                    "keyEpoch": head["keyEpoch"],
-                },
-                self.signing_keys["device_sig"],
-                typ="fv-control+jws",
-            )
-
         with self.assertRaisesRegex(ContractError, "rollback_detected"):
             auth.register(
                 UID,
                 VAULT,
                 source,
-                command(source, operation, self.transition["previousHead"]),
+                self.signed_registration(source, operation, self.transition["previousHead"]),
                 operation,
             )
-        signed = command(source, operation, target)
+        signed = self.signed_registration(source, operation, target)
         first = auth.register(UID, VAULT, source, signed, operation)
         self.assertEqual(first["source"]["sourceEpoch"], 1)
         self.assertEqual(auth.register(UID, VAULT, source, signed, operation), first)
@@ -578,5 +616,9 @@ class RegistryTransitionTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "version_conflict"):
             new_operation = "synthetic_holdings_registration_02"
             auth.register(
-                UID, VAULT, "retired_0", command("retired_0", new_operation, target), new_operation
+                UID,
+                VAULT,
+                "retired_0",
+                self.signed_registration("retired_0", new_operation, target),
+                new_operation,
             )

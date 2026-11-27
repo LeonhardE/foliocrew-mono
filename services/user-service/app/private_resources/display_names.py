@@ -22,15 +22,13 @@ from folioview_shared.identity import owner_key
 
 from ..resources import ResourceUnavailable, SQLiteUserResourceStore
 from .authority_cutover import UserAuthorityCutover
+from .display_name_cleanup import NAMES, OPERATIONS
 from .legacy_baselines import _sha
 from .recovery import COLLECTION as HEADS
 from .recovery import CurrentHead
 from .report_sources import HOLDINGS_FENCES, HoldingsFence, holdings_fence_key
 from .source_invalidations import SOURCE_INDEX
 from .source_registrations import _matches_current, current_registry
-
-NAMES = "user_private_display_names"
-OPERATIONS = "user_private_display_name_operations"
 
 
 def _context(owner, vault, root, ref):
@@ -150,6 +148,8 @@ class PrivateDisplayNames:
                 if row is None:
                     raise ContractError("not_found")
                 fence = HoldingsFence.model_validate(row)
+                if fence.state == "deleted":
+                    raise ContractError("not_found")
                 ref = fence.binding.model_dump()["ref"]
                 if (fence.ownerSubject, fence.vaultId, ref["resourceId"]) != (owner, vault, source):
                     raise ContractError("authorization_unavailable")
@@ -193,7 +193,10 @@ class PrivateDisplayNames:
             return _response(item=checked)
 
         try:
-            previous, saved = self.cutover._read((name, op))
+            fence_cell = (HOLDINGS_FENCES, holdings_fence_key(owner, vault, source))
+            previous, saved, fence = self.cutover._read((name, op, fence_cell))
+            if fence is None or HoldingsFence.model_validate(fence).state == "deleted":
+                raise ContractError("not_found")
             if saved is not None:
                 return replay(saved)
             now = int(self.clock())
@@ -215,6 +218,9 @@ class PrivateDisplayNames:
             def commit(read, write):
                 existing, result = read((name, op))
                 if result is not None:
+                    fence = read((fence_cell,))[0]
+                    if fence is None or HoldingsFence.model_validate(fence).state == "deleted":
+                        raise ContractError("not_found")
                     return replay(result)
                 head, _, entries = self._head(read, owner, vault)
                 if existing != previous or not _matches_current(head, sample):

@@ -21,6 +21,7 @@ from folioview_shared.encrypted.legacy_archive import (
     legacy_archive_receipt,
     verify_legacy_archive_history,
 )
+from folioview_shared.encrypted.private_resources import PRIVATE_AUTHORITY_PROFILE
 
 
 class UserArchiveLifecycleTests(unittest.TestCase):
@@ -98,6 +99,17 @@ class UserArchiveLifecycleTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ContractError, "not_found"):
             reader.read("other-account", VAULT, nonce, operation)
+
+        # Both staged vaults carry the original sealed keys, while the signed transfer
+        # anchored an already nonempty history. Erasing both copies must keep that history valid.
+        removal = "synthetic_older_nonempty_archive_delete"
+        deletion = self.command(sample, result["state"], "archive_delete", removal)
+        reader.advance(UID, VAULT, removal, deletion, None, removal_action="archive_delete")
+        for digest in (recorded, sample.digest):
+            self.assertIsNone(cutover.verifier.baselines.read(OWNER, VAULT, digest))
+        self.assertEqual(
+            reader.read(UID, VAULT, nonce, operation)["receipt"], history["history"][1]["receipt"]
+        )
 
     def start_transferred_archive(self):
         sample = fixture.RegistryTransitionTests()
@@ -243,8 +255,24 @@ class UserArchiveLifecycleTests(unittest.TestCase):
             writer.advance(UID, VAULT, removal, command, None)
         self.assertEqual(writer.read(UID, VAULT, nonce, None)["state"], original)
 
-        receipt = writer.advance(
-            UID, VAULT, removal, command, None, removal_action="archive_delete"
+        # The CAS may succeed even when removal of older snapshots is interrupted.
+        with patch.object(
+            writer.cutover.verifier.baselines,
+            "erase_archives",
+            side_effect=ContractError("authorization_unavailable"),
+        ):
+            with self.assertRaisesRegex(ContractError, "authorization_unavailable"):
+                writer.advance(UID, VAULT, removal, command, None, removal_action="archive_delete")
+        self.assertIsNotNone(writer.cutover.verifier.baselines.read(OWNER, VAULT, sample.digest))
+        receipt = writer.check_removal(UID, VAULT, removal, command)["receipt"]
+        self.assertIsNone(writer.cutover.verifier.baselines.read(OWNER, VAULT, sample.digest))
+        with self.assertRaisesRegex(ContractError, "version_conflict"):
+            writer.cutover.verifier.baselines.stage(
+                OWNER, sample.vault, None, expected_digest=sample.digest, now=1000
+            )
+        self.assertEqual(
+            writer.advance(UID, VAULT, removal, command, None, removal_action="archive_delete"),
+            receipt,
         )
         self.assertEqual(writer.check_removal(UID, VAULT, removal, command)["receipt"], receipt)
         deleted = writer.read(UID, VAULT, nonce, None)["state"]
@@ -255,6 +283,9 @@ class UserArchiveLifecycleTests(unittest.TestCase):
         self.assertIsNone(view["vault"]["archive"])
         self.assertEqual(view["proof"]["archive"]["state"], "deleted")
         self.assertEqual(view["proof"]["archiveLifecycle"]["state"], deleted)
+        self.assertEqual(
+            writer.retirement(UID, VAULT, 1000)[1], {"command": command, "receipt": receipt}
+        )
 
         replacement = {
             **original["archive"],
@@ -288,6 +319,23 @@ class UserArchiveLifecycleTests(unittest.TestCase):
         )
         after = writer.read(UID, VAULT, nonce, None)["state"]
         self.assertEqual(after["archive"], replacement)
+        head, retired = writer.retirement(UID, VAULT, 1000)
+        self.assertEqual(head["archive"]["state"], "active")
+        lookup = {
+            "contractVersion": CONTRACT_VERSION,
+            "profile": PRIVATE_AUTHORITY_PROFILE,
+            "consumer": "hub",
+            "ownerSubject": OWNER,
+            "vaultId": VAULT,
+            "sourceId": None,
+            "minimumRegistryEpoch": 2,
+            "nonce": nonce,
+        }
+        result = PrivateAuthorityViews(sample.store).hub_archive_retirement(UID, lookup, now=1000)
+        self.assertEqual(result["retirement"], retired)
+        self.assertEqual(result["nonce"], nonce)
+        self.assertNotIn("ciphertext", str(result))
+        self.assertEqual(retired, {"command": command, "receipt": receipt})
         self.assertEqual(writer.read(UID, VAULT, nonce, removal)["receipt"], receipt)
         self.assertEqual(writer.check_removal(UID, VAULT, removal, command)["outcome"], "deleted")
 

@@ -113,6 +113,21 @@ class InvitationStore:
 
         return update(BoundedTransaction(self.client, max_attempts=2))
 
+    def delete_closed(self, key: str, revision: str, now: int) -> None:
+        reference = self.collection.document(key)
+
+        @firestore.transactional
+        def operation(transaction):
+            row = reference.get(transaction=transaction, retry=None, timeout=4).to_dict()
+            if row is None:
+                return
+            current = _serialize(row, now)
+            if current["revision"] != revision or current["status"] not in ("revoked", "expired"):
+                raise HTTPException(409, "Only the current closed invitation can be deleted.")
+            transaction.delete(reference)
+
+        operation(BoundedTransaction(self.client, max_attempts=2))
+
     def list(self, after: str | None) -> list[dict]:
         query = self.collection.order_by("__name__").limit(PAGE_SIZE + 1)
         if after is not None:
@@ -224,7 +239,9 @@ def start_delivery(
     return replacement, (replacement, True)
 
 
-def finish_delivery(row: dict, lease: str, message_id: str | None, now: int):
+def finish_delivery(row: dict | None, lease: str, message_id: str | None, now: int):
+    if row is None:
+        raise HTTPException(404, "Invitation unavailable.")
     if row["status"] != "sending" or row["lease"] != lease:
         return None, row
     replacement = {
@@ -325,6 +342,14 @@ def revoke_invitation(key: str, revision: str, admin: Admin, store: Store):
         raise HTTPException(404, "Invitation unavailable.")
     now = int(time.time())
     return _serialize(store.change(_checked_id(key), lambda row: revoke(row, now, revision)), now)
+
+
+@router.delete("/{key}/{revision}", status_code=204)
+def delete_closed_invitation(key: str, revision: str, admin: Admin, store: Store):
+    if not REVISION.fullmatch(revision):
+        raise HTTPException(404, "Invitation unavailable.")
+    store.delete_closed(_checked_id(key), revision, int(time.time()))
+    return Response(status_code=204)
 
 
 @router.get("/workspace-access")
