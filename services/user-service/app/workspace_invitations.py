@@ -253,18 +253,22 @@ def start_delivery(
     return replacement, (replacement, True)
 
 
-def finish_delivery(row: dict | None, lease: str, message_id: str | None, now: int):
+def finish_delivery(
+    row: dict | None, delivery_key: str, lease: str, message_id: str | None, now: int
+):
     if row is None:
         raise HTTPException(404, "Invitation unavailable.")
-    if row["status"] != "sending" or row["lease"] != lease:
+    if row["deliveryKey"] != delivery_key:
         return None, row
-    replacement = {
-        **row,
-        "status": "invited" if message_id else "send_failed",
-        "providerMessageId": message_id,
-        "leaseUntil": now,
-        "updatedAt": now,
-    }
+    if message_id and not row.get("providerMessageId"):
+        # All retries of this invitation use the same provider idempotency key.
+        replacement = {**row, "providerMessageId": message_id}
+        if row["status"] in ("sending", "send_failed"):
+            replacement.update(status="invited", leaseUntil=now, updatedAt=now)
+    elif message_id is None and row["status"] == "sending" and row["lease"] == lease:
+        replacement = {**row, "status": "send_failed", "leaseUntil": now, "updatedAt": now}
+    else:
+        return None, row
     return replacement, replacement
 
 
@@ -279,12 +283,15 @@ def deliver(
         key, lambda before: start_delivery(before, email, now, lease, replace_revision)
     )
     if started:
+        delivery_key = row["deliveryKey"]
         try:
-            message_id = send_invitation(row["email"], row["deliveryKey"])
+            message_id = send_invitation(row["email"], delivery_key)
         except DeliveryUnconfirmed:
             message_id = None
         now = int(time.time())
-        row = store.change(key, lambda before: finish_delivery(before, lease, message_id, now))
+        row = store.change(
+            key, lambda before: finish_delivery(before, delivery_key, lease, message_id, now)
+        )
     return _serialize(row, now)
 
 

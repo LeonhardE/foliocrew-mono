@@ -283,7 +283,7 @@ class FirestoreErasureTests(unittest.TestCase):
         self.assertFalse(ref.get().exists)
         store.delete_closed(key, revision, 31)
         with self.assertRaises(HTTPException):
-            finish_delivery(None, revision, "late-completion", 32)
+            finish_delivery(None, f"workspace-invite/{revision}", revision, "late-completion", 32)
         self.assertFalse(ref.get().exists)
 
     def test_retired_alias_and_all_receipts_removed_only_in_exact_incarnation(self):
