@@ -9,17 +9,17 @@ import tempfile
 import unittest
 from contextlib import closing, redirect_stderr, redirect_stdout
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 from cancellation_fixtures import CANCEL, CancellationFixture
-from fixtures import OPERATION, OTHER_UID, SOURCE, UID, HoldingsFixture
+from fixtures import MUTATION_OPERATION, OPERATION, OTHER_UID, SOURCE, UID, HoldingsFixture
 from test_authority_sync import projection
 
 from app.erase_account import account_records
 from app.erase_account import main as erase_account
 from app.erasure import authority_generation, legacy_sources, purge_source
-from app.fence_sync import synchronize
+from app.fence_sync import UserFenceClient, synchronize
 from app.holdings import PortfolioService
 from app.lifecycle import state_path
 from app.store import FirestorePortfolioStore, SQLitePortfolioStore, SQLiteTransaction
@@ -65,6 +65,46 @@ class SourceErasureTests(unittest.TestCase):
             ).fetchall()
         self.assertNotIn(CANCEL, str(rows))
         self.assertNotIn(OPERATION, str(rows))
+        self.assertEqual(self.control, self.service.snapshot(OTHER_UID, SOURCE)["receipt"])
+
+    def test_migrated_user_ack_survives_hub_outage_and_removal_of_routing_selector(self):
+        self.f.write(self.service)
+        self.f.mutate(self.service, action="delete")
+
+        def ack(request):
+            return {
+                "contractVersion": request["contractVersion"],
+                "mutationId": request["mutationId"],
+                "ref": request["ref"],
+                "acknowledgedSourceEpoch": request["newSourceEpoch"],
+                "acknowledgedAt": "2026-11-26T09:00:00Z",
+            }
+
+        primary = AsyncMock(spec=UserFenceClient)
+        primary.invalidate.side_effect = ack
+        legacy = AsyncMock()
+        legacy.invalidate.side_effect = lambda request: {
+            **ack(request),
+            "acknowledgedSourceEpoch": 999,
+        }
+        with patch("app.fence_sync.configured_client", return_value=legacy):
+            with self.assertRaises(ContractError):
+                asyncio.run(
+                    synchronize(self.service, UID, SOURCE, MUTATION_OPERATION, lambda: primary)
+                )
+            self.assertEqual(list(legacy_sources(self.store)), [(self.f.owner, SOURCE)])
+            original = primary.invalidate.await_args.args[0]
+            self.assertEqual(legacy.invalidate.await_args.args[0], original)
+            self.assertGreater(account_records(self.store, UID), 2)
+            legacy.invalidate.side_effect = ack
+            with patch.dict(os.environ, {"PORTFOLIO_USER_AUTHORITY_OWNER": ""}):
+                asyncio.run(
+                    synchronize(self.service, UID, SOURCE, MUTATION_OPERATION, lambda: primary)
+                )
+        primary.invalidate.assert_awaited_once()
+        self.assertEqual(legacy.invalidate.await_count, 2)
+        self.assertEqual(legacy.invalidate.await_args.args[0], original)
+        self.assertEqual(account_records(self.store, UID), 0)
         self.assertEqual(self.control, self.service.snapshot(OTHER_UID, SOURCE)["receipt"])
 
     def test_partial_erasure_resumes_with_saved_ack_across_restart_and_cleans_legacy_rows(self):

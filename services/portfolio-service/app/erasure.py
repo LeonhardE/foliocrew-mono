@@ -1,5 +1,7 @@
 """Physically remove one terminal holdings source after its remote fence is durable."""
 
+import os
+
 from folioview_shared.encrypted.errors import ContractError
 
 from .lifecycle import mutation_path, mutation_record, state_path
@@ -31,10 +33,10 @@ def purge_source(store, owner, source, *, operation=None, now):
     auth_ref = document_path("portfolio_authorities", owner, source)
     head_ref = document_path("portfolio_heads", owner, source)
 
-    def page(unit):
+    def terminal(unit):
         state = unit.get(state_ref)
         if state is None:
-            return True
+            return None
         if state.get("state") != "deleted" or state.get("pendingMutationId") is not None:
             raise ContractError("version_conflict")
         if state.get("ownerSubject") != owner or state.get("sourceId") != source:
@@ -55,6 +57,41 @@ def purge_source(store, owner, source, *, operation=None, now):
             or ack["state"] != "acknowledged"
             or ack["sourceEpoch"] != state["sourceEpoch"]
         ):
+            raise StoreUnavailable
+        return retained, ack
+
+    def retirement_request(unit):
+        terminal_row = terminal(unit)
+        if terminal_row is None:
+            return None
+        _, ack = terminal_row
+        authority = unit.get(auth_ref)
+        if (
+            not authority
+            or authority.get("ownerSubject") != owner
+            or authority.get("sourceId") != source
+        ):
+            raise StoreUnavailable
+        if (
+            ack.get("legacyHubPending")
+            or "registryStart" in authority
+            or os.getenv("PORTFOLIO_USER_AUTHORITY_OWNER") == owner
+        ):
+            return ack
+        return None
+
+    confirmed = store.transact(retirement_request)
+    if confirmed is not None:
+        from .fence_sync import confirm_legacy_hub_retirement
+
+        confirm_legacy_hub_retirement(confirmed)
+
+    def page(unit):
+        row = terminal(unit)
+        if row is None:
+            return True
+        retained, ack = row
+        if confirmed is not None and confirmed != ack:
             raise StoreUnavailable
         from .upload_cancellations import prune_source_cancellations
 

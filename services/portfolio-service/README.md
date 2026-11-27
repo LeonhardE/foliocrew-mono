@@ -161,6 +161,12 @@ and sources keep their records. Each batch rechecks the terminal deletion, and t
 removes the temporary acknowledgement and resume state atomically. A synchronization request
 returns an acknowledged deletion only after the batches finish.
 
+For a source transferred to User, Portfolio keeps its signed deletion in the existing mutation
+record until both User and the former Hub have acknowledged the exact source and epoch. A lost
+Hub response leaves the record available for retry across process restarts. Deploy Hub support
+for terminal transferred-source cleanup before this consumer. The existing User writer admits
+only transferred owners. The operator repair uses the same configured Hub workload identity.
+
 An interrupted purge can resume through the same synchronization POST. While cleanup is pending,
 the mutation GET reports pending even if the remote authority has already acknowledged it.
 After full removal the mutation GET and synchronization POST return `404 not_found`.

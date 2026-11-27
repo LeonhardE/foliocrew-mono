@@ -1129,6 +1129,7 @@ class PortfolioService:
         resource_ref: dict,
         source_epoch: int,
         expected_mutation: dict | None = None,
+        acknowledged_by_user: bool = False,
     ):
         """Commit after the server adapter authenticates and validates a Hub ACK.
 
@@ -1162,7 +1163,7 @@ class PortfolioService:
             if expected_mutation is not None and any(
                 saved[key] != expected_mutation.get(key)
                 for key in saved
-                if key not in {"state", "completedAt"}
+                if key not in {"state", "completedAt", "legacyHubPending"}
             ):
                 raise ContractError("version_conflict")
             if saved["sourceEpoch"] > row["sourceEpoch"]:
@@ -1182,6 +1183,8 @@ class PortfolioService:
                 ],
                 pendingMutationId=None,
             )
+            if acknowledged_by_user and saved["action"] == "delete":
+                saved["legacyHubPending"] = True
             saved.update(
                 state="acknowledged",
                 completedAt=datetime.fromtimestamp(now, UTC).isoformat().replace("+00:00", "Z"),
