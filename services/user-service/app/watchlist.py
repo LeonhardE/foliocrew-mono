@@ -8,9 +8,9 @@ from contextlib import closing, contextmanager
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path as FilePath
-from typing import Annotated, Literal
+from typing import Annotated, Literal, NamedTuple
 
-from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from google.cloud import firestore
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
@@ -37,7 +37,7 @@ from folioview_shared.valuation import (
 from .firestore_reads import read_documents
 from .list_writes import require_list_writes
 from .market_client import MarketResolver, get_market_resolver
-from .resource_versions import new_version, validate_version, version_key
+from .resource_versions import MAX_REVISION, new_version, validate_version, version_key
 
 LIMIT = 50
 UNAVAILABLE = "Your watchlist is temporarily unavailable. Please try again later."
@@ -62,8 +62,19 @@ class WatchlistItem(BaseModel):
 
 
 class WatchlistResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     items: list[WatchlistItem]
     limit: Literal[50] = LIMIT
+
+
+class VersionedWatchlistResponse(WatchlistResponse):
+    revision: Annotated[int, Field(ge=0, le=MAX_REVISION)] | None
+
+
+class WatchlistSnapshot(NamedTuple):
+    items: list[dict]
+    revision: int | None
 
 
 def checked_items(value: object) -> list[dict]:
@@ -105,6 +116,17 @@ def checked_items(value: object) -> list[dict]:
         )
     except (ValueError, TypeError, KeyError) as error:
         raise WatchlistUnavailable from error
+
+
+def checked_pair(content: object, metadata: object) -> tuple[list[dict], dict | None]:
+    if content is None and metadata is not None:
+        raise WatchlistUnavailable
+    items = checked_items(content)
+    return items, validate_version("watchlist", items, metadata)
+
+
+def versioned_snapshot(items: list[dict], metadata: dict | None) -> WatchlistSnapshot:
+    return WatchlistSnapshot(items, metadata["revision"] if metadata is not None else None)
 
 
 def update_items(items: list[dict], symbol: str, item: dict | None) -> tuple[list[dict], bool]:
@@ -164,7 +186,13 @@ class WatchlistStore:
     def get(self, uid: str) -> list[dict]:
         raise NotImplementedError
 
+    def get_snapshot(self, uid: str) -> WatchlistSnapshot:
+        raise NotImplementedError
+
     def change(self, uid: str, symbol: str, item: dict | None) -> list[dict]:
+        return self.change_snapshot(uid, symbol, item).items
+
+    def change_snapshot(self, uid: str, symbol: str, item: dict | None) -> WatchlistSnapshot:
         raise NotImplementedError
 
 
@@ -205,46 +233,47 @@ class SQLiteWatchlistStore(WatchlistStore):
         with self.connection() as db:
             return self.read(db, owner_key(uid))
 
-    def change(self, uid: str, symbol: str, item: dict | None) -> list[dict]:
+    @staticmethod
+    def read_pair(db, uid: str) -> tuple[list[dict], dict | None]:
         owner = owner_key(uid)
+        content = db.execute("SELECT value FROM user_watchlists WHERE owner=?", (owner,)).fetchone()
+        metadata = db.execute(
+            "SELECT value FROM user_resource_versions WHERE owner=?",
+            (version_key(uid, "watchlist"),),
+        ).fetchone()
+        content_value = strict_json_loads(content[0]) if content else None
+        metadata_value = strict_json_loads(metadata[0]) if metadata else None
+        if (content and content_value is None) or (metadata and metadata_value is None):
+            raise WatchlistUnavailable
+        return checked_pair(content_value, metadata_value)
+
+    def get_snapshot(self, uid: str) -> WatchlistSnapshot:
+        with self.connection() as db:
+            db.execute("BEGIN")
+            return versioned_snapshot(*self.read_pair(db, uid))
+
+    def change_snapshot(self, uid: str, symbol: str, item: dict | None) -> WatchlistSnapshot:
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            content = db.execute(
-                "SELECT value FROM user_watchlists WHERE owner=?",
-                (owner,),
-            ).fetchone()
-            current = checked_items(strict_json_loads(content[0]) if content else None)
-            row = db.execute(
-                "SELECT value FROM user_resource_versions WHERE owner=?",
-                (version_key(uid, "watchlist"),),
-            ).fetchone()
-            if row is not None and content is None:
-                raise WatchlistUnavailable
-            metadata = validate_version(
-                "watchlist",
-                current,
-                strict_json_loads(row[0]) if row else None,
-            )
+            current, metadata = self.read_pair(db, uid)
             items, changed = update_items(current, symbol, item)
             if changed:
                 require_list_writes(WatchlistUnavailable)
+                metadata = new_version("watchlist", items, previous=metadata)
                 db.execute(
                     "INSERT INTO user_watchlists(owner, value) VALUES (?, ?) "
                     "ON CONFLICT(owner) DO UPDATE SET value=excluded.value",
-                    (owner, json.dumps({"version": 1, "items": items}, allow_nan=False)),
+                    (owner_key(uid), json.dumps({"version": 1, "items": items}, allow_nan=False)),
                 )
                 db.execute(
                     "INSERT INTO user_resource_versions(owner, value) VALUES (?, ?) "
                     "ON CONFLICT(owner) DO UPDATE SET value=excluded.value",
                     (
                         version_key(uid, "watchlist"),
-                        json.dumps(
-                            new_version("watchlist", items, previous=metadata),
-                            allow_nan=False,
-                        ),
+                        json.dumps(metadata, allow_nan=False),
                     ),
                 )
-            return items
+            return versioned_snapshot(items, metadata)
 
     @staticmethod
     def read_fx(db, owner: str) -> dict:
@@ -288,29 +317,40 @@ class FirestoreWatchlistStore(WatchlistStore):
         except Exception as error:
             raise WatchlistUnavailable from error
 
-    def change(self, uid: str, symbol: str, item: dict | None) -> list[dict]:
-        reference = self.document(uid)
-        metadata_reference = self.client.collection("user_resource_versions").document(
-            version_key(uid, "watchlist")
+    def references(self, uid: str):
+        return (
+            self.document(uid),
+            self.client.collection("user_resource_versions").document(
+                version_key(uid, "watchlist")
+            ),
         )
+
+    def get_snapshot(self, uid: str) -> WatchlistSnapshot:
+        @firestore.transactional
+        def read_transaction(transaction):
+            pair = read_documents(self.client, transaction, self.references(uid))
+            return versioned_snapshot(*checked_pair(*pair))
+
+        try:
+            return read_transaction(BoundedTransaction(self.client, max_attempts=2))
+        except Exception as error:
+            raise WatchlistUnavailable from error
+
+    def change_snapshot(self, uid: str, symbol: str, item: dict | None) -> WatchlistSnapshot:
+        reference, metadata_reference = self.references(uid)
 
         @firestore.transactional
         def change_transaction(transaction):
-            current, stored_metadata = read_documents(
-                self.client, transaction, [reference, metadata_reference]
+            current_items, metadata = checked_pair(
+                *read_documents(self.client, transaction, [reference, metadata_reference])
             )
-            current_items = checked_items(current)
-            if stored_metadata is not None and current is None:
-                raise WatchlistUnavailable
-            metadata = validate_version("watchlist", current_items, stored_metadata)
             items, changed = update_items(current_items, symbol, item)
             if changed:
                 require_list_writes(WatchlistUnavailable)
+                metadata = new_version("watchlist", items, previous=metadata)
                 transaction.set(reference, {"version": 1, "items": items})
-                transaction.set(
-                    metadata_reference, new_version("watchlist", items, previous=metadata)
-                )
-            return items
+                transaction.set(metadata_reference, metadata)
+            return versioned_snapshot(items, metadata)
 
         try:
             return change_transaction(BoundedTransaction(self.client, max_attempts=2))
@@ -421,36 +461,51 @@ router = APIRouter(
 User = Annotated[CurrentUser, Depends(require_google_user)]
 Store = Annotated[WatchlistStore, Depends(get_watchlist_store)]
 Symbol = Annotated[str, Path(min_length=1, max_length=32)]
+IncludeRevision = Annotated[bool, Query(alias="includeRevision")]
 
 
-@router.get("", response_model=WatchlistResponse)
-def list_watchlist(user: User, store: Store) -> dict:
+def snapshot_response(snapshot: WatchlistSnapshot, include_revision: bool) -> dict:
+    result = response(snapshot.items)
+    if include_revision:
+        result["revision"] = snapshot.revision
+    return result
+
+
+@router.get("", response_model=VersionedWatchlistResponse | WatchlistResponse)
+def list_watchlist(user: User, store: Store, include_revision: IncludeRevision = False) -> dict:
     try:
+        if include_revision:
+            return snapshot_response(store.get_snapshot(user.uid), include_revision)
         return response(store.get(user.uid))
     except WatchlistUnavailable as error:
         raise HTTPException(503, UNAVAILABLE) from error
 
 
-@router.put("/{symbol}", response_model=WatchlistResponse)
+@router.put("/{symbol}", response_model=VersionedWatchlistResponse | WatchlistResponse)
 async def add_watchlist_item(
     symbol: Symbol,
     user: User,
     store: Store,
     market: Annotated[MarketResolver, Depends(get_market_resolver)],
+    include_revision: IncludeRevision = False,
 ) -> dict:
     symbol = validated_symbol(symbol)
     try:
-        current = await run_in_threadpool(store.get, user.uid)
+        if include_revision:
+            current = await run_in_threadpool(store.get_snapshot, user.uid)
+        else:
+            current = WatchlistSnapshot(await run_in_threadpool(store.get, user.uid), None)
         # No upstream lookup, timestamp change, or database write on duplicate add.
-        if any(item["symbol"] == symbol for item in current):
-            return response(current)
-        if len(current) >= LIMIT:
+        if any(item["symbol"] == symbol for item in current.items):
+            return snapshot_response(current, include_revision)
+        if len(current.items) >= LIMIT:
             raise WatchlistFull
         instrument = await market.resolve(symbol)
         item = {**instrument.public(), "addedAt": iso_time(time.time())}
         if item["symbol"] != symbol:
             raise WatchlistUnavailable
-        return response(await run_in_threadpool(store.change, user.uid, symbol, item))
+        saved = await run_in_threadpool(store.change_snapshot, user.uid, symbol, item)
+        return snapshot_response(saved, include_revision)
     except WatchlistFull as error:
         raise HTTPException(409, f"Your watchlist can contain up to {LIMIT} instruments") from error
     except WatchlistUnavailable as error:
@@ -461,11 +516,13 @@ async def add_watchlist_item(
         raise
 
 
-@router.delete("/{symbol}", response_model=WatchlistResponse)
-def remove_watchlist_item(symbol: Symbol, user: User, store: Store) -> dict:
+@router.delete("/{symbol}", response_model=VersionedWatchlistResponse | WatchlistResponse)
+def remove_watchlist_item(
+    symbol: Symbol, user: User, store: Store, include_revision: IncludeRevision = False
+) -> dict:
     symbol = validated_symbol(symbol)
     try:
         # Removal and listing work even when Yahoo or the market cache is down.
-        return response(store.change(user.uid, symbol, None))
+        return snapshot_response(store.change_snapshot(user.uid, symbol, None), include_revision)
     except WatchlistUnavailable as error:
         raise HTTPException(503, UNAVAILABLE) from error

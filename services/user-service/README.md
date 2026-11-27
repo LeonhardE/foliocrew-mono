@@ -101,10 +101,19 @@ corruption/missing metadata, locator limits, body budgets and private errors.
 ## Resource versions and initialization
 
 Watchlist writes now maintain a separate `user_resource_versions` record in the
-same transaction as actual list changes. The existing watchlist wire response is
-unchanged. Duplicate adds, missing deletes and GET requests do not initialize or
-advance versions. A real mutation of an unversioned list establishes revision 1
-for the new content; untouched legacy lists remain explicitly uninitialized.
+same transaction as actual list changes. `GET /api/v1/watchlist` and
+`PUT` or `DELETE /api/v1/watchlist/{symbol}` return `{items, limit: 50}` by default.
+Add `?includeRevision=true` to any of these routes to receive `revision` from the
+same snapshot as `items`. A mutation returns the revision committed by that
+operation, even if another operation commits before the response reaches the
+caller. A versioned read validates the stored list against its metadata.
+
+`revision: null` identifies an uninitialized list, including a legacy list with
+items. An explicitly initialized empty list starts at revision 0. Duplicate
+adds, missing deletes and GET requests do not initialize or advance versions.
+A real mutation of an unversioned list establishes revision 1 for the new
+content. Consumers can match a versioned list with the current resource version
+before using it as task input.
 
 `POST /api/v1/resource-initializations` accepts `{kind, operationKey}` for
 `watchlist` or `channel_follows`, authenticated with the owner's Firebase token.

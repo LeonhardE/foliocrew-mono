@@ -19,6 +19,8 @@ from firebase_admin import auth
 
 from app.main import app
 from app.market_client import MarketResolver, get_market_resolver
+from app.resource_versions import version_key
+from app.resources import SQLiteUserResourceStore
 from app.watchlist import (
     LIMIT,
     FirestoreWatchlistStore,
@@ -116,6 +118,20 @@ class SQLiteWatchlistTests(unittest.TestCase):
         self.assertEqual(self.store.change(USER, existing["symbol"], existing), rows)
         self.assertEqual(len({row["symbol"] for row in rows}), LIMIT)
         self.assertEqual(self.store.get("other-user"), [])
+
+    def test_concurrent_versioned_changes_return_their_own_committed_revisions(self):
+        def add(index):
+            store = SQLiteWatchlistStore(self.path)
+            symbol = f"NEW{index}"
+            return store.change_snapshot(USER, symbol, item(symbol))
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            snapshots = list(pool.map(add, range(12)))
+        self.assertEqual({snapshot.revision for snapshot in snapshots}, set(range(1, 13)))
+        for snapshot in snapshots:
+            self.assertEqual(len(snapshot.items), snapshot.revision)
+        self.assertEqual(self.store.get_snapshot(USER).revision, 12)
+        self.assertIsNone(self.store.get_snapshot("another-owner").revision)
 
     def test_corrupt_storage_fails_closed_and_is_not_overwritten(self):
         with closing(sqlite3.connect(self.path)) as db, db:
@@ -406,6 +422,60 @@ class WatchlistRouteTests(unittest.TestCase):
         self.resolver.resolve.side_effect = HTTPException(429, "Upstream quota exhausted")
         self.assert_private(self.request("PUT", "/OTHER"), 503)
         self.assertEqual(self.store.get(USER), [])
+
+    def test_revision_opt_in_preserves_v1_and_does_not_initialize_no_ops(self):
+        versioned = {"includeRevision": "true"}
+        expected = {"items": [], "limit": LIMIT}
+        self.assertEqual(self.request().json(), expected)
+        self.assertEqual(self.request(params=versioned).json(), {**expected, "revision": None})
+        self.assertEqual(
+            self.request("DELETE", "/AAPL", params=versioned).json(),
+            {**expected, "revision": None},
+        )
+        with closing(sqlite3.connect(self.store.path)) as db:
+            self.assertEqual(
+                db.execute("SELECT count(*) FROM user_resource_versions").fetchone()[0], 0
+            )
+        SQLiteUserResourceStore(self.store.path).initialize(USER, "watchlist", "initialize_empty")
+        self.assertEqual(self.request(params=versioned).json(), {**expected, "revision": 0})
+        saved = self.request("PUT", "/AAPL", params=versioned)
+        self.assert_private(saved, 200)
+        self.assertEqual(saved.json()["revision"], 1)
+        self.assertEqual(self.request("PUT", "/AAPL", params=versioned).json(), saved.json())
+        self.resolver.resolve.assert_awaited_once_with("AAPL")
+        self.assertEqual(
+            self.request("PUT", "/AAPL", params={"includeRevision": "false"}).json(),
+            {"items": saved.json()["items"], "limit": LIMIT},
+        )
+        self.assertEqual(
+            self.request("DELETE", "/AAPL", params=versioned).json(),
+            {**expected, "revision": 2},
+        )
+        self.assertEqual(
+            self.request("DELETE", "/AAPL", params=versioned).json(),
+            {**expected, "revision": 2},
+        )
+
+    def test_revision_opt_in_retains_legacy_items_and_refuses_corrupt_pair(self):
+        source = {"version": 1, "items": [item()]}
+        versioned = {"includeRevision": "true"}
+        with closing(sqlite3.connect(self.store.path)) as db, db:
+            db.execute(
+                "INSERT INTO user_watchlists VALUES (?, ?)", (owner_key(USER), json.dumps(source))
+            )
+        expected = {"items": source["items"], "limit": LIMIT, "revision": None}
+        self.assertEqual(self.request(params=versioned).json(), expected)
+        self.assertEqual(self.request("PUT", "/AAPL", params=versioned).json(), expected)
+        self.resolver.resolve.assert_not_awaited()
+        with closing(sqlite3.connect(self.store.path)) as db, db:
+            db.execute(
+                "INSERT INTO user_resource_versions VALUES (?, ?)",
+                (version_key(USER, "watchlist"), "null"),
+            )
+        self.assert_private(self.request(params=versioned), 503)
+        self.assert_private(self.request("PUT", "/AAPL", params=versioned), 503)
+        self.assert_private(self.request("DELETE", "/AAPL", params=versioned), 503)
+        self.assertEqual(self.request().json(), {"items": source["items"], "limit": LIMIT})
 
     def test_list_delete_and_duplicate_add_survive_unavailable_market_service(self):
         self.request("PUT", "/AAPL")
