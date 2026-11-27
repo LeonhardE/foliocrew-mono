@@ -102,6 +102,23 @@ the transaction. No private per-user server response cache is introduced.
 
 ## Verification
 
+### Verified account erasure
+
+An operator can inventory and permanently remove all three preferences for a verified Firebase
+UID. From the Config service directory, use its Python environment and run
+`python -m app.erase_preferences --project PROJECT --database DATABASE`, supplying the exact UID
+on standard input. The read-only result reports the number of matching documents. Identify the
+actual database from each relevant deployment, including legacy locations. Once identity has been
+verified, the Firebase account disabled, and in-flight requests drained, repeat with `--apply`.
+Firestore applies the three deletes in one atomic batch and rereads all locations. Repeat after
+an unknown outcome or when reapplying deletion in an isolated recovery environment. Keep the
+disabled identity until affected services finish. A missing or enabled identity blocks a live
+apply. The command prints only the number remaining. An incomplete read returns a failure.
+
+For a stopped, local installation use `--sqlite EXISTING_FILE` in place of the cloud arguments.
+The account's UI, language, and currency records are physically removed from the application table.
+Handle database history, journal copies, backups, and provider logs in the overall erasure case.
+
 Offline tests cover actual authentication/HTTP/private headers, legacy compatibility, Owner
 isolation, semantic generation, identical saves, simultaneous writers, malformed state and unknown
 commit recovery. Real user preference changes and UI/latency acceptance remain deferred.
