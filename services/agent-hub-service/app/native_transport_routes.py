@@ -1,5 +1,6 @@
 """Separate native account OAuth and same-origin, cookie-bound owner consent."""
 
+import logging
 import os
 import re
 import secrets
@@ -16,7 +17,7 @@ from folioview_shared.http import PrivateRoute
 
 from .agent_rollout import uid_allowed
 from .api import Owner, _invoke, body
-from .native_origin import native_oauth_configuration
+from .native_origin import branded_native_request, native_oauth_configuration
 from .native_transport import PROFILE, SCOPE, NativeTransportService
 from .oauth import PENDING_SECONDS
 from .oauth_config import OAuthConfig
@@ -111,9 +112,33 @@ async def authorize(request: Request, service: Service):
     return response
 
 
+def _log_token_rejection(code, has_resource):
+    allowed = {
+        "invalid_target",
+        "invalid_grant",
+        "invalid_client",
+        "invalid_request",
+        "invalid_scope",
+        "unauthorized_client",
+        "unsupported_grant_type",
+        "temporarily_unavailable",
+    }
+    reason = code if isinstance(code, str) and code in allowed else "other"
+    resource = {None: "unparsed", True: "present", False: "omitted"}[has_resource]
+    logging.getLogger(__name__).warning(
+        "Branded OAuth token rejected reason=%s resource=%s", reason, resource
+    )
+
+
 @router.post("/oauth/persistent/token")
 async def token(request: Request, service: Service):
-    return await _protocol(request, service, "token", TOKEN_FIELDS)
+    return await _protocol(
+        request,
+        service,
+        "token",
+        TOKEN_FIELDS,
+        on_rejection=_log_token_rejection if branded_native_request() else None,
+    )
 
 
 @router.post("/oauth/persistent/revoke")
