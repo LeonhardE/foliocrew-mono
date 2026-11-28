@@ -1,6 +1,7 @@
 """Fetch and verify the current User vault for a transferred Hub account."""
 
 import hashlib
+import logging
 import os
 import re
 import time
@@ -8,6 +9,9 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 import httpx
+from anyio import NoEventLoopError, fail_after
+from anyio.from_thread import run as run_from_worker
+from anyio.from_thread import start_blocking_portal
 
 from folioview_shared.delegation import PRIVATE_AUTHORITY_DELEGATION_TYPE
 from folioview_shared.encrypted.authority import verify_registry
@@ -24,7 +28,7 @@ from folioview_shared.encrypted.private_resources import (
 )
 from folioview_shared.identity import owner_key
 
-from .catalogue import _JWT, bounded_bytes, remaining, workload_token
+from .catalogue import _JWT, remaining, workload_token
 from .private_authority import numbered_user_origin
 from .signing import _EMAIL, get_signer, origin
 from .store import private_resource_writer_fence_path
@@ -46,6 +50,31 @@ _AUTHORITY_FIELDS = {
     "sources",
 }
 _OWNER = re.compile(r"[a-f0-9]{64}\Z")
+_READ_WINDOW = 8.0
+_LOG = logging.getLogger("uvicorn.error.hub_user_authority")
+
+
+@dataclass
+class _ReadTiming:
+    started: float
+    stage: str = "prepare"
+    requested: float | None = None
+    headers: float | None = None
+    received: float | None = None
+
+    def emit(self, result, now):
+        def elapsed(start, end):
+            return -1 if start is None or end is None else round(1000 * (end - start))
+
+        log = _LOG.info if result == "ok" else _LOG.warning
+        log(
+            "hub_user_authority result=%s stage=%s elapsed_ms=%d header_ms=%d body_ms=%d",
+            result,
+            self.stage,
+            elapsed(self.started, now),
+            elapsed(self.requested, self.headers if self.headers is not None else now),
+            elapsed(self.headers, self.received if self.received is not None else now),
+        )
 
 
 @dataclass(frozen=True)
@@ -119,17 +148,19 @@ class UserVaultAuthority:
                 "nonce": uuid4().hex,
             }
         )
+        timing = _ReadTiming(self.clock())
         try:
             started_at = self.wall_clock()
-            window = self.clock() + 8
+            window = timing.started + _READ_WINDOW
             deadline = window if deadline is None else min(window, deadline)
             remaining(deadline, self.clock)
             raw = canonical_json(lookup)
             request_digest = hashlib.sha256(raw).hexdigest()
             path = ARCHIVE_RETIREMENT_PATH if retirement else HUB_AUTHORITY_PATH
             response = self._fetch(
-                uid, lookup["nonce"], raw, request_digest, started_at, deadline, path
+                uid, lookup["nonce"], raw, request_digest, started_at, deadline, path, timing
             )
+            timing.stage = "verify"
             expected = {
                 key: lookup[key] for key in ("contractVersion", "profile", "consumer", "nonce")
             }
@@ -149,24 +180,33 @@ class UserVaultAuthority:
                 response["authority"], lookup, writer_fence, int(self.wall_clock())
             )
             remaining(deadline, self.clock)
-            return CurrentUserVault(
+            result = CurrentUserVault(
                 response["authority"],
                 verified,
                 dict(writer_fence),
-                started_at + 8,
+                started_at + _READ_WINDOW,
                 response.get("retirement"),
             )
-        except (ContractError, httpx.HTTPError, TypeError, ValueError, OverflowError):
+        except (TimeoutError, httpx.TimeoutException):
+            timing.emit("timeout", self.clock())
             raise ContractError("source_unavailable") from None
+        except (ContractError, httpx.HTTPError, TypeError, ValueError, OverflowError):
+            now = self.clock()
+            timing.emit("timeout" if deadline is not None and now >= deadline else "failed", now)
+            raise ContractError("source_unavailable") from None
+        timing.emit("ok", self.clock())
+        return result
 
-    def _fetch(self, uid, nonce, raw, request_digest, started_at, deadline, path):
+    def _fetch(self, uid, nonce, raw, request_digest, started_at, deadline, path, timing):
         issuer = origin(self.issuer)
         user_origin = numbered_user_origin(issuer, self.user_origin)
         if _EMAIL.fullmatch(self.caller) is None:
             raise ContractError("authorization_unavailable")
         now = int(started_at)
         url = user_origin + path
+        timing.stage = "workload_token"
         workload = self.token_factory(user_origin, deadline=deadline, clock=self.clock)
+        timing.stage = "sign"
         delegation = self.signer_factory().sign(
             {
                 "iss": issuer,
@@ -188,34 +228,59 @@ class UserVaultAuthority:
             for token in (workload, delegation)
         ):
             raise ContractError("invalid_token")
-        with httpx.Client(
-            trust_env=False, follow_redirects=False, transport=self.transport
-        ) as client:
-            with client.stream(
-                "POST",
-                url,
-                headers={
-                    "Authorization": f"Bearer {workload}",
-                    "X-FolioView-Delegation": delegation,
-                    "X-FolioView-Contract": CONTRACT_VERSION,
-                    "Content-Type": "application/json",
-                    "Cache-Control": "no-store",
-                    "Accept-Encoding": "identity",
-                },
-                content=raw,
-                timeout=remaining(deadline, self.clock),
-            ) as response:
+        headers = {
+            "Authorization": f"Bearer {workload}",
+            "X-FolioView-Delegation": delegation,
+            "X-FolioView-Contract": CONTRACT_VERSION,
+            "Content-Type": "application/json",
+            "Cache-Control": "no-store",
+            "Accept-Encoding": "identity",
+        }
+        # FastAPI worker threads can run cancellable HTTP on the server event loop.
+        # Standalone synchronous callers use a short-lived, joined portal.
+        try:
+            body = run_from_worker(self._exchange, url, headers, raw, deadline, timing)
+        except NoEventLoopError:
+            with start_blocking_portal() as portal:
+                body = portal.call(self._exchange, url, headers, raw, deadline, timing)
+        timing.stage = "decode"
+        return strict_json_loads(body, max_bytes=MAX_READ_BYTES)
+
+    async def _exchange(self, url, headers, raw, deadline, timing):
+        budget = remaining(deadline, self.clock, maximum=_READ_WINDOW)
+        timeout = httpx.Timeout(min(4.0, budget), read=budget)
+        timing.requested = self.clock()
+        timing.stage = "headers"
+        # The outer deadline also cancels a partial body or an upstream trickling data.
+        with fail_after(budget):
+            async with (
+                httpx.AsyncClient(
+                    trust_env=False, follow_redirects=False, transport=self.transport
+                ) as client,
+                client.stream(
+                    "POST", url, headers=headers, content=raw, timeout=timeout
+                ) as response,
+            ):
+                timing.headers = self.clock()
+                timing.stage = "response"
                 if (
                     response.status_code != 200
                     or response.headers.get("content-type", "").split(";", 1)[0].lower()
                     != "application/json"
                     or response.headers.get("x-folioview-contract") != CONTRACT_VERSION
+                    or response.headers.get("content-encoding", "identity") != "identity"
                 ):
                     raise ContractError("source_unavailable")
-                return strict_json_loads(
-                    bounded_bytes(response, deadline, self.clock, maximum=MAX_READ_BYTES),
-                    max_bytes=MAX_READ_BYTES,
-                )
+                timing.stage = "body"
+                body = bytearray()
+                async for chunk in response.aiter_bytes():
+                    remaining(deadline, self.clock)
+                    if len(chunk) > MAX_READ_BYTES - len(body):
+                        raise ContractError("source_unavailable")
+                    body.extend(chunk)
+                remaining(deadline, self.clock)
+                timing.received = self.clock()
+                return bytes(body)
 
     def _verify(self, value, lookup, fence, now):
         if (
