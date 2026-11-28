@@ -1297,8 +1297,9 @@ test("foreign-vault blockers and revoked native history remain visible without c
 });
 
 test("complete display forwards its unchanged vault to the existing refresher before credential verification", async () => {
+  const current = { ...connection(1), accountState: "relogin_required" };
   const events = [],
-    h = harness(null, null, discovery([connection(1)]));
+    h = harness(null, null, discovery([current]));
   installVerifier(h);
   h.workspace.refreshVault = async (signal, forState, read) => {
     assert.equal(forState, false);
@@ -1319,7 +1320,11 @@ test("complete display forwards its unchanged vault to the existing refresher be
   try {
     h.render();
     await h.settle();
-    assert.equal(h.render().loaded, true);
+    const model = h.render();
+    assert.equal(model.loaded, true);
+    assert.equal(model.views[0].connection.accountState, "relogin_required");
+    assert.equal(model.views[0].credential.status, "active");
+    assert.equal(model.views[0].credential.expiresAt, 2000000000);
     assert.deepEqual(events, ["vault-refresher", "credential-worker"]);
     assert.equal(h.calls.length, 1);
     assert.ok(h.calls[0].path.endsWith("/display"));

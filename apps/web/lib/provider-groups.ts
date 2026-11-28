@@ -67,11 +67,13 @@ export function providerGroups(
             (newer ||
               (candidate?.credential?.status === "reauthorization_required" && !candidate.identity))
           ? "pairingNeeded"
-          : null;
+          : current?.connection.accountState === "relogin_required"
+            ? "accountRelinkNeeded"
+            : null;
     const pending =
       [candidate, current].find(
         (view) => view?.pending && [undefined, "credential", "identity"].includes(view.pendingKind),
       ) ?? null;
-    return { provider, current, history, accountStep, pending, reviewRequired };
+    return { provider, current, history, accountStep, pending, reviewRequired } as const;
   });
 }

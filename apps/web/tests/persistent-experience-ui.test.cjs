@@ -216,6 +216,120 @@ test("account-only confirmation returns to the original authorization with a loc
   });
 });
 
+test("the native account confirmation and management cards distinguish a lost account link from a verified execution grant", async () => {
+  const now = 1_800_000_000;
+  const connection = {
+    connectionId: "connection_A",
+    clientId: "foliocrew-muse-prod",
+    vaultId: "vault_A",
+    provider: "muse",
+    status: "active",
+    accountState: "relogin_required",
+    linkedAt: now - 86400,
+  };
+  const reference = {
+    connectionId: connection.connectionId,
+    clientId: connection.clientId,
+    credentialGeneration: 1,
+    credentialFingerprint: "a".repeat(64),
+  };
+  const model = {
+    views: [
+      {
+        connection,
+        credential: { status: "active", expiresAt: now + 7776000, reference },
+        pending: true,
+        pendingKind: "credential",
+        tasks: [],
+      },
+    ],
+    providerStates: { muse: { slot: { currentCredential: reference } } },
+    execute() {
+      assert.fail("account relinking cannot change execution authority");
+    },
+    continueOperation() {
+      assert.fail("account relinking cannot resume execution authorization");
+    },
+    disconnect() {
+      assert.fail("account relinking cannot disconnect the account");
+    },
+  };
+  const ops = [];
+  const ui = (tree, type, text) =>
+    all(tree, (n) => n.type === type && n.props.children === text)[0];
+  await render("en", true, null, null, null, {
+    now,
+    active: true,
+    model,
+    workspace: { vault: { vaultId: connection.vaultId } },
+    window: {
+      location: { hash: "", search: "?native_request=synthetic&native_nonce=" + "n".repeat(43) },
+      history: { replaceState() {} },
+    },
+    native: {
+      nativeHandoff: compile(
+        "../lib/native-owner-bridge.ts",
+        { "./agent-connections": connectionContracts },
+        { URLSearchParams },
+      ).nativeHandoff,
+      async connectNativeOwnerBridge(value) {
+        assert.equal(value.requestId, "synthetic");
+        return { close() {} };
+      },
+    },
+    auth: {
+      async requestNativeAccount(_bridge, operation, input) {
+        ops.push(operation);
+        if (operation === "approve") assert.equal(input.vaultId, connection.vaultId);
+        return { provider: "muse", authority: "account_link_only" };
+      },
+    },
+    async interact(view) {
+      view();
+      await new Promise(setImmediate);
+      view();
+      await new Promise(setImmediate);
+      const tree = view(),
+        card = all(tree, (n) => n.type === "article")[0];
+      assert.ok(ui(tree, "button", "Confirm account"));
+      assert.ok(ui(card, "span", "Account reconnection required"));
+      assert.match(
+        all(card, (n) => n.type === "p")
+          .map((n) => n.props.children)
+          .join(" "),
+        /Task execution authorized until/,
+      );
+      assert.equal(ui(card, "span", "Connected"), undefined);
+      assert.equal(all(card, (n) => n.type === "button").length, 0);
+      assert.deepEqual(ops, ["pending"]);
+      ui(tree, "button", "Confirm account").props.onClick();
+      await new Promise(setImmediate);
+      assert.deepEqual(ops, ["pending", "approve"]);
+      assert.ok(ui(view(), "button", "Back to authorization window"));
+      ui(view(), "button", "Refresh").props.onClick();
+      assert.ok(ui(view(), "button", "Reconnect account"));
+      assert.deepEqual(ops, ["pending", "approve"]);
+    },
+  });
+  await render("en", true, null, null, null, {
+    now,
+    model,
+    interact(view) {
+      let tree = view();
+      const card = all(tree, (n) => n.type === "article")[0];
+      assert.ok(ui(card, "span", "Account reconnection required"));
+      assert.equal(ui(card, "button", "Authorize again"), undefined);
+      assert.equal(ui(card, "button", "Continue authorization"), undefined);
+      ui(card, "button", "Reconnect account").props.onClick();
+      tree = view();
+      const dialog = all(tree, (n) => n.props?.id === "connect-agent")[0];
+      assert.equal(dialog.props.open, true);
+      assert.equal(ui(dialog, "a", "Open Muse").props.href, "https://muse.ai/");
+      assert.equal(all(dialog, (n) => n.type === "textarea").length, 0);
+    },
+  });
+});
+
 test("a newly linked account shows its next step on the current provider card without a history list", () => {
   const now = 1_800_000_000;
   const current = {
@@ -599,7 +713,7 @@ test("Agent readiness reflects the complete verified display and never treats re
 test("expiry changes at the exact credential deadline and account unlinking follows the independent account status", () => {
   const now = 1_800_000_000;
   for (const [locale, expired, valid, unlink] of [
-    ["en", "Credential expired on", "Valid until", "Unlink account"],
+    ["en", "Credential expired on", "Task execution authorized until", "Unlink account"],
     ["zh", "执行凭证已于", "有效至", "解除账号关联"],
     ["zh-Hant", "執行憑證已於", "有效至", "解除帳號連結"],
   ]) {
