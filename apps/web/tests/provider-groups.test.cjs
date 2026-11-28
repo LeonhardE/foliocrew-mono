@@ -47,6 +47,21 @@ test("the exact canonical slot wins and stale references never fall back to a di
   assert.equal(g.current, null);
 });
 
+test("an old or abandoned account link does not displace the canonical working connection", () => {
+  const current = row("a"),
+    other = row("b");
+  Object.assign(current.connection, { accountState: "connected", linkedAt: 20 });
+  Object.assign(other.connection, { accountState: "relogin_required", linkedAt: 10 });
+  const state = { muse: { slot: { currentCredential: current.credential.reference } } };
+  const group = () => providerGroups([other, current], state, 1000)[0];
+  assert.equal(group().accountStep, null);
+  other.credential = null;
+  other.connection.linkedAt = 30;
+  assert.equal(group().accountStep, null);
+  current.connection.accountState = "relogin_required";
+  assert.equal(group().accountStep, "accountRelinkNeeded");
+});
+
 test("management history counts only previous accounts that can still be unlinked", () => {
   for (const provider of ["muse", "chatgpt"]) {
     const current = row("a"),
