@@ -125,10 +125,11 @@ function taskDisplayResponse(path: string, body: unknown, request: unknown, uid:
       path.split("/")[4],
       request.knownPacketVersions,
       request.packetLimit,
+      request.preferredTaskId,
     );
     const ids =
       request.packetLimit === 4
-        ? overviewPacketIds(v.tasks.items, request.knownPacketVersions)
+        ? overviewPacketIds(v.tasks.items, request.knownPacketVersions, request.preferredTaskId)
         : [];
     return (
       hubResponse("/api/v2/tasks", "GET", v.tasks) &&

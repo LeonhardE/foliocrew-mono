@@ -30,7 +30,8 @@ function compile(file, imports = {}, globals = {}) {
         return require("./task-overview-helpers.cjs").detail;
       if (name === "@/lib/report-provider-attribution")
         return compile("../lib/report-provider-attribution.ts");
-      if (name === "./task-types") return compile("../lib/task-types.ts");
+      if (name === "./task-types" && !Object.hasOwn(imports, name))
+        return compile("../lib/task-types.ts");
       if (name === "./connection-summary" && !Object.hasOwn(imports, name))
         return compile("../lib/connection-summary.ts");
       if (name === "./resource-library") return contracts;

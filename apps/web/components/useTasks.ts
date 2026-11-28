@@ -124,12 +124,14 @@ export function useTasks(
     catalogueOnDemand = false,
     catalogueRequested = false,
     overview: overviewEnabled = false,
+    preferredTaskId,
     readDetail,
   }: {
     active: boolean;
     catalogueOnDemand?: boolean;
     catalogueRequested?: boolean;
     overview?: boolean;
+    preferredTaskId?: string;
     readDetail?: typeof readTaskDetail;
   },
 ) {
@@ -180,7 +182,10 @@ export function useTasks(
   );
   const inlinePackets = useRef(new Map<string, any>());
   const selectedDetail = useRef<SelectedTaskDetail | null>(null);
+  const linkedFallback = useRef<AbortController | null>(null);
   const clearSelectedDetail = useCallback(() => {
+    linkedFallback.current?.abort();
+    linkedFallback.current = null;
     selectedDetail.current?.cancel();
     selectedDetail.current = null;
   }, []);
@@ -191,6 +196,7 @@ export function useTasks(
     vault: workspace.vault?.vaultId ?? null,
     active,
     visible,
+    preferredTaskId,
     known: () => {
       const seen = new Set<string>();
       const current = stateRef.current.items.flatMap((item) => {
@@ -264,15 +270,16 @@ export function useTasks(
         region,
         retainNavigation = false,
         timeoutMs = 60_000,
+        controller = new AbortController(),
       }: {
         region?: ReadRegion;
         retainNavigation?: boolean;
         timeoutMs?: number;
+        controller?: AbortController;
       } = {},
     ): Promise<T> => {
       const start = live.current,
-        epoch = generation.current,
-        controller = new AbortController();
+        epoch = generation.current;
       if (region) {
         readJobs.current[region]?.abort();
         readJobs.current[region] = controller;
@@ -835,9 +842,9 @@ export function useTasks(
           : undefined;
       const cached = age < 30_000 ? matchingRead : undefined;
       clearSelectedDetail();
-      const listedHead = version === undefined ? listItem : undefined;
-      // A current overview can arrive before React publishes its list. Never wait on it
-      // to resolve a direct link, which can point outside the first page.
+      const linkedOverview =
+        fromLink && version === undefined && overview.current!.prefersTask(taskId);
+      const listedHead = version === undefined && !linkedOverview ? listItem : undefined;
       const packetHead =
         listedHead ??
         (fromLink && version === undefined
@@ -962,9 +969,9 @@ export function useTasks(
             ({ packet, form } = structuredClone(cached));
             head = packet;
           } else {
-            const readHead = async () =>
+            const readHead = async (readContext = context) =>
               encryptedTask(
-                await api(`/api/v2/tasks/${taskId}`, context, { retryAdmission: true }),
+                await api(`/api/v2/tasks/${taskId}`, readContext, { retryAdmission: true }),
               );
             if (detail) {
               const combined = await detail.read();
@@ -988,24 +995,44 @@ export function useTasks(
               if (!sameTaskMetadata(head.metadata, detail.metadata))
                 throw new TaskError("version_conflict");
             } else {
-              const [verifiedVault, fetched] = await Promise.all([
+              const readPacket = async () => {
+                if (knownPacket) return knownPacket;
+                if (!linkedOverview) return { packet: await readHead(), at: undefined };
+                return overview.current!.linkedTaskPacket(taskId, context.signal, async () => {
+                  context.assert();
+                  if (serial !== selection.current) throw new TaskError("cancelled");
+                  // Let a late fallback finish if the list wins, but revoke it on a real
+                  // navigation, owner, vault, or visibility change.
+                  const controller = new AbortController();
+                  linkedFallback.current = controller;
+                  try {
+                    return await operation(true, readHead, { controller, timeoutMs: 14_000 });
+                  } finally {
+                    if (linkedFallback.current === controller) linkedFallback.current = null;
+                  }
+                });
+              };
+              const [verifiedVault, carrier] = await Promise.all([
                 live.current.workspace.refreshVault(
                   context.signal,
                   false,
                   undefined,
                   fromLink && version === undefined,
                 ),
-                knownPacket ? null : readHead(),
+                readPacket(),
               ]);
-              const included =
-                !fetched &&
-                knownPacket &&
-                vaultVersion === verifiedVault.version &&
-                verifiedVault.rootKeyId === rootKeyId
-                  ? overview.current!.currentTaskPacket(knownPacket.packet.metadata)
-                  : null;
-              inlineAt = included?.at;
-              head = fetched ?? included?.packet ?? (await readHead());
+              context.assert();
+              if (serial !== selection.current) throw new TaskError("cancelled");
+              if (carrier.at === undefined) {
+                head = carrier.packet;
+              } else {
+                const included =
+                  vaultVersion === verifiedVault.version && rootKeyId === verifiedVault.rootKeyId
+                    ? overview.current!.currentTaskPacket(carrier.packet.metadata)
+                    : null;
+                inlineAt = included?.at;
+                head = included?.packet ?? (await readHead());
+              }
             }
             context.assert();
             packet =

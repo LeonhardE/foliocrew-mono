@@ -261,7 +261,6 @@ function hubOwnerRule(path: string, method: PrivateMethod): EncryptedRule | null
   ) {
     rule = {
       method: "POST",
-      keys: ["contractVersion", "knownPacketVersions", "packetLimit"],
       maxBytes: 16384,
       taskOverview: true,
     };
@@ -491,7 +490,9 @@ function encryptedRequestHeaders(
   const method = options.method ?? "GET";
   // Snapshot reads and writes share a path, but have independently closed bodies.
   if (method !== rule.method) throw new Error("Invalid private API request");
-  if (rule.taskDetail) {
+  if (rule.taskOverview) {
+    if (!taskOverviewRequest(options.json)) throw new Error("Invalid private API request");
+  } else if (rule.taskDetail) {
     if (!taskDetailRequest(options.json)) throw new Error("Invalid private API request");
   } else if (rule.keys) {
     const value = options.json;
@@ -505,8 +506,6 @@ function encryptedRequestHeaders(
       throw new Error("Invalid private API request");
   } else if (options.json !== undefined) throw new Error("Invalid private API request");
   if (rule.holdingsView && !holdingsViewRequest(options.json, rule.holdingsView))
-    throw new Error("Invalid private API request");
-  if (rule.taskOverview && !taskOverviewRequest(options.json))
     throw new Error("Invalid private API request");
   if (rule.taskPackets) {
     const ids = (options.json as Record<string, unknown>).taskIds;

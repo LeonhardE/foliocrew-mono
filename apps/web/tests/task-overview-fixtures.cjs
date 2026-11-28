@@ -33,9 +33,11 @@ const batch = (ids, tasks) => ({
 });
 function body(request = { knownPacketVersions: [], packetLimit: 4 }, count = 2) {
   const tasks = Array.from({ length: count }, (_, i) => metadata(i + 1));
+  const preferred = tasks.find((task) => task.taskId === request.preferredTaskId);
   const ids = tasks
     .filter(
       (t) =>
+        t !== preferred &&
         !request.knownPacketVersions.some(
           (k) =>
             k.taskId === t.taskId &&
@@ -43,8 +45,9 @@ function body(request = { knownPacketVersions: [], packetLimit: 4 }, count = 2) 
             k.envelopeFingerprint === t.envelopeFingerprint,
         ),
     )
-    .slice(0, 4)
+    .slice(0, preferred ? 3 : 4)
     .map((t) => t.taskId);
+  if (preferred) ids.unshift(preferred.taskId);
   return {
     contractVersion: C,
     profile: "folioview.owner-task-overview.v1",
