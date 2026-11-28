@@ -125,8 +125,9 @@ def _log_token_rejection(code, has_resource):
     }
     reason = code if isinstance(code, str) and code in allowed else "other"
     resource = {None: "unparsed", True: "present", False: "omitted"}[has_resource]
-    logging.getLogger(__name__).warning(
-        "Branded OAuth token rejected reason=%s resource=%s", reason, resource
+    issuer = "branded" if branded_native_request() else "primary"
+    logging.getLogger("uvicorn.error.hub_native_oauth").warning(
+        "Native OAuth token rejected issuer=%s reason=%s resource=%s", issuer, reason, resource
     )
 
 
@@ -137,7 +138,7 @@ async def token(request: Request, service: Service):
         service,
         "token",
         TOKEN_FIELDS,
-        on_rejection=_log_token_rejection if branded_native_request() else None,
+        on_rejection=_log_token_rejection,
     )
 
 

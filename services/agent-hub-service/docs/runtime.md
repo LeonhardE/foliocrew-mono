@@ -50,9 +50,9 @@ The branded authorization request and code exchange require an explicit MCP
 resource. During refresh, a client that lost its discovery metadata can omit
 `resource`. The server selects only the single branded resource already
 bound to that refresh token and accepts only the original `runtime:connect`
-scope. When supplied, `resource` must match exactly. Rejection logs for this
-token endpoint contain a fixed OAuth error category and whether the request
-included a resource. [RFC 8707 §2.2](https://www.rfc-editor.org/rfc/rfc8707#section-2.2)
+scope. When supplied, `resource` must match exactly. The native token endpoint logs a rejected request’s
+issuer (branded or primary), its OAuth error category and whether it included a
+resource. Each field uses a fixed set of values. [RFC 8707 §2.2](https://www.rfc-editor.org/rfc/rfc8707#section-2.2)
 and [RFC 6749 §6](https://www.rfc-editor.org/rfc/rfc6749#section-6).
 
 ## First pairing

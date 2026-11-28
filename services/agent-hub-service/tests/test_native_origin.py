@@ -2,7 +2,10 @@
 
 import json
 import os
+import subprocess
+import sys
 import tempfile
+import textwrap
 import time
 import unittest
 from pathlib import Path
@@ -95,9 +98,9 @@ class BrandedNativeOriginTests(unittest.TestCase):
             self.assertEqual(config.json()["issuer"], origin)
         self.assertEqual(self.client.get(PROTECTED).json()["resource"], PRIMARY + MCP)
 
-    def test_token_rejection_diagnostics_only_record_categories_on_the_branded_route(self):
+    def test_token_rejection_diagnostics_only_record_issuer_reason_and_presence(self):
         path = "/oauth/persistent/token"
-        logger = "app.native_transport_routes"
+        logger = "uvicorn.error.hub_native_oauth"
         form = {
             "grant_type": "refresh_token",
             "client_id": "synthetic_client",
@@ -120,18 +123,68 @@ class BrandedNativeOriginTests(unittest.TestCase):
                 content=b"resource=redacted-one&resource=redacted-two",
             )
             self.assertEqual(bad.json()["error"], "invalid_request")
+            primary = self.client.post(path, data=form)
+            self.assertEqual(primary.json()["error"], "invalid_target")
+        prefix = "Native OAuth token rejected "
         self.assertEqual(
             [r.getMessage() for r in captured.records],
             [
-                "Branded OAuth token rejected reason=invalid_target resource=present",
-                "Branded OAuth token rejected reason=invalid_grant resource=omitted",
-                "Branded OAuth token rejected reason=invalid_client resource=omitted",
-                "Branded OAuth token rejected reason=invalid_request resource=unparsed",
+                prefix + "issuer=branded reason=invalid_target resource=present",
+                prefix + "issuer=branded reason=invalid_grant resource=omitted",
+                prefix + "issuer=branded reason=invalid_client resource=omitted",
+                prefix + "issuer=branded reason=invalid_request resource=unparsed",
+                prefix + "issuer=primary reason=invalid_target resource=omitted",
             ],
         )
-        with self.assertNoLogs(logger, level="WARNING"):
-            legacy = self.client.post(path, data=form)
-            self.assertEqual(legacy.json()["error"], "invalid_target")
+
+    def test_token_rejection_is_emitted_with_production_server_logging(self):
+        # Configure the server in a fresh process so its handlers and levels cannot
+        # be affected by assertLogs or by other tests in this process.
+        script = textwrap.dedent("""
+            import logging
+            import uvicorn
+
+            uvicorn.Config("app.main:app", access_log=False)
+            from test_native_origin import BrandedNativeOriginTests, BRAND_ORIGIN, MCP
+
+            case = BrandedNativeOriginTests()
+            try:
+                case.setUp()
+                ordinary_logger = logging.getLogger("app.native_transport_routes")
+                assert not ordinary_logger.isEnabledFor(logging.WARNING)
+                path = "/oauth/persistent/token"
+                form = {"grant_type": "refresh_token", "resource": BRAND_ORIGIN + MCP}
+                response = case.client.post(path, headers=case.proof("POST", path), data=form)
+                assert response.status_code == 400 and response.json()["error"] == "invalid_request"
+                response = case.client.post(path, data=form)
+                assert response.status_code == 400 and response.json()["error"] == "invalid_target"
+            finally:
+                case.doCleanups()
+        """)
+        env = {
+            **os.environ,
+            "PYTHONPATH": os.pathsep.join(str(Path(p).resolve()) for p in sys.path),
+        }
+        child = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=20,
+            check=True,
+        )
+        messages = [
+            line.split("Native OAuth token rejected ", 1)[1]
+            for line in child.stderr.splitlines()
+            if "Native OAuth token rejected " in line
+        ]
+        self.assertEqual(
+            messages,
+            [
+                "issuer=branded reason=invalid_request resource=present",
+                "issuer=primary reason=invalid_target resource=present",
+            ],
+        )
 
     def test_missing_replayed_or_modified_proof_cannot_choose_branded_origin(self):
         for path, headers in (
