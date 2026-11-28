@@ -13,7 +13,7 @@ from folioview_shared.encrypted.task_center import (
 )
 
 from .persistent_agents import snapshot
-from .store import document_path
+from .store import StoreUnavailable, document_path
 from .task_center import (
     TaskCenterAgentService,
     assigned_row,
@@ -257,6 +257,31 @@ def _summary(unit, owner, vault, task, row, now):
     }
 
 
+def manual_history(unit, owner, vault, task, now):
+    queue = unit.get(queue_path(owner, vault, task))
+    if queue is None:
+        return {"contractVersion": CONTRACT_VERSION, "items": []}
+    if type(queue) is not dict or set(queue) != {"ids"}:
+        raise StoreUnavailable
+    requests = queue["ids"]
+    if type(requests) is not list or len(requests) > MAX_PENDING:
+        raise StoreUnavailable
+    try:
+        for request in requests:
+            validate_schema("OperationIdentifier", request)
+    except ContractError:
+        raise StoreUnavailable from None
+    if len(set(requests)) != len(requests):
+        raise StoreUnavailable
+    return {
+        "contractVersion": CONTRACT_VERSION,
+        "items": [
+            _summary(unit, owner, vault, task, _intent(unit, owner, vault, task, request), now())
+            for request in requests
+        ],
+    }
+
+
 class ManualOwnerService(TaskLifecycleService):
     def cancel_operation(self, uid, vault, task, operation, fingerprint):
         """Fence a never-committed request atomically; never undo a committed grant."""
@@ -436,20 +461,7 @@ class ManualOwnerService(TaskLifecycleService):
         def read(unit):
             owner, *_ = self._owner_task(unit, uid, vault, task, user_scope=user_scope)
             require_visible(unit, owner, vault, task)
-            return {
-                "contractVersion": CONTRACT_VERSION,
-                "items": [
-                    _summary(
-                        unit,
-                        owner,
-                        vault,
-                        task,
-                        _intent(unit, owner, vault, task, request),
-                        self.now(),
-                    )
-                    for request in _queue(unit, owner, vault, task)["ids"]
-                ],
-            }
+            return manual_history(unit, owner, vault, task, self.now)
 
         return self.store.transact(read)
 

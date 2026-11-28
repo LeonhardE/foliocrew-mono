@@ -94,7 +94,7 @@ async def detail(vault: str, task: str, request: Request, user: Owner, service: 
     options = await body(
         request,
         {"contractVersion", "includePacket", "includeAttribution"},
-        optional_fields=("includeVault",),
+        optional_fields=("includeVault", "includeManual"),
         max_bytes=512,
     )
     return await run_in_threadpool(

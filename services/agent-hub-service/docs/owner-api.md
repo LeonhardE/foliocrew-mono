@@ -504,6 +504,15 @@ unavailable section through its original read. Browsing still requires the brows
 proof checks, current private scope, and worker verification before decryption. Execution,
 settings changes and historical reads use their existing dedicated endpoints.
 
+Once the browser has verified the task body, it can request the task controls and manual run
+history together on the same detail endpoint. Send exactly `contractVersion`,
+`"includePacket":false`, `"includeAttribution":false` and `"includeManual":true`. The response
+contains `contractVersion`, the same detail `profile`, `state` from the original task controls
+read and `manual` from the original manual history read. Both are required. The server checks
+current Owner authority once and reads both sections in the same transaction after verifying task
+visibility. If the combined result exceeds 1 MiB, the endpoint returns `413 payload_too_large`
+and the browser can use the two original reads. Other authorization and storage failures propagate.
+
 ### Root-approved upload cancellation
 
 An unlocked owner root can permanently deny one unresolved task upload without replaying that
