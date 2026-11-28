@@ -71,15 +71,19 @@ class NativeTransportTests(unittest.TestCase):
         self.assertEqual(status, 200)
         return tokens
 
-    def test_same_provider_on_both_origins_keeps_the_legacy_connection_and_issuer(self):
-        legacy = self.connect()
+    def branded_service(self):
         config = configuration()
-        branded = NativeTransportService(
+        return NativeTransportService(
             self.store,
             replace(config, issuer=BRAND_ORIGIN, consent_url=BRAND_ORIGIN + "/oauth/consent"),
             primary_issuer=config.issuer,
             clock=lambda: self.now,
         )
+
+    def test_same_provider_on_both_origins_keeps_the_legacy_connection_and_issuer(self):
+        legacy = self.connect()
+        config = configuration()
+        branded = self.branded_service()
         params = authorization_params(scope=SCOPE, resource=BRAND_RESOURCE)
         request = branded.authorize(params, BROWSER)
         callback = branded.approve(UID, request, BROWSER, self.f.vault)
@@ -93,6 +97,9 @@ class NativeTransportTests(unittest.TestCase):
             "resource": BRAND_RESOURCE,
         }
         self.assertEqual(self.exchange(code)[0], 400)
+        with self.assertRaises(OAuthFailure) as missing_resource:
+            branded.protocol({k: v for k, v in form.items() if k != "resource"}, {}, "token")
+        self.assertEqual(missing_resource.exception.code, "invalid_target")
         status, tokens, _ = branded.protocol(form, {}, "token")
         self.assertEqual(status, 200)
         first = self.service.authenticate(legacy["access_token"])
@@ -118,10 +125,32 @@ class NativeTransportTests(unittest.TestCase):
                 other.protocol({**form, "resource": other.config.resource}, {}, "token")[0],
                 400,
             )
-            status, rotated, _ = service.protocol(
-                {**form, "resource": service.config.resource}, {}, "token"
-            )
+            if service is self.service:
+                # The primary issuer still requires a resource. A branded request
+                # cannot consume or revoke a token originally issued by the primary.
+                with self.assertRaises(OAuthFailure) as missing:
+                    service.protocol(form, {}, "token")
+                self.assertEqual(missing.exception.code, "invalid_target")
+                self.assertEqual(other.protocol(form, {}, "token")[0], 400)
+                form["resource"] = service.config.resource
+            else:
+                for explicit in (
+                    "",
+                    None,
+                    config.issuer + "/mcp/v3",
+                    [BRAND_RESOURCE],
+                    [BRAND_RESOURCE, config.issuer + "/mcp/v3"],
+                ):
+                    with self.subTest(explicit=explicit), self.assertRaises(OAuthFailure) as wrong:
+                        service.protocol({**form, "resource": explicit}, {}, "token")
+                    self.assertEqual(wrong.exception.code, "invalid_target")
+                for invalid_scope in ("", "runtime:connect results:create"):
+                    with self.assertRaises(OAuthFailure) as expanded:
+                        service.protocol({**form, "scope": invalid_scope}, {}, "token")
+                    self.assertEqual(expanded.exception.code, "invalid_scope")
+            status, rotated, _ = service.protocol(form, {}, "token")
             self.assertEqual(status, 200)
+            self.assertEqual(rotated["scope"], SCOPE)
             refreshed[service.config.resource] = rotated["access_token"]
         native_credentials = NativeCredentialService(
             branded, owner_url="https://owner.example/agents"
@@ -176,6 +205,14 @@ class NativeTransportTests(unittest.TestCase):
         self.assertEqual(self.exchange(dict(parse_qsl(urlsplit(result).query))["code"])[0], 200)
 
     def test_transferred_link_refreshes_and_original_credentials_stay_retired(self):
+        self.check_transferred_link(include_resource=True)
+
+    def test_transferred_branded_link_still_checks_authority_with_implicit_resource(self):
+        self.service = self.branded_service()
+        self.authorize_params["resource"] = BRAND_RESOURCE
+        self.check_transferred_link(include_resource=False)
+
+    def check_transferred_link(self, *, include_resource):
         old = self.connect()
         original = self.service.authenticate(old["access_token"])
         approved, previous_callback, old_code = self.authorize()
@@ -206,16 +243,7 @@ class NativeTransportTests(unittest.TestCase):
             self.service.authenticate(old["access_token"])
 
         def refresh(token):
-            return self.service.protocol(
-                {
-                    "grant_type": "refresh_token",
-                    "client_id": CLIENT,
-                    "resource": self.service.config.resource,
-                    "refresh_token": token,
-                },
-                {},
-                "token",
-            )
+            return self.refresh(token, include_resource=include_resource)
 
         self.assertEqual(refresh(old["refresh_token"])[0], 400)
         issued = self.connect()
@@ -295,17 +323,34 @@ class NativeTransportTests(unittest.TestCase):
         )
         self.assertEqual(self.refresh(tokens["refresh_token"])[0], 200)
 
-    def refresh(self, token):
-        return self.service.protocol(
-            {
-                "grant_type": "refresh_token",
-                "client_id": CLIENT,
-                "refresh_token": token,
-                "resource": self.service.config.resource,
-            },
-            {},
-            "token",
-        )
+    def refresh(self, token, *, include_resource=True):
+        form = {"grant_type": "refresh_token", "client_id": CLIENT, "refresh_token": token}
+        if include_resource:
+            form["resource"] = self.service.config.resource
+        return self.service.protocol(form, {}, "token")
+
+    def test_implicit_branded_resource_rejects_replay_revocation_and_expiry(self):
+        self.service = self.branded_service()
+        self.authorize_params["resource"] = BRAND_RESOURCE
+
+        def refresh(token):
+            status, body, _ = self.refresh(token, include_resource=False)
+            if status != 200:
+                self.assertEqual(body["error"], "invalid_grant")
+            return status, body
+
+        first = self.connect()
+        status, rotated = refresh(first["refresh_token"])
+        self.assertEqual(status, 200)
+        self.assertEqual(refresh(first["refresh_token"])[0], 400)
+        self.assertEqual(refresh(rotated["refresh_token"])[0], 400)
+        second = self.connect()
+        revoke = {"client_id": CLIENT, "token": second["refresh_token"], "resource": BRAND_RESOURCE}
+        self.assertEqual(self.service.protocol(revoke, {}, "revoke")[0], 200)
+        self.assertEqual(refresh(second["refresh_token"])[0], 400)
+        third = self.connect()
+        self.now += REFRESH_IDLE_SECONDS + 1
+        self.assertEqual(refresh(third["refresh_token"])[0], 400)
 
     def test_metadata_and_actual_code_exchange_are_bootstrap_only(self):
         self.assertEqual(self.service.metadata()["scopes_supported"], [SCOPE])

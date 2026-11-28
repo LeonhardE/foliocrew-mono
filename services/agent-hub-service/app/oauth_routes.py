@@ -193,11 +193,19 @@ async def authorize(request: Request, service: Service):
     return response
 
 
-async def _protocol(request, service, endpoint, fields):
-    form = await _form(request, fields)
-    status, value, headers = await run_in_threadpool(
-        service.protocol, form, _headers(request), endpoint
-    )
+async def _protocol(request, service, endpoint, fields, *, on_rejection=None):
+    form = None
+    try:
+        form = await _form(request, fields)
+        status, value, headers = await run_in_threadpool(
+            service.protocol, form, _headers(request), endpoint
+        )
+    except OAuthFailure as error:
+        if on_rejection is not None:
+            on_rejection(error.code, None if form is None else "resource" in form)
+        raise
+    if status >= 400 and on_rejection is not None:
+        on_rejection(value.get("error"), "resource" in form)
     return JSONResponse(value, status_code=status, headers={**dict(headers), **PRIVATE})
 
 

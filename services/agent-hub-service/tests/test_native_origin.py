@@ -95,6 +95,44 @@ class BrandedNativeOriginTests(unittest.TestCase):
             self.assertEqual(config.json()["issuer"], origin)
         self.assertEqual(self.client.get(PROTECTED).json()["resource"], PRIMARY + MCP)
 
+    def test_token_rejection_diagnostics_only_record_categories_on_the_branded_route(self):
+        path = "/oauth/persistent/token"
+        logger = "app.native_transport_routes"
+        form = {
+            "grant_type": "refresh_token",
+            "client_id": "synthetic_client",
+            "refresh_token": "private-test-value",
+        }
+        with self.assertLogs(logger, level="WARNING") as captured:
+            for data, expected in (
+                ({**form, "resource": "wrong-test-value"}, "invalid_target"),
+                (form, "invalid_grant"),
+                ({**form, "client_id": "unknown-client"}, "invalid_client"),
+            ):
+                response = self.client.post(path, headers=self.proof("POST", path), data=data)
+                self.assertEqual(response.json()["error"], expected)
+            bad = self.client.post(
+                path,
+                headers={
+                    **self.proof("POST", path),
+                    "content-type": "application/x-www-form-urlencoded",
+                },
+                content=b"resource=redacted-one&resource=redacted-two",
+            )
+            self.assertEqual(bad.json()["error"], "invalid_request")
+        self.assertEqual(
+            [r.getMessage() for r in captured.records],
+            [
+                "Branded OAuth token rejected reason=invalid_target resource=present",
+                "Branded OAuth token rejected reason=invalid_grant resource=omitted",
+                "Branded OAuth token rejected reason=invalid_client resource=omitted",
+                "Branded OAuth token rejected reason=invalid_request resource=unparsed",
+            ],
+        )
+        with self.assertNoLogs(logger, level="WARNING"):
+            legacy = self.client.post(path, data=form)
+            self.assertEqual(legacy.json()["error"], "invalid_target")
+
     def test_missing_replayed_or_modified_proof_cannot_choose_branded_origin(self):
         for path, headers in (
             (PROTECTED, {"host": "mcp.foliocrew.app"}),

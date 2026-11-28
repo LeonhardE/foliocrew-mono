@@ -46,6 +46,15 @@ runtime tests before publishing the branded default. Once branded
 connections exist, use a compatible revision for rollback and keep their
 brand routing and key valid.
 
+The branded authorization request and code exchange require an explicit MCP
+resource. During refresh, a client that lost its discovery metadata can omit
+`resource`. The server selects only the single branded resource already
+bound to that refresh token and accepts only the original `runtime:connect`
+scope. When supplied, `resource` must match exactly. Rejection logs for this
+token endpoint contain a fixed OAuth error category and whether the request
+included a resource. [RFC 8707 §2.2](https://www.rfc-editor.org/rfc/rfc8707#section-2.2)
+and [RFC 6749 §6](https://www.rfc-editor.org/rfc/rfc6749#section-6).
+
 ## First pairing
 
 Only explicit user connection or reauthorization creates a ten-minute setup. The

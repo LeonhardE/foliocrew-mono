@@ -33,6 +33,7 @@ from .agent_rollout import (
     owner_allowed,
     require_owner_enrollment,
 )
+from .native_origin import BRAND_RESOURCE
 from .oauth import (
     _S256,
     _TOKEN,
@@ -665,6 +666,14 @@ class NativeTransportService(OwnerConnectionService):
         if endpoint not in {"token", "revoke"} or type(form) is not dict:
             raise OAuthFailure("invalid_request")
         if endpoint == "token":
+            if (
+                self.connection_resource == BRAND_RESOURCE
+                and form.get("grant_type") == "refresh_token"
+                and "resource" not in form
+            ):
+                # NativeUnit exposes only refresh records bound to this resource.
+                # Authlib still authenticates the client and checks the original grant.
+                form = {**form, "resource": BRAND_RESOURCE}
             if form.get("resource") != self.config.resource:
                 raise OAuthFailure("invalid_target")
             required = {"grant_type", "resource"}

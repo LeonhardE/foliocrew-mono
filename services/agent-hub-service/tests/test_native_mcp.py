@@ -6,16 +6,27 @@ import os
 import unittest
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
-from unittest.mock import patch
-from urllib.parse import urlsplit
+from unittest.mock import AsyncMock, patch
+from urllib.parse import parse_qs, urlsplit
 
 import httpx2
 import test_native_transport as accounts
 from fastapi import FastAPI
 from mcp import Client
+from mcp.client.auth import OAuthClientProvider
 from mcp.client.streamable_http import streamable_http_client
+from mcp.shared.auth import (
+    OAuthClientInformationFull,
+    OAuthClientMetadata,
+    OAuthMetadata,
+    OAuthToken,
+)
+from test_oauth import CALLBACK, CLIENT
 
 from app.native_mcp import install_native_mcp
+from app.native_origin import BRAND_RESOURCE
+from app.native_transport import SCOPE
+from app.native_transport_routes import get_native_transport, router
 
 
 class NativeMCPTests(unittest.IsolatedAsyncioTestCase):
@@ -128,6 +139,60 @@ class NativeMCPTests(unittest.IsolatedAsyncioTestCase):
                 result.structured_content["hostInstructions"],
             )
             self.assertEqual(result.structured_content["provider"], "muse")
+
+    async def test_branded_sdk_refresh_without_rediscovery_lists_tools_after_expiry(self):
+        self.oauth = self.case.branded_service()
+        self.case.service = self.oauth
+        self.case.authorize_params["resource"] = BRAND_RESOURCE
+        issued = self.case.connect()
+        self.case.now += issued["expires_in"] + 1
+        self.app.include_router(router)
+        self.app.dependency_overrides[get_native_transport] = lambda: self.oauth
+        registered = OAuthClientInformationFull(
+            client_id=CLIENT, redirect_uris=[CALLBACK], token_endpoint_auth_method="none"
+        )
+        storage = SimpleNamespace(
+            get_tokens=AsyncMock(return_value=OAuthToken.model_validate(issued)),
+            get_client_info=AsyncMock(return_value=registered),
+            set_tokens=AsyncMock(),
+        )
+        sdk = OAuthClientProvider(
+            BRAND_RESOURCE, OAuthClientMetadata(redirect_uris=[CALLBACK]), storage
+        )
+        # The host retained the token endpoint and expiry. Its next connection has
+        # not yet negotiated an MCP version or rediscovered protected-resource metadata.
+        sdk.context.oauth_metadata = OAuthMetadata.model_validate(self.oauth.metadata())
+        sdk.context.token_expiry_time = 1
+        refresh_forms = []
+
+        async def inspect(request):
+            if request.url.path == "/oauth/persistent/token":
+                refresh_forms.append(set(parse_qs(request.content.decode("ascii"))))
+
+        async with self.app.router.lifespan_context(self.app):
+            async with httpx2.AsyncClient(
+                transport=httpx2.ASGITransport(app=self.app),
+                event_hooks={"request": [inspect]},
+                auth=sdk,
+            ) as http:
+                async with Client(
+                    streamable_http_client(BRAND_RESOURCE, http_client=http), mode="legacy"
+                ) as client:
+                    listed = await client.list_tools()
+        self.assertEqual(refresh_forms, [{"grant_type", "refresh_token", "client_id"}])
+        self.assertEqual(
+            {tool.name for tool in listed.tools},
+            {
+                "agent_connection",
+                "prepare_agent_authorization",
+                "submit_agent_offer",
+                "agent_activation",
+            },
+        )
+        storage.set_tokens.assert_awaited_once()
+        rotated = storage.set_tokens.await_args.args[0]
+        self.assertEqual(rotated.scope, SCOPE)
+        self.assertNotEqual(rotated.refresh_token, issued["refresh_token"])
 
     async def test_wrong_host_origin_ambient_authority_and_unknown_paths_are_closed(self):
         async with self.app.router.lifespan_context(self.app):
