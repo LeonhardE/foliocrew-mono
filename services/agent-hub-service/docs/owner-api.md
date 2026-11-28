@@ -367,11 +367,14 @@ attempt checks the current writer fence and proof expiry before using a checkpoi
 still verifies its signature, historical writer and recipients at its original save time.
 
 `POST /api/v3/tasks/{vault}/overview/query` is an additive Firebase Owner read with no query,
-operation/author/delegation/workload selectors. Its exact16KiB streamed body is
-`{contractVersion,knownPacketVersions,packetLimit}`. `packetLimit` is0or4; `knownPacketVersions`
-contains at most32 unique task IDs, each exactly `{taskId,taskVersion,envelopeFingerprint}`.
-All three fields must match this Owner's returned current metadata to omit packet delivery.
-Unknown/deleted cached IDs do not trigger extra lookups or grant any right.
+operation/author/delegation/workload selectors. Its 16 KiB streamed body requires
+`contractVersion`, `knownPacketVersions` and `packetLimit`. The limit is 0 or 4.
+`knownPacketVersions` accepts up to 32 unique `{taskId,taskVersion,envelopeFingerprint}`
+entries. An exact current metadata match omits that packet from ordinary delivery.
+With a limit of 4, a client opening a task can also send an optional `preferredTaskId`.
+If it is in the visible task page, its current packet comes first even when its version
+is already known, followed by uncached packets in page order. The total limit remains
+four. Unknown and hidden IDs leave the selection unchanged and cause no extra lookups.
 
 The response has exactly `{contractVersion,profile,vaultId,tasks,capabilities,feeds,connections,packets}`,
 with `profile:"folioview.owner-task-overview.v1"`. `tasks` is the original task metadata page
@@ -382,8 +385,8 @@ persistent results endpoint. `connections` retains the original Owner
 native inventory DTO, including historical revoked connections and other-vault metadata;
 consumers still filter by the selected vault and retain original Actor/provider attribution.
 
-`packets` is null for no uncached candidate or limit0. Otherwise it is the original nonempty
-packet batch for the first at most four uncached task IDs in page order, with the original
+`packets` is null for an empty selection or limit 0. Otherwise it is the original nonempty
+packet batch for the selected task IDs, with the original
 ordered prefix and exact remaining suffix. Every selected packet passes original crypto/schema
 checks and the standalone packet response budget first. Only when adding that valid batch
 exceeds the combined1MiB response limit may packets become null. Clients then use the original

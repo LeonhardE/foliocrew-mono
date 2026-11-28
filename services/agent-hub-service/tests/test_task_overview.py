@@ -347,6 +347,21 @@ class TaskOverviewTests(unittest.TestCase):
             with self.assertRaises(StoreUnavailable):
                 self.query()
 
+    def test_preferred_missing_or_hidden_task_does_not_change_selection_or_reads(self):
+        hidden = self.ids[0]
+        self.rpc.documents[self.name(lifecycle_path(self.owner, self.vault))] = {
+            "version": 1,
+            "tasks": {hidden: "trashed"},
+        }
+        self.rpc.calls.clear()
+        expected = self.query()
+        reads = self.reads()
+        for preferred in (hidden, "unknown_task"):
+            with self.subTest(preferred=preferred):
+                self.rpc.calls.clear()
+                self.assertEqual(self.query(preferredTaskId=preferred), expected)
+                self.assertEqual(self.reads(), reads)
+
     def test_packet_batch_partial_prefix_keeps_exact_remaining_suffix(self):
         def budget(value):
             if (
@@ -357,8 +372,11 @@ class TaskOverviewTests(unittest.TestCase):
 
         with patch("app.task_overview.check_read_response", side_effect=budget):
             page = self.query()["packets"]
+            preferred = self.query(preferredTaskId=self.ids[-1])["packets"]
         self.assertEqual([row["taskId"] for row in page["items"]], self.ids[:1])
         self.assertEqual(page["remainingTaskIds"], self.ids[1:])
+        self.assertEqual([row["taskId"] for row in preferred["items"]], self.ids[-1:])
+        self.assertEqual(preferred["remainingTaskIds"], self.ids[:-1])
 
     def test_packet_metadata_must_match_current_head_before_any_budget_null(self):
         task = self.ids[0]
@@ -415,6 +433,9 @@ class TaskOverviewTests(unittest.TestCase):
         for changes in (
             {"packetLimit": True},
             {"packetLimit": 1},
+            {"preferredTaskId": None},
+            {"preferredTaskId": "../outside"},
+            {"preferredTaskId": self.ids[0], "packetLimit": 0},
             {"knownPacketVersions": [valid, valid]},
             {"knownPacketVersions": [{**valid, "taskVersion": True}]},
             {"knownPacketVersions": [{**valid, "private": "marker"}]},
@@ -471,6 +492,17 @@ class TaskOverviewTests(unittest.TestCase):
         self.assertEqual(len(value["tasks"]["items"]), 32)
         self.assertIsNone(value["tasks"]["nextCursor"])
         self.assertEqual(len(value["packets"]["items"]), 4)
+        last = value["tasks"]["items"][-1]
+        known = {key: last[key] for key in ("taskId", "taskVersion", "envelopeFingerprint")}
+        for cached in ([], [known], [{**known, "envelopeFingerprint": "f" * 64}]):
+            with self.subTest(cached=cached):
+                selected = self.query(preferredTaskId=last["taskId"], knownPacketVersions=cached)
+                self.assertEqual(selected["tasks"], value["tasks"])
+                self.assertEqual(
+                    [row["taskId"] for row in selected["packets"]["items"]],
+                    [last["taskId"], *self.ids[:3]],
+                )
+                self.assertEqual(selected["packets"]["items"][0]["packet"]["metadata"], last)
 
     def test_corrupt_root_on_commit_retry_never_returns_first_attempt_snapshot(self):
         path = self.name(document_path("hub_vaults", self.owner))
@@ -507,6 +539,11 @@ class TaskOverviewRouteTests(unittest.TestCase):
         self.assertEqual(result.json()["tasks"]["items"], [])
         self.assertIsNone(result.json()["packets"])
         self.assertFalse(result.json()["capabilities"]["enabled"])
+        with_hint = self.fixture.client.post(
+            self.path, headers=self.headers, json={**self.value, "preferredTaskId": "absent_task"}
+        )
+        self.assertEqual(with_hint.status_code, 200, with_hint.text[:200])
+        self.assertEqual(with_hint.json(), result.json())
 
     def test_query_protocol_media_body_and_native_identity_refusals_precede_read(self):
         for path, headers, value, status in (

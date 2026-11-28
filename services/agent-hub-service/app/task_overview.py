@@ -80,7 +80,8 @@ class _OverviewSnapshot:
 def _request(value):
     if (
         type(value) is not dict
-        or set(value) != {"contractVersion", "knownPacketVersions", "packetLimit"}
+        or set(value) - {"preferredTaskId"}
+        != {"contractVersion", "knownPacketVersions", "packetLimit"}
         or value["contractVersion"] != CONTRACT_VERSION
         or type(value["packetLimit"]) is not int
         or value["packetLimit"] not in {0, 4}
@@ -88,6 +89,10 @@ def _request(value):
         or len(value["knownPacketVersions"]) > 32
     ):
         raise ContractError("malformed_request")
+    if "preferredTaskId" in value:
+        identifier(value["preferredTaskId"])
+        if value["packetLimit"] != 4:
+            raise ContractError("malformed_request")
     known = {}
     for row in value["knownPacketVersions"]:
         if type(row) is not dict or set(row) != {"taskId", "taskVersion", "envelopeFingerprint"}:
@@ -230,12 +235,16 @@ class TaskOverviewService:
             task_page = tasks._list(
                 view, owner, vault, now=now, limit=32, cursor=None, issued_token=issued_token
             )
-            pending = [
-                row["taskId"]
-                for row in task_page["items"]
-                if known.get(row["taskId"])
-                != {key: row[key] for key in ("taskId", "taskVersion", "envelopeFingerprint")}
-            ][: value["packetLimit"]]
+            pending = []
+            for row in task_page["items"]:
+                task_id = row["taskId"]
+                if task_id == value.get("preferredTaskId"):
+                    pending.insert(0, task_id)
+                elif known.get(task_id) != {
+                    key: row[key] for key in ("taskId", "taskVersion", "envelopeFingerprint")
+                }:
+                    pending.append(task_id)
+            pending = pending[: value["packetLimit"]]
             connection_index = native._owner(view, uid)
             head = view.get(persistent_index)
             page_path = None
@@ -359,6 +368,9 @@ async def overview(vault: str, request: Request, user: Owner, service: Overview)
 
     _invoke(protocol)
     value = await body(
-        request, {"contractVersion", "knownPacketVersions", "packetLimit"}, max_bytes=MAX_BODY_BYTES
+        request,
+        {"contractVersion", "knownPacketVersions", "packetLimit"},
+        optional_fields={"preferredTaskId"},
+        max_bytes=MAX_BODY_BYTES,
     )
     return await run_in_threadpool(_invoke, lambda: service.overview(user.uid, vault, value))
