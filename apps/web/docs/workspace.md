@@ -489,9 +489,9 @@ head and catalogue before sealing. Read failures do not replace the editor or su
 Brief non-actionable feedback expires after 4.5 seconds; refresh/reentry also clears old notices.
 No new persistent cache is introduced here.
 
-These two reads each have an 11.5-second browser budget covering token acquisition, response bodies
-and backoff, inside the unchanged 12-second Web proxy limit. Hub reserves finalization time inside
-its cooperative 10-second catalogue budget. A Web GET deadline adds only the fixed
+The direct task-list GET has a 15-second browser budget. The resource catalogue uses 11.5 seconds.
+Both cover token acquisition, response bodies and backoff, and the Web proxy allows 12 seconds per
+GET. Hub reserves finalization time inside its cooperative 10-second catalogue budget. A Web GET deadline adds only the fixed
 `X-FolioView-Read-Failure: deadline` header to the existing closed error DTO; upstream headers cannot
 forge it. Cancellation is silent, while timeout, pre-forward admission, service/network failure and
 permission/session rejection have separate fixed UI messages. No server exception text is shown.
@@ -720,7 +720,10 @@ remove the existing two-worker verification bound. The locked task page shows th
 Task lists and resource selection wait for a verified unlock scope. They resume automatically after
 unlock, including when a shared session becomes available. Owner, lock and unlock-generation changes
 discard late receipts and names. Partial feeds retain real partial unread counts
-and cannot mark the homepage ready.
+and cannot mark the homepage ready. The overview proxy has a 20-second deadline and the browser
+allows 24 seconds for queueing, transport and validation. A proxy 503 leaves a separate 15-second
+budget for the original task list. A failed first read shows a retry in the task list, which
+also rechecks unavailable run controls and report reads. An empty list requires a successful read.
 
 Selecting a current task uses the Owner-only `POST /api/v3/task-center/{vault}/tasks/{task}/detail/query`.
 The task and executor views share a request within that selection. A client can request the original

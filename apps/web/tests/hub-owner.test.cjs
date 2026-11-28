@@ -1421,7 +1421,7 @@ test("Agent credential Owner routes preserve opaque activation, fixed namespace 
   assert.equal((await wrong.proxy(request(base + "/setups/" + OP))).status, 503);
 });
 
-test("Owner proxy keeps a total deadline and cancellation across the two cold-start preflight reads", async () => {
+test("Owner proxy budgets cold overview and manual preflight reads independently of ordinary routes", async () => {
   const task = "/api/v3/task-center/vault_A/tasks/task_A";
   const definition = {
     contractVersion: CONTRACT,
@@ -1434,7 +1434,10 @@ test("Owner proxy keeps a total deadline and cancellation across the two cold-st
     dispatchSupported: false,
     nativeScheduleAttested: false,
   };
+  const overview = "/api/v3/tasks/vault_A/overview/query",
+    overviewRequest = { contractVersion: CONTRACT, knownPacketVersions: [], packetLimit: 4 };
   for (const [path, budget, result, outcome] of [
+    [overview, 20000, require("./task-overview-fixtures.cjs").body(overviewRequest), "success"],
     ["/api/v2/vaults/current", 12000, VAULT, "deadline"],
     [task, 20000, definition, "success"],
     [task + "/manual", 20000, { contractVersion: CONTRACT, items: [] }, "success"],
@@ -1477,7 +1480,12 @@ test("Owner proxy keeps a total deadline and cancellation across the two cold-st
         return late.promise;
       },
     });
-    const pending = proxy(request(path, { signal: caller.signal }));
+    const pending = proxy(
+      request(path, {
+        signal: caller.signal,
+        ...(path === overview ? { method: "POST", json: overviewRequest } : {}),
+      }),
+    );
     const signal = await Promise.race([
       arrival.promise,
       pending.then(() => assert.fail("proxy completed before reaching Hub")),

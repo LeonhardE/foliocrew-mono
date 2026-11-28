@@ -73,6 +73,7 @@ export function TaskCenterView({
     complete: boolean;
     loading: boolean;
     error: string;
+    reload: () => Promise<unknown>;
     retiredReportLink?: boolean;
     partial: boolean;
     busy: boolean;
@@ -553,6 +554,11 @@ export function TaskCenterView({
     !resultsFocusKey &&
     !(request && request.owner === workspace.owner);
   const expectedScope = `${workspace.owner}:${workspace.vault?.vaultId}:${workspace.vaultGeneration}`;
+  const capabilityFailed = center.capabilityState === "error";
+  const retryOverviewSections = () => {
+    if (capabilityFailed) center.retryCapabilities();
+    if (resultState?.error) void resultState.reload();
+  };
   const listState =
     !workspace.authenticated ||
     workspace.phase !== "unlocked" ||
@@ -609,7 +615,13 @@ export function TaskCenterView({
           <button
             className={styles.textButton}
             disabled={busy}
-            onClick={() => void (mode === "trash" ? center.trashList() : model.reload())}
+            onClick={() => {
+              if (mode === "trash") void center.trashList();
+              else {
+                retryOverviewSections();
+                void model.reload();
+              }
+            }}
           >
             {t("refresh")}
           </button>
@@ -808,14 +820,23 @@ export function TaskCenterView({
               hasContent={model.items.length > 0}
               label={t("loading")}
             />
-            {model.listError && (
+            {(model.listError || capabilityFailed) && (
               <InlineError
-                message={t("errors.request_failed")}
+                message={t(
+                  model.listError === "request_timeout"
+                    ? "listTimeout"
+                    : model.listError
+                      ? "listFailed"
+                      : "capabilitiesFailed",
+                )}
                 retryLabel={t("retry")}
-                onRetry={() => void model.reloadTasks()}
+                onRetry={() => {
+                  if (model.listError) void model.reloadTasks();
+                  retryOverviewSections();
+                }}
               />
             )}
-            {!model.loading && !model.items.length && (
+            {model.listReady && !model.listError && !model.loading && !model.items.length && (
               <p className={styles.empty}>{t("noTasks")}</p>
             )}
             {model.items.map((item) => {

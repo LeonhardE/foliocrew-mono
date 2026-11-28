@@ -78,7 +78,7 @@ export function useTaskCenter(
   const [state, setState] = useState<{
     scope: string | null;
     enabled: boolean;
-    capabilityState: "loading" | "ready" | "error";
+    capabilityState: "loading" | "retrying" | "ready" | "error";
     loading: boolean;
     busy: boolean;
     error: string;
@@ -722,12 +722,13 @@ export function useTaskCenter(
       for (const c of controllers.current) c.abort();
     };
   }, [scope, api, update, overview]);
-  const capabilitiesReady = state.scope === scope && state.capabilityState === "ready";
+  const capabilityState = state.scope === scope ? state.capabilityState : "loading";
   useEffect(() => {
-    if (!scope || !active || capabilitiesReady) return;
+    if (!scope || !active || capabilityState === "ready" || capabilityState === "error") return;
     const control = new AbortController();
     const loadCapabilities = async () => {
-      const snapshot = await overview?.acquireWithFallback(control.signal);
+      const snapshot =
+        capabilityState === "retrying" ? null : await overview?.acquireWithFallback(control.signal);
       if (
         control.signal.aborted ||
         live.current.scope !== scope ||
@@ -744,7 +745,7 @@ export function useTaskCenter(
       if (!control.signal.aborted) update({ capabilityState: "error" }, scope);
     });
     return () => control.abort();
-  }, [scope, active, capabilitiesReady, api, update, overview]);
+  }, [scope, active, capabilityState, api, update, overview]);
   const overviewReceipt = overview?.receipt;
   useEffect(() => {
     if (overviewReceipt && scope)
@@ -982,7 +983,11 @@ export function useTaskCenter(
   return {
     scope,
     enabled: current?.enabled ?? false,
-    capabilityState: current?.capabilityState ?? "loading",
+    capabilityState: capabilityState === "retrying" ? "loading" : capabilityState,
+    retryCapabilities: () => {
+      if (scope && active && capabilityState === "error")
+        update({ capabilityState: "retrying" }, scope);
+    },
     loading: Boolean(current?.loading || (task && current?.detailLoading === selectedKey)),
     busy: current?.busy ?? false,
     error: current?.error ?? "",

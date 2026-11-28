@@ -32,6 +32,8 @@ function compile(file, imports = {}, globals = {}) {
     module,
     exports: module.exports,
     require(name) {
+      if (name === "@/lib/task-overview-request")
+        return require("./task-overview-helpers.cjs").request;
       if (name === "@/lib/task-overview") return require("./task-overview-helpers.cjs").overview;
       if (name === "@/lib/workspace-cache") return cacheContracts;
       assert.ok(Object.hasOwn(imports, name), name);
@@ -1157,7 +1159,7 @@ test("task-list failure preserves independently loaded resources and retries onl
   h.unmount();
 });
 
-test("read budget is below the proxy; timeout retains rows and a late success cannot overwrite recovery", async () => {
+test("task-list read budget allows the proxy to respond; timeout retains rows and a late success cannot overwrite recovery", async () => {
   const late = deferred();
   let slow = false;
   const h = harness({
@@ -1167,8 +1169,8 @@ test("read budget is below the proxy; timeout retains rows and a late success ca
   slow = true;
   const waiting = model.reloadTasks();
   await settle();
-  assert.ok(h.timerDelays().includes(11500));
-  h.deadline(11500);
+  assert.ok(h.timerDelays().includes(15000));
+  h.deadline(15000);
   await waiting;
   model = h.render();
   assert.equal(model.listError, "request_timeout");
@@ -1224,7 +1226,7 @@ test("timeout also cancels a streamed list body while preserving successful reso
         : undefined,
   });
   await h.ready();
-  h.deadline(11500);
+  h.deadline(15000);
   const model = await h.drain();
   assert.equal(model.listError, "request_timeout");
   assert.equal(model.loading, false);
