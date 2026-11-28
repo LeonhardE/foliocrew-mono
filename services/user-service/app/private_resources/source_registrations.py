@@ -18,7 +18,6 @@ from folioview_shared.encrypted.jsonutil import canonical_json
 from folioview_shared.encrypted.private_resources import (
     PrivateRegistryCursor,
     source_index_digest,
-    verify_private_registry_transition,
 )
 from folioview_shared.encrypted.schema import validate_schema
 from folioview_shared.firestore import BoundedTransaction
@@ -30,7 +29,7 @@ from .authority_cutover import UserAuthorityCutover
 from .legacy_baselines import _sha
 from .recovery import COLLECTION as HEADS
 from .recovery import RecoveryHeads
-from .registry_pages import MAX_PAGE_ENTRIES
+from .registry_pages import HISTORY_READ_BATCH_SIZE
 from .report_sources import HOLDINGS_FENCES, holdings_fence_key
 from .source_invalidations import SOURCE_INDEX
 
@@ -40,23 +39,12 @@ _MAX_REGISTRY_EXTENSION = 128
 
 def current_registry(cutover, uid, vault, now, *, allow_deleted=False):
     """Build authority only to the fixed current head returned by User."""
-    evidence = cutover.read_start(
+    evidence, start = cutover.verified_start(
         uid, vault, secrets.token_urlsafe(24), now=now, allow_deleted=allow_deleted
     )
     scope = {key: evidence[key] for key in ("ownerSubject", "vaultId", "rootKeyId")}
     root = evidence["rootJwk"]
     target = evidence["registry"]
-    start = verify_private_registry_transition(
-        evidence["signedTransition"],
-        first_bundle=evidence["firstBundle"],
-        root_jwk=root,
-        owner_subject=scope["ownerSubject"],
-        vault_id=vault,
-        pinned_root_key_id=scope["rootKeyId"],
-        authenticated_start=evidence["registryStart"],
-        previous=None,
-        now=now,
-    )
     registry = start.registry
     bundles = [evidence["firstBundle"]]
     current = start.head()
@@ -66,9 +54,11 @@ def current_registry(cutover, uid, vault, now, *, allow_deleted=False):
         raise ContractError("registry_conflict")
     memo = RegistryCertificateMemo()
     tail = target["registrySequence"]
-    for first in range(current["registrySequence"] + 1, tail + 1, MAX_PAGE_ENTRIES):
-        sequences = range(first, min(tail + 1, first + MAX_PAGE_ENTRIES))
-        entries = cutover.verifier.history._read(scope, start.registry_epoch, list(sequences))
+    for first in range(current["registrySequence"] + 1, tail + 1, HISTORY_READ_BATCH_SIZE):
+        sequences = range(first, min(tail + 1, first + HISTORY_READ_BATCH_SIZE))
+        entries = cutover.verifier.history._read(
+            scope, start.registry_epoch, list(sequences), memo=memo
+        )
         for sequence, entry in zip(sequences, entries, strict=True):
             registry = verify_registry(
                 entry["bundle"],

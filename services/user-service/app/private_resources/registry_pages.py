@@ -28,6 +28,7 @@ ORIGINAL_HEAD_PROFILE = "folioview.owner-original-registry-head.v1"
 COLLECTION = "user_private_registry_history"
 MAX_ENTRY_BYTES = MAX_REGISTRY_BYTES + 1024
 MAX_PAGE_ENTRIES = 4
+HISTORY_READ_BATCH_SIZE = 12
 
 
 class RegistryPageRequest(ClosedModel):
@@ -142,7 +143,7 @@ class RegistryHistory:
 
         write(BoundedTransaction(self.store.client, max_attempts=2))
 
-    def _read(self, scope, epoch, sequences):
+    def _read(self, scope, epoch, sequences, *, memo=None):
         keys = [_index(scope["ownerSubject"], scope["vaultId"], epoch, n) for n in sequences]
         if isinstance(self.store, SQLiteUserResourceStore):
             placeholders = ", ".join("?" for _ in keys)
@@ -160,13 +161,17 @@ class RegistryHistory:
         else:
             collection = self._collection()
             docs = read_documents(
-                self.store.client, None, [collection.document(key) for key in keys]
+                self.store.client,
+                None,
+                [collection.document(key) for key in keys],
+                maximum=HISTORY_READ_BATCH_SIZE,
             )
             values = [
                 doc["entry"] if type(doc) is dict and doc.keys() == {"entry"} else None
                 for doc in docs
             ]
-        memo = RegistryCertificateMemo()
+        if memo is None:
+            memo = RegistryCertificateMemo()
         return [
             self._entry(raw, sequence, scope, memo)
             for raw, sequence in zip(values, sequences, strict=True)
