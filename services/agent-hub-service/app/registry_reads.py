@@ -1,4 +1,4 @@
-"""Exact immutable registry prefixes retained only by a transaction attempt."""
+"""Registry prefixes from one transaction attempt or one verified User authority read."""
 
 from folioview_shared.encrypted.authority import VerifiedRegistry
 from folioview_shared.encrypted.constants import MAX_SAFE_INTEGER
@@ -21,7 +21,7 @@ def _key(owner, row):
 
 
 class RegistryPrefixCache:
-    """No prefilled dictionary, mutable registry or cross-attempt authority state."""
+    """Exact prefix evidence, keyed by the complete root key and signed history."""
 
     __slots__ = ("__entries", "__bytes")
 
@@ -30,8 +30,8 @@ class RegistryPrefixCache:
         self.__bytes = 0
 
     def _remember(self, owner, row, registries):
-        # Only the successful complete _verify_row path publishes its verified
-        # values. No partial prefix is admitted if a later bundle/row fails.
+        # Local vault and User authority readers publish only complete verified
+        # histories. A rejected suffix must never contribute a prefix.
         if (
             type(registries) is not tuple
             or len(registries) != len(row["registryHistory"])

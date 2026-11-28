@@ -104,7 +104,7 @@ def _request(value):
     return known
 
 
-def _packet_page(view, owner, vault, selected, index):
+def _packet_page(view, owner, vault, selected, index, source_prefixes):
     # Validate every selected carrier before deciding whether combined delivery
     # fits. A corrupt packet cannot be hidden behind the null delivery hint.
     packets = []
@@ -112,7 +112,14 @@ def _packet_page(view, owner, vault, selected, index):
         head = _head(view, owner, vault["vaultId"], task, index)
         if head is None:
             raise StoreUnavailable
-        packet = _response(view, owner, vault, task, head["metadata"]["taskVersion"])
+        packet = _response(
+            view,
+            owner,
+            vault,
+            task,
+            head["metadata"]["taskVersion"],
+            source_prefixes=source_prefixes,
+        )
         if packet["metadata"] != head["metadata"]:
             raise StoreUnavailable
         packets.append(packet)
@@ -286,7 +293,14 @@ class TaskOverviewService:
             }
             check_read_response(result)
             if pending:
-                result["packets"] = _packet_page(view, owner, vault, pending, index)
+                result["packets"] = _packet_page(
+                    view,
+                    owner,
+                    vault,
+                    pending,
+                    index,
+                    current.verified_prefixes if current is not None else None,
+                )
                 try:
                     check_read_response(result)
                 except ContractError as error:
@@ -299,7 +313,9 @@ class TaskOverviewService:
 
         outcome = "unexpected"
         try:
-            current = self.user_vaults.read(uid, vault_id)
+            current = self.user_vaults.read(
+                uid, vault_id, retain_prefixes=bool(value["packetLimit"])
+            )
             advance("transaction")
             result = self.store.transact(read)
             outcome = "ok"

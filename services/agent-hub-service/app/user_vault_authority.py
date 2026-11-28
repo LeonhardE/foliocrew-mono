@@ -5,7 +5,7 @@ import logging
 import os
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from uuid import uuid4
 
 import httpx
@@ -30,6 +30,7 @@ from folioview_shared.identity import owner_key
 
 from .catalogue import _JWT, remaining, workload_token
 from .private_authority import numbered_user_origin
+from .registry_reads import RegistryPrefixCache
 from .signing import _EMAIL, get_signer, origin
 from .store import private_resource_writer_fence_path
 
@@ -84,6 +85,7 @@ class CurrentUserVault:
     writer_fence: dict
     expires_at: float
     retirement: dict | None = None
+    verified_prefixes: RegistryPrefixCache | None = field(default=None, compare=False, repr=False)
 
     def require_active_holdings(self, bindings):
         active = {
@@ -123,7 +125,17 @@ class UserVaultAuthority:
         self.signer_factory, self.token_factory = signer_factory, token_factory
         self.transport, self.clock, self.wall_clock = transport, clock, wall_clock
 
-    def read(self, uid, vault, writer_fence, *, minimum_epoch=2, deadline=None, retirement=False):
+    def read(
+        self,
+        uid,
+        vault,
+        writer_fence,
+        *,
+        minimum_epoch=2,
+        deadline=None,
+        retirement=False,
+        retain_prefixes=False,
+    ):
         owner = owner_key(uid)
         if (
             type(writer_fence) is not dict
@@ -176,8 +188,9 @@ class UserVaultAuthority:
                 or any(response[key] != value for key, value in expected.items())
             ):
                 raise ContractError("recipient_binding_mismatch")
+            prefix_cache = RegistryPrefixCache() if retain_prefixes else None
             verified = self._verify(
-                response["authority"], lookup, writer_fence, int(self.wall_clock())
+                response["authority"], lookup, writer_fence, int(self.wall_clock()), prefix_cache
             )
             remaining(deadline, self.clock)
             result = CurrentUserVault(
@@ -186,6 +199,7 @@ class UserVaultAuthority:
                 dict(writer_fence),
                 started_at + _READ_WINDOW,
                 response.get("retirement"),
+                prefix_cache,
             )
         except (TimeoutError, httpx.TimeoutException):
             timing.emit("timeout", self.clock())
@@ -282,7 +296,7 @@ class UserVaultAuthority:
                 timing.received = self.clock()
                 return bytes(body)
 
-    def _verify(self, value, lookup, fence, now):
+    def _verify(self, value, lookup, fence, now, prefix_cache=None):
         if (
             type(value) is not dict
             or value.keys() != _AUTHORITY_FIELDS
@@ -316,14 +330,19 @@ class UserVaultAuthority:
             **scope,
         )
         registry = start.registry
+        prefixes = [registry] if prefix_cache is not None else None
         for bundle in later:
             following = verify_registry(bundle, previous=registry, **scope)
             if following.registry_sequence != registry.registry_sequence + 1:
                 raise ContractError("registry_conflict")
             registry = following
+            if prefixes is not None:
+                prefixes.append(registry)
         result = PrivateRegistryCursor(registry, start.registry_epoch)
         if result.head() != value["registry"]:
             raise ContractError("registry_conflict")
+        if prefix_cache is not None:
+            prefix_cache._remember(value["ownerSubject"], value, tuple(prefixes))
         return result
 
 
@@ -335,7 +354,7 @@ class ScopedUserVaults:
             raise ContractError("authorization_unavailable")
         self.store, self.owner, self.client = store, owner, client
 
-    def read(self, uid, vault=None, *, deadline=None):
+    def read(self, uid, vault=None, *, deadline=None, retain_prefixes=False):
         owner = owner_key(uid)
         if owner != self.owner:
             return None
@@ -348,9 +367,12 @@ class ScopedUserVaults:
         selected_vault = vault if vault is not None else fence.get("vaultId")
         if type(selected_vault) is not str:
             raise ContractError("source_unavailable")
+        options = {}
         if deadline is not None:
-            return self.client.read(uid, selected_vault, fence, deadline=deadline)
-        return self.client.read(uid, selected_vault, fence)
+            options["deadline"] = deadline
+        if retain_prefixes:
+            options["retain_prefixes"] = True
+        return self.client.read(uid, selected_vault, fence, **options)
 
 
 def scoped_user_vaults(store):

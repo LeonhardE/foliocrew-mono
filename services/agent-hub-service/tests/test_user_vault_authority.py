@@ -1,22 +1,30 @@
 """A Hub lookup keeps the signed User epoch bound to its exact transferred writer."""
 
 import asyncio
+import copy
 import hashlib
 import tempfile
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import anyio
 import httpx
-from fixtures import BOOT, UID, VaultFixture
+from fixtures import BOOT, UID
 from google.auth.credentials import AnonymousCredentials
 from google.cloud import firestore
 from test_firestore_store import MemoryRpc
+from test_tasks import TaskFixture
 
+from app import tasks
 from app.catalogue import CatalogueService, item
-from app.store import FirestoreHubStore, SQLiteHubStore, private_resource_writer_fence_path
+from app.store import (
+    FirestoreHubStore,
+    SQLiteHubStore,
+    StoreUnavailable,
+    private_resource_writer_fence_path,
+)
 from app.task_overview import TaskOverviewService
 from app.user_vault_authority import HUB_AUTHORITY_PATH, ScopedUserVaults, UserVaultAuthority
 from app.vaults import VaultService
@@ -30,7 +38,7 @@ from folioview_shared.encrypted.private_resources import PrivateRegistryCursor, 
 
 class UserVaultAuthorityTests(unittest.TestCase):
     def setUp(self):
-        self.f = f = VaultFixture()
+        self.f = f = TaskFixture()
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
         self.store = SQLiteHubStore(Path(folder.name) / "hub.sqlite3")
@@ -251,6 +259,80 @@ class UserVaultAuthorityTests(unittest.TestCase):
                 self.assertEqual(request["new_transaction"]._pb.WhichOneof("mode"), "read_write")
             else:
                 self.assertFalse(request["writes"])
+
+    def test_overview_reuses_only_the_exact_verified_user_checkpoint_for_each_signed_packet(self):
+        f = self.f
+        VaultService(self.store, clock=lambda: 1000).bootstrap(UID, f.bootstrap(), BOOT)
+        fence_path = private_resource_writer_fence_path(f.owner)
+        self.store.transact(lambda unit: unit.put(fence_path, self.fence))
+        source = ScopedUserVaults(self.store, owner=f.owner, client=self.client)
+        service = tasks.TaskService(self.store, clock=lambda: 1000, user_vaults=source)
+        f.registry = source.read(UID, f.vault).cursor.registry
+        f.bundle = self.authority["registryHistory"][-1]
+        ids = [f"synthetic_transferred_task_{n}" for n in range(4)]
+        for ident in ids:
+            operation = "create_" + ident
+            service.create(
+                UID, f.body(task=ident, operation=operation), operation, f.kid("device_sig")
+            )
+        expected = {ident: service.get(UID, ident) for ident in ids}
+        body = {"contractVersion": CONTRACT_VERSION, "knownPacketVersions": [], "packetLimit": 4}
+        overview = TaskOverviewService(self.store, clock=lambda: 1000, user_vaults=source)
+
+        # Revoke the writer in a later authenticated checkpoint. Each carrier
+        # must still be checked at the unique checkpoint that signed that task.
+        following = f.make_bundle(previous=f.registry, revoked=("device_sig",), issued_at=975)
+        revoked = f.verify(following, previous=f.registry)
+        self.authority["registryHistory"].append(following)
+        self.authority["registry"] = PrivateRegistryCursor(revoked, 2).head()
+        with (
+            patch("app.tasks.verify_registry", wraps=tasks.verify_registry) as replay,
+            patch("app.tasks.verify_carrier", wraps=tasks.verify_carrier) as carriers,
+        ):
+            result = overview.overview(UID, f.vault, body)
+        self.assertEqual(
+            {item["taskId"]: item["packet"] for item in result["packets"]["items"]}, expected
+        )
+        self.assertEqual(replay.call_count, 0)
+        self.assertEqual(carriers.call_count, 4)
+        self.assertIsNone(source.read(UID, f.vault).verified_prefixes)
+        selected = source.read(UID, f.vault, retain_prefixes=True)
+        cache = selected.verified_prefixes
+        self.assertEqual(cache.get(f.owner, selected.authority, 1, 950), f.registry)
+        self.assertNotIn(
+            f.kid("device_sig"), cache.get(f.owner, selected.authority, 2, 1000).active_key_ids
+        )
+        with self.assertRaises(ContractError):
+            cache.get(f.owner, selected.authority, 1, 949)
+        fork = copy.deepcopy(selected.authority)
+        fork["registryHistory"][-1] = f.make_bundle(previous=f.registry, issued_at=976)
+        self.assertIsNone(cache.get(f.owner, fork, 1, 1000))
+
+        # A valid cached registry cannot turn an altered packet into a result.
+        path = tasks._paths(f.owner, f.vault, ids[0], 1)
+
+        def tamper(unit):
+            packet = unit.get(path)
+            packet["keyProofs"] = tasks._proofs(following)
+            unit.put(path, packet)
+
+        self.store.transact(tamper)
+        with self.assertRaises(StoreUnavailable):
+            overview.overview(UID, f.vault, body)
+
+        # A changed local writer during the remote read invalidates this request.
+        reply = self.wire.side_effect
+
+        def change_fence(request):
+            response = reply(request)
+            self.store.transact(
+                lambda unit: unit.put(fence_path, {**self.fence, "state": "frozen"})
+            )
+            return response
+
+        self.wire.side_effect = change_fence
+        with self.assertRaisesRegex(ContractError, "source_unavailable"):
+            overview.overview(UID, f.vault, body)
 
     def test_owner_overview_uses_current_user_scope_when_the_original_vault_has_transferred(self):
         VaultService(self.store, clock=lambda: 1000).bootstrap(UID, self.f.bootstrap(), BOOT)
