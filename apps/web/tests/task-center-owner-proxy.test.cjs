@@ -6,8 +6,9 @@ const t = compile("../lib/server/owner-transport.ts", {
   "node:crypto": require("node:crypto"),
   jose: {},
 });
+const routes = compile("../lib/persistent-owner-routes.ts");
 const dto = compile("../lib/server/task-center-owner.ts", {
-  "../persistent-owner-routes": compile("../lib/persistent-owner-routes.ts"),
+  "../persistent-owner-routes": routes,
   "server-only": {},
   "./owner-transport": t,
 });
@@ -47,4 +48,23 @@ test("provider slot Owner state uses the published profile and cannot claim nati
     };
   assert.equal(dto.taskCenterResponse(path, state), true);
   assert.equal(dto.taskCenterResponse(path, { ...state, profile: "invented" }), false);
+});
+
+test("only exact task and manual-history GETs receive a cold-start preflight budget", () => {
+  for (const path of [base, base + "/manual"]) {
+    assert.equal(routes.isManualPreflightRead(path, "GET"), true);
+    for (const method of ["POST", "HEAD", "DELETE"])
+      assert.equal(routes.isManualPreflightRead(path, method), false);
+  }
+  for (const path of [
+    base + "/",
+    base + "?extra=true",
+    base + "/manual?x=y",
+    base + "/manual/" + op,
+    base + "/commands",
+    base + "/manual/" + op + "/cancel",
+    "/api/private/agent-hub" + base,
+    base.replace("vault_A", "%2Fvault_A"),
+  ])
+    assert.equal(routes.isManualPreflightRead(path, "GET"), false);
 });

@@ -24,6 +24,7 @@ function harness({
   pending = new Map(),
   transport,
   timers,
+  document = Object.assign(new EventTarget(), { visibilityState: "visible" }),
   initial = meta(),
   overview,
   selectedDetail,
@@ -128,7 +129,7 @@ function harness({
       TextDecoder,
       Uint8Array,
       Date,
-      document: { visibilityState: "visible" },
+      document,
       crypto: require("node:crypto").webcrypto,
     },
   );
@@ -717,6 +718,138 @@ test("run confirmation checks the current definition and history together and pr
     assert.equal(h.calls.filter((c) => c.options.method === "POST").length, 0);
   } finally {
     h.close();
+  }
+});
+
+test("manual confirmation bounds both reads and abandons them on navigation or expiry before signing", async () => {
+  for (const outcome of ["cancel", "deadline"]) {
+    const timers = new Map(),
+      signals = [];
+    let confirming = false;
+    const h = harness({
+      timers,
+      transport: (_path, options) => {
+        if (!confirming) return;
+        signals.push(options.signal);
+        return new Promise(() => {});
+      },
+    });
+    try {
+      const m = await h.ready();
+      assert.equal(m.runState, "ready");
+      confirming = true;
+      const confirmation = m.command("task_A", "manual_intent", ["agent"]);
+      const rejected = assert.rejects(
+        confirmation,
+        outcome === "cancel" ? /cancelled/ : /request_timeout/,
+      );
+      await settle();
+      assert.deepEqual(
+        [...timers.values()].map((entry) => entry.ms),
+        [24000, 24000],
+      );
+      assert.equal(signals.length, 2);
+      assert.ok(signals.every((signal) => !signal.aborted));
+      if (outcome === "cancel") h.close();
+      else for (const timer of timers.values()) timer.fn();
+      await rejected;
+      assert.ok(signals.every((signal) => signal.aborted));
+      assert.equal(h.pending.size, 0);
+      assert.equal(h.calls.filter((call) => call.options.method === "POST").length, 0);
+      assert.equal(timers.size, 0);
+    } finally {
+      h.close();
+    }
+  }
+});
+
+test("selected run polling waits for initial history, spaces slow reads, and stops when hidden, left or terminal", async () => {
+  for (const finish of ["terminal", "leave"]) {
+    const timers = new Map();
+    const doc = Object.assign(new EventTarget(), { visibilityState: "visible" });
+    const history = [];
+    const active = { items: [{ aggregate: { hasActiveExecutors: true } }] };
+    const h = harness({
+      timers,
+      document: doc,
+      transport(path, options) {
+        if (!path.endsWith("/tasks/task_A/manual")) return;
+        const waiting = Promise.withResolvers();
+        history.push({ ...waiting, signal: options.signal });
+        return waiting.promise;
+      },
+    });
+    const tickFive = () => {
+      for (const [id, timer] of [...timers])
+        if (timer.ms === 5000) {
+          timers.delete(id);
+          timer.fn();
+        }
+    };
+    try {
+      await h.ready();
+      assert.equal(history.length, 1);
+      tickFive();
+      tickFive();
+      assert.equal(history.length, 1, "first history is still being read");
+      history[0].resolve(Response.json(active));
+      await h.ready();
+      tickFive();
+      await settle();
+      assert.equal(history.length, 2);
+      tickFive();
+      tickFive();
+      tickFive();
+      assert.equal(history.length, 2, "no overlapping polls during a slow read");
+      doc.visibilityState = "hidden";
+      doc.dispatchEvent(new Event("visibilitychange"));
+      await h.ready();
+      assert.equal(history[1].signal.aborted, true);
+      tickFive();
+      tickFive();
+      assert.equal(history.length, 2);
+      doc.visibilityState = "visible";
+      doc.dispatchEvent(new Event("visibilitychange"));
+      tickFive();
+      await settle();
+      assert.equal(history.length, 3);
+      history[1].resolve(Response.json({ items: [] }));
+      await h.ready();
+      assert.equal(
+        h.render().manual.task_A.length,
+        1,
+        "hidden read must not overwrite current progress",
+      );
+      if (finish === "leave") {
+        h.select(meta("task_B"));
+        await h.ready();
+        assert.equal(history[2].signal.aborted, true);
+      }
+      history[2].resolve(Response.json({ items: [] }));
+      await h.ready();
+      tickFive();
+      tickFive();
+      assert.equal(history.length, 3, "terminal and unselected tasks stop polling");
+      if (finish === "terminal") assert.equal(h.render().manual.task_A.length, 0);
+      else {
+        h.select(meta("task_A", { taskVersion: 2 }));
+        await h.ready();
+        assert.equal(history.length, 4);
+        tickFive();
+        tickFive();
+        assert.equal(
+          history.length,
+          4,
+          "the previous visit's active run cannot start polling before fresh history arrives",
+        );
+        history[3].resolve(Response.json({ items: [] }));
+        await h.ready();
+        tickFive();
+        assert.equal(history.length, 4);
+      }
+    } finally {
+      h.close();
+    }
   }
 });
 

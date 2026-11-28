@@ -5,7 +5,7 @@ import { parseTaskDetail, taskDetailRequest } from "../task-detail-read";
 import { taskOverviewRequest } from "../task-overview-request";
 import { parseTaskOverview, overviewPacketIds } from "../task-overview";
 import { taskCenterRoute, taskCenterRequest, taskCenterResponse } from "./task-center-owner";
-import { persistentOwnerRoute } from "../persistent-owner-routes";
+import { isManualPreflightRead, persistentOwnerRoute } from "../persistent-owner-routes";
 import { connectionSummary, connectionDisplay } from "../connection-summary";
 import {
   persistentRequest,
@@ -599,12 +599,17 @@ export function createHubProxy(options: Options = {}) {
   return async function hubProxy(request: Request): Promise<Response> {
     const started = proxyClock();
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), options.deadlineMs ?? 12000);
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const signal = AbortSignal.any([request.signal, controller.signal]);
     try {
       const config = hubConfiguration(env);
       if (!config) fail("authorization_unavailable");
       const { path, rule } = route(request, edgeOrigin);
+      const budget =
+        options.deadlineMs ?? (isManualPreflightRead(path, request.method) ? 20_000 : 12_000);
+      const remaining = budget - (proxyClock() - started);
+      if (remaining <= 0) controller.abort();
+      else timer = setTimeout(() => controller.abort(), Math.ceil(remaining));
       const { headers, raw, token, taskIds, displayRequest } = await transport(
         request,
         rule,

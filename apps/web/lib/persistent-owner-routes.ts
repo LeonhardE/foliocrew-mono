@@ -67,6 +67,11 @@ export function persistentOwnerRoute(path: string, method: string): PersistentOw
   return null;
 }
 
+const manualPreflight = new RegExp(`^/api/v3/task-center/${ID}/tasks/${ID}(?:/manual)?$`);
+export function isManualPreflightRead(path: string, method: string) {
+  return method === "GET" && manualPreflight.test(path);
+}
+
 /** Shared by the browser admission boundary and the server proxy. No query strings. */
 export function taskCenterRoute(path: string, method: string) {
   if (
