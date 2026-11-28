@@ -1,5 +1,6 @@
 """A Hub lookup keeps the signed User epoch bound to its exact transferred writer."""
 
+import asyncio
 import hashlib
 import tempfile
 import time
@@ -7,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
+import anyio
 import httpx
 from fixtures import BOOT, UID, VaultFixture
 from google.auth.credentials import AnonymousCredentials
@@ -137,6 +139,72 @@ class UserVaultAuthorityTests(unittest.TestCase):
         self.store.transact(lambda unit: unit.put(path, {**self.fence, "state": "frozen"}))
         with self.assertRaisesRegex(ContractError, "source_unavailable"):
             self.store.transact(lambda unit: read.require_current(unit, 1001))
+
+    def test_slow_headers_can_use_remaining_budget_with_bounded_connection(self):
+        seen = []
+
+        async def slow_headers(request):
+            bounds = request.extensions["timeout"]
+            self.assertEqual((bounds["connect"], bounds["write"], bounds["pool"]), (4, 4, 4))
+            # Mimic a provider that publishes headers after a cold start.
+            await asyncio.wait_for(asyncio.sleep(4.1), bounds["read"])
+            seen.append(request)
+            return self.reply(request)
+
+        self.client.transport = httpx.MockTransport(slow_headers)
+
+        async def call_as_server_worker():
+            return await anyio.to_thread.run_sync(self.client.read, UID, self.f.vault, self.fence)
+
+        scope = asyncio.run(call_as_server_worker())
+        self.assertEqual(scope.cursor.head(), self.authority["registry"])
+        self.assertEqual(len(seen), 1)
+        self.assertTrue(4.1 < seen[0].extensions["timeout"]["read"] <= 8)
+
+    def test_caller_budget_includes_credential_setup(self):
+        now = [100.0]
+        self.client.clock = lambda: now[0]
+
+        def token(*args, **kwargs):
+            now[0] += 1.25
+            return "google.workload.identity"
+
+        self.client.token_factory = token
+        self.client.read(UID, self.f.vault, self.fence, deadline=103)
+        bounds = self.wire.call_args.args[0].extensions["timeout"]
+        self.assertEqual(set(bounds.values()), {1.75})
+
+    def test_total_deadline_cancels_trickling_response_and_sanitizes_failure_log(self):
+        class TricklingBody(httpx.AsyncByteStream):
+            received = 0
+            closed = False
+
+            async def __aiter__(self):
+                for _ in range(30):
+                    await asyncio.sleep(0.04)
+                    self.received += 1
+                    yield b" "
+
+            async def aclose(self):
+                self.closed = True
+
+        body = TricklingBody()
+
+        async def trickle(request):
+            response = self.reply(request)
+            return httpx.Response(200, headers=response.headers, stream=body)
+
+        self.client.transport = httpx.MockTransport(trickle)
+        with self.assertLogs("uvicorn.error.hub_user_authority", level="WARNING") as captured:
+            with self.assertRaisesRegex(ContractError, "source_unavailable"):
+                self.client.read(UID, self.f.vault, self.fence, deadline=time.monotonic() + 0.35)
+        self.assertTrue(0 < body.received < 30)
+        self.assertTrue(body.closed)
+        self.assertRegex(
+            captured.records[0].getMessage(),
+            r"^hub_user_authority result=timeout stage=body "
+            r"elapsed_ms=\d+ header_ms=\d+ body_ms=\d+$",
+        )
 
     def test_frozen_gate_wrong_root_and_stale_evidence_fail_closed(self):
         with self.assertRaisesRegex(ContractError, "source_unavailable"):

@@ -289,6 +289,13 @@ lookup and rechecks it after that lookup. Each of the four single-document reads
 request starts its transaction with the fence BatchGet, followed by the normal zero-write Commit.
 The two nonce-bound User authority responses and the source comparison still bracket discovery.
 
+Each User authority lookup has at most eight seconds from credential setup through verification.
+An earlier caller deadline takes precedence. Connecting, writing and waiting for a connection
+each have a four-second cap. Response headers and body share the time left in the lookup, and
+the Hub cancels an incomplete transfer when that time expires. The `hub_user_authority` log
+records the outcome, last stage and elapsed times for headers, body and the full lookup. A value
+of `-1` means the phase never started.
+
 This reduces repeated Hub reads and HTTP calls; it does not establish a two-second UI result or
 remove external producer latency. The original cooperative deadline and blocking-SDK cancellation
 limits above still apply. No detached worker, producer prewarm, write, increased byte budget or
