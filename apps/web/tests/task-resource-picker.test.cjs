@@ -85,6 +85,7 @@ function picker({
   mode = "unavailable",
   credential = "active",
   schedule = null,
+  openPicker = true,
   setup,
 } = {}) {
   const h = hooks(),
@@ -187,10 +188,10 @@ function picker({
     );
   const button = (tree, label) =>
     all(tree, (n) => n.type === "button" && n.props.children === label)[0];
-  let tree = draw();
-  button(tree, messages.taskCenter.settings).props.onClick();
-  tree = draw();
-  button(tree, messages.taskCenter.next).props.onClick();
+  if (openPicker) {
+    button(draw(), messages.taskCenter.settings).props.onClick();
+    button(draw(), messages.taskCenter.next).props.onClick();
+  }
   const rows = (tree) => {
     const field = all(
       tree,
@@ -561,3 +562,87 @@ for (const [scenario, expected] of [
     }
   });
 }
+
+test("a failed manual click never opens a past run, and confirmed progress stays tied to its receipt", async () => {
+  const row = (id, stage) => ({
+    snapshot: { requestId: id, executors: [{ assignmentId: "assignment_A", stage }] },
+    aggregate: { state: stage, hasActiveExecutors: stage === "waiting" },
+  });
+  const old = row("previous", "failed"),
+    current = row("original", "waiting");
+  const p = picker({
+    openPicker: false,
+    setup({ center, model }) {
+      Object.assign(center.selectedRecord, model.selected);
+      center.runState = "ready";
+      center.currentAssignments = [
+        { assignment: { assignmentId: "assignment_A", provider: "muse" } },
+      ];
+      center.selectedRecord.assignments = center.currentAssignments;
+      center.manual.task_A = [old];
+    },
+  });
+  const dialog = (tree, id) => all(tree, (n) => n.props.id === id)[0];
+  const click = async () => {
+    p.button(p.draw(), p.messages.requestRun).props.onClick();
+    const choose = dialog(p.draw(), "task-run-choice");
+    assert.equal(choose.props.open, true);
+    p.button(choose, p.messages.requestRun).props.onClick();
+    await new Promise((resolve) => setImmediate(resolve));
+  };
+  try {
+    p.center.command = async () => {
+      p.center.error = "manual_not_sent";
+      throw Error("service_unavailable");
+    };
+    await click();
+    let view = p.draw();
+    assert.equal(dialog(view, "task-run-progress").props.open, false);
+    assert.ok(all(view, (n) => n.props.message === p.messages.errors.manual_not_sent).length);
+
+    let finishSubmission;
+    p.center.command = async () => {
+      p.center.busy = true;
+      p.center.pending = { action: "manual_intent", taskId: "task_A", operationId: "original" };
+      await new Promise((resolve) => {
+        finishSubmission = resolve;
+      });
+      p.center.busy = false;
+      p.center.error = "service_unavailable";
+      p.center.pending = { action: "manual_intent", taskId: "task_A", operationId: "original" };
+      throw Error("service_unavailable");
+    };
+    await click();
+    view = p.draw();
+    assert.equal(dialog(view, "task-run-progress").props.open, false);
+    assert.ok(text(view).includes(p.messages.manualProcessing));
+    assert.ok(!text(view).includes(p.messages.manualReceiptPending));
+    assert.equal(p.button(view, p.messages.checkSave), undefined);
+    assert.equal(p.button(view, p.messages.retryOriginal), undefined);
+    assert.equal(p.button(view, p.messages.abandonSave), undefined);
+    finishSubmission();
+    await new Promise((resolve) => setImmediate(resolve));
+    view = p.draw();
+    assert.ok(text(view).includes(p.messages.manualReceiptPending));
+    assert.ok(p.button(view, p.messages.checkSave));
+
+    p.center.pending = null;
+    p.center.error = "";
+    p.center.command = async () => {
+      p.center.manual.task_A = [old, current];
+      return { taskId: "task_A", requestId: "original" };
+    };
+    await click();
+    let progress = dialog(p.draw(), "task-run-progress");
+    assert.equal(progress.props.open, true);
+    assert.ok(progress.props.identity.endsWith(":original"));
+    p.center.manual.task_A = [row("original", "result_received"), row("other", "waiting")];
+    progress = dialog(p.draw(), "task-run-progress");
+    assert.ok(text(progress).includes(p.messages.stages.result_received));
+    assert.ok(!text(progress).includes(p.messages.stages.waiting));
+    p.center.manual.task_A = [old];
+    assert.equal(dialog(p.draw(), "task-run-progress").props.open, false);
+  } finally {
+    p.close();
+  }
+});

@@ -96,7 +96,9 @@ export function TaskCenterView({
       localTime: "",
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     }),
-    [progress, setProgress] = useState(false),
+    [progress, setProgress] = useState<{ scope: string; task: string; requestId: string } | null>(
+      null,
+    ),
     [deleting, setDeleting] = useState(false),
     [purgeReview, setPurgeReview] = useState<{ scope: string; row: J } | null>(null),
     [purgeNotice, setPurgeNotice] = useState<{
@@ -124,12 +126,26 @@ export function TaskCenterView({
   const hasReportedPlan = currentAssignments.some(({ plan }) => plan?.status === "enabled");
   const requests = task ? (center.manual[task] ?? []) : [],
     currentRequest = requests.find((r) => r.aggregate?.hasActiveExecutors) ?? requests.at(-1),
-    running = Boolean(currentRequest?.aggregate?.hasActiveExecutors);
+    running = Boolean(currentRequest?.aggregate?.hasActiveExecutors),
+    progressRequest =
+      progress && progress.scope === center.scope && progress.task === task
+        ? requests.find((r) => r.snapshot?.requestId === progress.requestId)
+        : null;
+  const showProgress = (requestId?: string) => {
+    if (
+      requestId &&
+      task &&
+      center.scope &&
+      live.current.task === task &&
+      live.current.scope === center.scope
+    )
+      setProgress({ scope: center.scope, task, requestId });
+  };
   useEffect(() => {
     if (resultsFocusKey) {
       setTab("results");
       setMode("browse");
-      setProgress(false);
+      setProgress(null);
     }
   }, [resultsFocusKey]);
   const busy = model.busy || center.busy || localBusy,
@@ -151,6 +167,11 @@ export function TaskCenterView({
     runAgents.length > 0 &&
     runAgents.every((id) => currentAssignments.some((row) => row.assignment.assignmentId === id));
   useEffect(() => {
+    setChoosingRun(false);
+    setProgress(null);
+    setCopied("");
+  }, [center.scope, task]);
+  useEffect(() => {
     onEditingChange?.(mode === "edit");
     return () => onEditingChange?.(false);
   }, [mode, onEditingChange]);
@@ -170,8 +191,6 @@ export function TaskCenterView({
     if (!center.scope) {
       removals.current.clear();
       setMode("browse");
-      setProgress(false);
-      setChoosingRun(false);
       setDeleting(false);
       setProviders([]);
       setLocalError("");
@@ -436,10 +455,10 @@ export function TaskCenterView({
     if (!task || busy || !canStartRun || !chosenAgentsCurrent) return;
     setChoosingRun(false);
     try {
-      await center.command(task, "manual_intent", runAgents);
-      setProgress(true);
+      const confirmed = await center.command(task, "manual_intent", runAgents);
+      if (confirmed?.taskId === task) showProgress(confirmed.requestId);
     } catch {
-      setProgress(true);
+      // The command exposes preflight errors and recoverable submissions in the task overview.
     }
   };
   const remove = async () => {
@@ -450,7 +469,7 @@ export function TaskCenterView({
       if (!state.rules) await center.command(selected.taskId, "set_rules", null, state);
       await center.command(selected.taskId, "trash");
       setDeleting(false);
-      setProgress(false);
+      setProgress(null);
       await model.discardDraft();
       await model.reloadTasks();
       setMode("browse");
@@ -504,10 +523,10 @@ export function TaskCenterView({
     }
   };
   const copyRequest = async (provider: string) => {
-    if (!task || !currentRequest) return;
+    if (!task || !progressRequest) return;
     try {
       await navigator.clipboard.writeText(
-        `Foliocrew: use your saved private connection to execute the existing manual request ${currentRequest.snapshot.requestId} for task ${task} (${form?.name ?? ""}). Pick up the original request with pendingManual/beginManual; do not create another request, change scope, renew credentials or share secrets. Return the authorized report through Foliocrew.`,
+        `Foliocrew: use your saved private connection to execute the existing manual request ${progressRequest.snapshot.requestId} for task ${task} (${form?.name ?? ""}). Pick up the original request with pendingManual/beginManual; do not create another request, change scope, renew credentials or share secrets. Return the authorized report through Foliocrew.`,
       );
       setCopied(provider);
     } catch {
@@ -624,6 +643,7 @@ export function TaskCenterView({
           onRetry={() => {
             setLocalError("");
             if (failure === "task_activation_unconfirmed") void configure();
+            else if (failure === "manual_not_sent" && canStartRun) setChoosingRun(true);
             else if (task) void center.load(task, true);
             else void model.reload();
           }}
@@ -640,22 +660,35 @@ export function TaskCenterView({
       {request && !model.form && model.catalogueLoading && (
         <LoadingIndicator busy hasContent={false} label={t("loading")} />
       )}
-      {center.pending && (
+      {center.pending?.action === "manual_intent" && center.busy ? (
         <div className={styles.notice} role="status">
-          <span>{t("unknownSave")}</span>
-          <button onClick={() => void center.recover(center.pending!.taskId)} disabled={busy}>
-            {t("checkSave")}
-          </button>
-          <button onClick={() => void center.recover(center.pending!.taskId, true)} disabled={busy}>
-            {t("retryOriginal")}
-          </button>
-          <button
-            onClick={() => void center.recover(center.pending!.taskId, false, true)}
-            disabled={busy}
-          >
-            {t("abandonSave")}
-          </button>
+          {t("manualProcessing")}
         </div>
+      ) : (
+        center.pending && (
+          <div className={styles.notice} role="status">
+            <span>
+              {t(
+                center.pending.action === "manual_intent" ? "manualReceiptPending" : "unknownSave",
+              )}
+            </span>
+            <button onClick={() => void center.recover(center.pending!.taskId)} disabled={busy}>
+              {t("checkSave")}
+            </button>
+            <button
+              onClick={() => void center.recover(center.pending!.taskId, true)}
+              disabled={busy}
+            >
+              {t("retryOriginal")}
+            </button>
+            <button
+              onClick={() => void center.recover(center.pending!.taskId, false, true)}
+              disabled={busy}
+            >
+              {t("abandonSave")}
+            </button>
+          </div>
+        )
       )}
       {model.pendingOperations.length > 0 && (
         <div className={styles.notice}>
@@ -1294,7 +1327,10 @@ export function TaskCenterView({
                             ? t(`stages.${currentRequest.aggregate.state}`)
                             : t("stages.awaiting_confirmation"),
                         })}{" "}
-                        <button className={styles.textButton} onClick={() => setProgress(true)}>
+                        <button
+                          className={styles.textButton}
+                          onClick={() => showProgress(currentRequest.snapshot?.requestId)}
+                        >
                           {t("viewProgress")}
                         </button>
                       </p>
@@ -1321,7 +1357,7 @@ export function TaskCenterView({
                           (!running && !canStartRun)
                         }
                         onClick={() => {
-                          if (running) setProgress(true);
+                          if (running) showProgress(currentRequest?.snapshot?.requestId);
                           else {
                             setRunAgents(currentAssignments.map((a) => a.assignment.assignmentId));
                             setChoosingRun(true);
@@ -1388,14 +1424,14 @@ export function TaskCenterView({
       </ReportDialog>
       <ReportDialog
         id="task-run-progress"
-        identity={`${center.scope}:${task ?? ""}:${currentRequest?.snapshot?.requestId ?? "pending"}`}
-        open={progress && Boolean(center.scope) && Boolean(task)}
+        identity={`${center.scope}:${task ?? ""}:${progress?.requestId ?? ""}`}
+        open={Boolean(progressRequest)}
         title={t("progress")}
         closeLabel={t("close")}
-        onClose={() => setProgress(false)}
+        onClose={() => setProgress(null)}
       >
         <div className={styles.progress}>
-          {currentRequest?.snapshot?.executors.map((e: J) => {
+          {progressRequest?.snapshot?.executors.map((e: J) => {
             const provider =
               assignments.find((a) => a.assignment.assignmentId === e.assignmentId)?.assignment
                 .provider ?? "agent";
@@ -1418,26 +1454,8 @@ export function TaskCenterView({
               </div>
             );
           })}
-          {!currentRequest &&
-            (center.runState === "error" ? (
-              <InlineError
-                message={t("runStatusFailed")}
-                retryLabel={t("retry")}
-                onRetry={center.retryRunState}
-              />
-            ) : (
-              <p>
-                {t(
-                  center.pending
-                    ? "unknownSave"
-                    : center.runState === "ready"
-                      ? "noRun"
-                      : "loading",
-                )}
-              </p>
-            ))}
-          {currentRequest?.canCancel && task && (
-            <button onClick={() => void center.cancel(task, currentRequest.snapshot.requestId)}>
+          {progressRequest?.canCancel && task && (
+            <button onClick={() => void center.cancel(task, progressRequest.snapshot.requestId)}>
               {t("cancelRun")}
             </button>
           )}
