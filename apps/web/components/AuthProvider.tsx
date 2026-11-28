@@ -2,7 +2,7 @@
 import { holdingsViewRequest } from "@/lib/holdings-view";
 import { USER_RECOVERY_PROXY, userRecoveryRoute } from "@/lib/user-recovery-route";
 import { invitationRoute } from "@/lib/workspace-invitations";
-import { taskDetailRequest } from "@/lib/task-detail-read";
+import { taskControlsRequest, taskDetailRequest } from "@/lib/task-detail-read";
 import { taskOverviewRequest } from "@/lib/task-overview-request";
 import {
   ACCOUNT_PREFERENCES_PATH,
@@ -493,7 +493,8 @@ function encryptedRequestHeaders(
   if (rule.taskOverview) {
     if (!taskOverviewRequest(options.json)) throw new Error("Invalid private API request");
   } else if (rule.taskDetail) {
-    if (!taskDetailRequest(options.json)) throw new Error("Invalid private API request");
+    if (!taskDetailRequest(options.json) && !taskControlsRequest(options.json))
+      throw new Error("Invalid private API request");
   } else if (rule.keys) {
     const value = options.json;
     if (

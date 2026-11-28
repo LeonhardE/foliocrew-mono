@@ -37,6 +37,122 @@ export function taskDetailRequest(value: unknown): value is Request {
     typeof value.includeAttribution === "boolean"
   );
 }
+export const TASK_CONTROLS_REQUEST = Object.freeze({
+  contractVersion: TASK_CONTRACT,
+  includePacket: false,
+  includeAttribution: false,
+  includeManual: true,
+});
+export function taskControlsRequest(value: unknown) {
+  return (
+    exact(value, Object.keys(TASK_CONTROLS_REQUEST)) &&
+    Object.entries(TASK_CONTROLS_REQUEST).every(([key, expected]) => value[key] === expected)
+  );
+}
+
+const stages = [
+  "waiting",
+  "running",
+  "awaiting_confirmation",
+  "result_received",
+  "failed",
+  "cancelled",
+];
+const activeStages = ["waiting", "running", "awaiting_confirmation"];
+function manualSummary(value: unknown, vault: string, task: string, owner?: string) {
+  if (
+    !exact(value, [
+      "snapshot",
+      "aggregate",
+      "reasons",
+      "expiresAt",
+      "canCancel",
+      "dispatchSupported",
+      "continuation",
+      "nativeScheduleAttested",
+    ]) ||
+    value.dispatchSupported !== false ||
+    value.nativeScheduleAttested !== false ||
+    value.continuation !== "open_agent" ||
+    typeof value.canCancel !== "boolean" ||
+    !Number.isSafeInteger(value.expiresAt) ||
+    !object(value.reasons)
+  )
+    return false;
+  const { snapshot, aggregate } = value;
+  if (
+    !exact(snapshot, [
+      "contractVersion",
+      "profile",
+      "ownerSubject",
+      "vaultId",
+      "taskId",
+      "requestId",
+      "requestedAt",
+      "executors",
+    ]) ||
+    snapshot.contractVersion !== TASK_CONTRACT ||
+    snapshot.profile !== "folioview.task-center.v1" ||
+    snapshot.taskId !== task ||
+    snapshot.vaultId !== vault ||
+    !identifier(snapshot.ownerSubject) ||
+    (owner !== undefined && snapshot.ownerSubject !== owner) ||
+    typeof snapshot.requestId !== "string" ||
+    !/^[A-Za-z0-9_-]{22,128}$/.test(snapshot.requestId) ||
+    !Number.isSafeInteger(snapshot.requestedAt) ||
+    snapshot.requestedAt < 0 ||
+    !Array.isArray(snapshot.executors) ||
+    snapshot.executors.length > 32 ||
+    !exact(aggregate, ["state", "hasActiveExecutors", "counts"]) ||
+    !exact(aggregate.counts, stages) ||
+    ![...stages, "idle", "partial_failure"].includes(aggregate.state)
+  )
+    return false;
+  const counts: Record<string, number> = {};
+  const ids = new Set<string>();
+  for (const row of snapshot.executors) {
+    if (
+      !exact(row, ["assignmentId", "assignmentVersion", "runId", "resultId", "stage"]) ||
+      !identifier(row.assignmentId) ||
+      ids.has(row.assignmentId) ||
+      !Number.isSafeInteger(row.assignmentVersion) ||
+      row.assignmentVersion < 1 ||
+      !stages.includes(row.stage) ||
+      (row.runId !== null && !identifier(row.runId)) ||
+      (row.resultId !== null && !identifier(row.resultId))
+    )
+      return false;
+    ids.add(row.assignmentId);
+    counts[row.stage] = (counts[row.stage] ?? 0) + 1;
+  }
+  return (
+    stages.every((stage) => aggregate.counts[stage] === (counts[stage] ?? 0)) &&
+    aggregate.hasActiveExecutors === activeStages.some((stage) => counts[stage] > 0) &&
+    Object.entries(value.reasons).every(
+      ([key, reason]) => ids.has(key) && typeof reason === "string",
+    )
+  );
+}
+export function parseTaskControls(value: unknown, vault: string, task: string, owner?: string) {
+  if (
+    !exact(value, ["contractVersion", "profile", "state", "manual"]) ||
+    value.contractVersion !== TASK_CONTRACT ||
+    value.profile !== "folioview.owner-task-detail.v1" ||
+    !object(value.state) ||
+    value.state.taskId !== task ||
+    value.state.contractVersion !== TASK_CONTRACT ||
+    value.state.profile !== "folioview.task-center.v1" ||
+    !exact(value.manual, ["contractVersion", "items"]) ||
+    value.manual.contractVersion !== TASK_CONTRACT ||
+    !Array.isArray(value.manual.items) ||
+    value.manual.items.length > 16 ||
+    !value.manual.items.every((row: unknown) => manualSummary(row, vault, task, owner)) ||
+    new Set(value.manual.items.map((row: JsonObject) => row.snapshot.requestId)).size !==
+      value.manual.items.length
+  )
+    throw Error("invalid_response");
+  return { state: value.state, manual: value.manual };
+}
 function section<T>(value: unknown, parse: (data: unknown) => T): Section<T> {
   if (value === null) return null;
   if (exact(value, ["status"]) && value.status === "unavailable") return { status: "unavailable" };

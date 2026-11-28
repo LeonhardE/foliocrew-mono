@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import { readResourceDisplay, RESOURCE_DISPLAY_PATH } from "../resource-display";
 import "server-only";
-import { parseTaskDetail, taskDetailRequest } from "../task-detail-read";
+import {
+  parseTaskDetail,
+  parseTaskControls,
+  taskControlsRequest,
+  taskDetailRequest,
+} from "../task-detail-read";
 import { taskOverviewRequest, TASK_OVERVIEW_PROXY_MS } from "../task-overview-request";
 import { parseTaskOverview, overviewPacketIds } from "../task-overview";
 import { taskCenterRoute, taskCenterRequest, taskCenterResponse } from "./task-center-owner";
@@ -87,9 +92,21 @@ function displayResponse(path: string, body: unknown) {
   );
 }
 function detailResponse(path: string, body: unknown, request: unknown, uid: string) {
-  if (!taskDetailRequest(request)) return false;
   const [, , , , vault, , task] = path.split("/");
   try {
+    if (taskControlsRequest(request)) {
+      const view = parseTaskControls(
+        body,
+        vault,
+        task,
+        createHash("sha256").update(uid).digest("hex"),
+      );
+      const base = `/api/v3/task-center/${vault}/tasks/${task}`;
+      return (
+        taskCenterResponse(base, view.state) && taskCenterResponse(base + "/manual", view.manual)
+      );
+    }
+    if (!taskDetailRequest(request)) return false;
     const v = parseTaskDetail(body, vault, task, request);
     return (
       taskCenterResponse(`/api/v3/task-center/${vault}/tasks/${task}`, v.state) &&
@@ -403,7 +420,7 @@ function validBody(body: unknown, kind: Rule["kind"], vaultId?: string) {
   if (!record(body) || body.contractVersion !== CONTRACT) return false;
   switch (kind) {
     case "task-detail":
-      return taskDetailRequest(body);
+      return taskDetailRequest(body) || taskControlsRequest(body);
     case "task-overview":
       return taskOverviewRequest(body);
     case "task-packets":
@@ -613,14 +630,24 @@ export function createHubProxy(options: Options = {}) {
           : isManualPreflightRead(path, request.method)
             ? 20_000
             : 12_000);
-      const remaining = budget - (proxyClock() - started);
-      if (remaining <= 0) controller.abort();
-      else timer = setTimeout(() => controller.abort(), Math.ceil(remaining));
+      const setBudget = (ms: number) => {
+        clearTimeout(timer);
+        const remaining = ms - (proxyClock() - started);
+        if (remaining <= 0) controller.abort();
+        else timer = setTimeout(() => controller.abort(), Math.ceil(remaining));
+      };
+      setBudget(budget);
       const { headers, raw, token, taskIds, displayRequest } = await transport(
         request,
         rule,
         signal,
       );
+      if (
+        options.deadlineMs === undefined &&
+        rule.kind === "task-detail" &&
+        taskControlsRequest(displayRequest)
+      )
+        setBudget(20_000);
       const uid = await verifyOwner(token, config!.project, signal);
       const response = await until(
         send(config!.origin + path, {

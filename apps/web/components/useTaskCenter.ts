@@ -1,7 +1,11 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SelectedTaskDetail } from "./useTasks";
-import type { TaskDetailRead } from "@/lib/task-detail-read";
+import {
+  parseTaskControls,
+  TASK_CONTROLS_REQUEST,
+  type TaskDetailRead,
+} from "@/lib/task-detail-read";
 import type { TaskOverviewRead } from "@/lib/task-overview";
 import { useAuth } from "./AuthProvider";
 import type { HoldingsWorkspace } from "./useHoldingsWorkspace";
@@ -133,6 +137,8 @@ export function useTaskCenter(
     generation: symbol;
     promise: Promise<J>;
   } | null>(null);
+  const unsupportedControls = useRef<string | null>(null);
+  const failedControls = useRef<symbol | null>(null);
   const recordHeads = useRef(new Map<string, { key: string; at: number }>());
   const runReceipts = useRef(new WeakMap<J, number>());
   const [runRead, setRunRead] = useState<{
@@ -151,7 +157,16 @@ export function useTaskCenter(
   } | null>(null);
   const [attempt, setAttempt] = useState(0);
   const reads = useRef(
-      new Map<string, { key: string; source?: SelectedTaskDetail; promise: Promise<J> }>(),
+      new Map<
+        string,
+        {
+          key: string;
+          source?: SelectedTaskDetail;
+          visit?: typeof visit;
+          force: boolean;
+          promise: Promise<J>;
+        }
+      >(),
     ),
     generations = useRef(new Map<string, symbol>()),
     writes = useRef(false),
@@ -168,7 +183,11 @@ export function useTaskCenter(
       } = {},
     ): Promise<J> => {
       const start = live.current;
-      if (options.method) overview?.invalidate();
+      const controlsRead =
+        options.json === TASK_CONTROLS_REQUEST &&
+        options.method === "POST" &&
+        path.endsWith("/detail/query");
+      if (options.method && !controlsRead) overview?.invalidate();
       if (!start.owner) throw Error("session_expired");
       const control = new AbortController();
       controllers.current.add(control);
@@ -183,7 +202,7 @@ export function useTaskCenter(
           timedOut = true;
           control.abort();
         },
-        isManualPreflightRead(path, method) ? 24_000 : 14_000,
+        controlsRead || isManualPreflightRead(path, method) ? 24_000 : 14_000,
       );
       try {
         const response = await untilSignal(
@@ -203,6 +222,22 @@ export function useTaskCenter(
         if (live.current.owner !== start.owner || live.current.scope !== start.scope)
           throw Error("cancelled");
         if (!response.ok) {
+          if (controlsRead && [400, 413].includes(response.status)) {
+            const body = await boundedJson(response, 4096, control.signal, cancelled);
+            if (
+              body?.contractVersion === CONTRACT &&
+              response.status === 400 &&
+              body.error?.code === "malformed_request"
+            )
+              throw Error("controls_unsupported");
+            if (
+              body?.contractVersion === CONTRACT &&
+              response.status === 413 &&
+              body.error?.code === "payload_too_large"
+            )
+              throw Error("controls_too_large");
+            throw Error("request_failed");
+          }
           void response.body?.cancel().catch(() => {});
           throw Error(
             response.status === 404
@@ -262,29 +297,72 @@ export function useTaskCenter(
         JSON.stringify(taskHead(start.selectedDetail.metadata)) === JSON.stringify(taskHead(meta))
           ? start.selectedDetail
           : undefined;
+      const openingVisit = runVisit.current;
+      const combined =
+        !source && !force && start.bodyReady && unsupportedControls.current !== start.scope;
       const inFlight = reads.current.get(task);
-      if (inFlight?.key === key && inFlight.source === source) return inFlight.promise;
+      if (
+        inFlight?.key === key &&
+        inFlight.source === source &&
+        (!force || inFlight.force) &&
+        (!combined || inFlight.visit === openingVisit)
+      )
+        return inFlight.promise;
       const generation = Symbol();
       generations.current.set(task, generation);
       const sameGeneration = () =>
         live.current.scope === start.scope &&
         live.current.active &&
         generations.current.get(task) === generation;
+      const original = () => {
+        const stateRead = source?.read() ?? api(base(task)).then((state) => ({ state }));
+        if (source || (start.bodyReady && !force)) {
+          const history = api(base(task) + "/manual", { signal: source?.signal });
+          void history.catch(() => {});
+          queuedHistory.current = { visit: openingVisit, generation, promise: history };
+        }
+        return stateRead;
+      };
+      const read = async (): Promise<TaskDetailRead | { state: J }> => {
+        if (!combined) return original();
+        try {
+          const wire = await api(base(task) + "/detail/query", {
+            method: "POST",
+            json: TASK_CONTROLS_REQUEST,
+          });
+          const view = parseTaskControls(
+            wire,
+            meta.vaultId,
+            task,
+            start.workspace.vault?.archive?.ownerSubject,
+          );
+          if (sameGeneration() && runVisit.current === openingVisit)
+            queuedHistory.current = {
+              visit: openingVisit,
+              generation,
+              promise: Promise.resolve(view.manual),
+            };
+          return view;
+        } catch (cause) {
+          if (!sameGeneration() || runVisit.current !== openingVisit) throw Error("cancelled");
+          const code = error(cause);
+          if (code !== "controls_unsupported" && code !== "controls_too_large") throw cause;
+          if (code === "controls_unsupported") unsupportedControls.current = start.scope;
+          return original();
+        }
+      };
       const promise = (async () => {
         update({ detailLoading: key, detailFailure: null }, start.scope);
         try {
-          const stateRead = source?.read() ?? api(base(task)).then((state) => ({ state }));
-          if (source || (start.bodyReady && !force)) {
-            // The body has a request slot or has already been verified. History can
-            // run alongside controls, and is consumed only by this selection.
-            const history = api(base(task) + "/manual", { signal: source?.signal });
-            void history.catch(() => {});
-            queuedHistory.current = { visit: runVisit.current, generation, promise: history };
-          }
-          const response = await stateRead;
+          const response = await read();
           const data = response.state;
           const checked = await start.workspace.verifyTaskCenterState(data);
-          if (!sameGeneration() || (source && !source.current())) return {};
+          if (
+            !sameGeneration() ||
+            (source && !source.current()) ||
+            (combined && runVisit.current !== openingVisit)
+          )
+            return {};
           if (
             checked.taskId !== task ||
             checked.taskVersion !== meta.taskVersion ||
@@ -306,14 +384,22 @@ export function useTaskCenter(
           }));
           return data;
         } catch (e) {
-          if (sameGeneration() && live.current.selectedKey === key && error(e) !== "cancelled")
+          if (sameGeneration() && live.current.selectedKey === key && error(e) !== "cancelled") {
+            if (combined) failedControls.current = generation;
             update({ detailFailure: key, detailLoading: null }, start.scope);
+          }
           return {};
         } finally {
           if (generations.current.get(task) === generation) reads.current.delete(task);
         }
       })();
-      reads.current.set(task, { key, source, promise });
+      reads.current.set(task, {
+        key,
+        source,
+        visit: combined ? openingVisit : undefined,
+        force,
+        promise,
+      });
       return promise;
     },
     [api, base, update],
@@ -712,6 +798,8 @@ export function useTaskCenter(
     legacyCache.current = new WeakMap();
     combinedEvidence.current = new WeakMap();
     queuedHistory.current = null;
+    failedControls.current = null;
+    unsupportedControls.current = null;
     recordHeads.current.clear();
     setLegacy(null);
     setState({
@@ -858,6 +946,10 @@ export function useTaskCenter(
     if (!active || !scope || !task || (!record && !recordFailed)) return;
     const control = new AbortController();
     const generation = generations.current.get(task);
+    if (recordFailed && generation && failedControls.current === generation) {
+      setRunRead({ visit, record, status: "error" });
+      return;
+    }
     const valid = () =>
       !control.signal.aborted &&
       runVisit.current === visit &&
@@ -993,6 +1085,11 @@ export function useTaskCenter(
     retryExecutors,
     runState,
     retryRunState: () => {
+      if (task && recordFailed && failedControls.current === generations.current.get(task)) {
+        recordHeads.current.delete(task);
+        void load(task);
+        return;
+      }
       queuedHistory.current = null;
       if (record) runReceipts.current.delete(record);
       setRunAttempt((n) => n + 1);

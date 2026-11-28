@@ -145,3 +145,59 @@ test("only an explicit vault request can carry the original vault response and m
   next.vaultResponse = { status: "unavailable" };
   assert.equal((await post(full)).status, 200);
 });
+
+test("the selected task control carrier validates its request, authenticated subject, task state and manual summaries", async (t) => {
+  const { createHash } = require("node:crypto");
+  const { controls } = require("./task-overview-fixtures.cjs");
+  const { TASK_CONTROLS_REQUEST } = require("./task-overview-helpers.cjs").detail;
+  const uid = "synthetic_control_owner";
+  const subject = createHash("sha256").update(uid).digest("hex");
+  const b = await stack();
+  t.after(() => b.close());
+  const owner = b.mount();
+  await owner.login(uid);
+  const post = (json) =>
+    owner.value.requestPrivate("agent-hub", path, owner.value.sessionKey, { method: "POST", json });
+  let next = controls("task_1", subject, true);
+  b.setUpstream(() => response(next));
+  assert.equal((await post(TASK_CONTROLS_REQUEST)).status, 200);
+  for (const change of [
+    { includePacket: true },
+    { includeAttribution: true },
+    { includeVault: true },
+    { includeManual: false },
+    { extra: 1 },
+  ])
+    await assert.rejects(post({ ...TASK_CONTROLS_REQUEST, ...change }));
+  assert.equal(b.producerCalls().length, 1);
+  for (const corrupt of [
+    (v) => {
+      v.manual.items[0].snapshot.ownerSubject = "other_owner";
+    },
+    (v) => {
+      v.manual.items[0].snapshot.taskId = "other_task";
+    },
+    (v) => {
+      v.manual.items[0].snapshot.vaultId = "other_vault";
+    },
+    (v) => {
+      v.manual.items[0].aggregate.hasActiveExecutors = true;
+    },
+    (v) => {
+      v.manual.items = [{}];
+    },
+    (v) => {
+      v.manual.items.push(v.manual.items[0]);
+    },
+    (v) => {
+      v.state.taskId = "other_task";
+    },
+    (v) => {
+      v.legacy = null;
+    },
+  ]) {
+    next = controls("task_1", subject, true);
+    corrupt(next);
+    assert.equal((await post(TASK_CONTROLS_REQUEST)).status, 503);
+  }
+});

@@ -745,8 +745,11 @@ ordinary overview once and omits that preference for subsequent reads in the sam
 An automatic link can consume the one-use, five-second
 User vault display receipt from unlock. A selection that needs a fresh User vault check starts it
 alongside the Hub detail read and verifies both before opening the body. Once a linked task body
-is verified, its original state and run-history endpoints can run concurrently. History only
-enables actions after the state, task version and local outbox checks for the same visit finish.
+is verified, Web requests its control state and manual-run history together from Hub. The Web
+proxy verifies the owner, vault and task in returned history rows. Web checks the state in the
+Worker and reads the encrypted local outbox before enabling actions for that visit. An older
+Hub or an oversized combined response can use the original state and history endpoints.
+Starting a run still checks the original authority and active requests for that task.
 
 The single overview cache is local to the task-page hooks and keyed by Owner login, vault,
 unlock generation and vault version. Its short receipt lifetime uses the original receipt time.
