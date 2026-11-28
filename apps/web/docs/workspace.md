@@ -735,6 +735,14 @@ also include the original grant and its provider attribution. Existing packet, t
 and version checks apply to the corresponding sections. An explicitly unavailable section can use
 its original endpoint. Opening a historical version and submitting a command retain their own reads.
 
+A direct link can open a task before the first list page arrives, including a task outside that page.
+If a fresh matching overview packet is already available, the link uses it. Otherwise the browser
+starts the original task read immediately. An automatic link can consume the one-use, five-second
+User vault display receipt from unlock. A selection that needs a fresh User vault check starts it
+alongside the Hub detail read and verifies both before opening the body. Once a linked task body
+is verified, its original state and run-history endpoints can run concurrently. History only
+enables actions after the state, task version and local outbox checks for the same visit finish.
+
 The single overview cache is local to the task-page hooks and keyed by Owner login, vault,
 unlock generation and vault version. Its short receipt lifetime uses the original receipt time.
 The rendered list and selected page retain their own 30-minute display window on tab return. Scope changes and hidden pending work fence late results;
