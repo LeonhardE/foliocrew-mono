@@ -150,6 +150,11 @@ class TaskCenterRouteTests(unittest.TestCase):
                 self.client.post(path, headers=self.headers, json=extended).status_code, 200
             )
             self.assertEqual(read.call_args.args[-1], extended)
+            compact = {**value, "includePacket": False, "includeManual": True}
+            self.assertEqual(
+                self.client.post(path, headers=self.headers, json=compact).status_code, 200
+            )
+            self.assertEqual(read.call_args.args[-1], compact)
             for headers, target, payload in [
                 (self.write, path, value),
                 ({**self.headers, "x-folioview-author-key": "device_key"}, path, value),
@@ -165,7 +170,17 @@ class TaskCenterRouteTests(unittest.TestCase):
                 self.assertGreaterEqual(
                     self.client.post(target, headers=headers, json=payload).status_code, 400
                 )
-            self.assertEqual(read.call_count, 2)
+            self.assertEqual(read.call_count, 3)
+        for incompatible in (
+            {"includeManual": False},
+            {"includeManual": 1},
+            {"includeManual": None},
+            {"includePacket": True},
+            {"includeAttribution": True},
+            {"includeVault": True},
+        ):
+            result = self.client.post(path, headers=self.headers, json={**compact, **incompatible})
+            self.assertEqual(result.status_code, 400)
         for flag in ("includePacket", "includeAttribution"):
             result = self.client.post(path, headers=self.headers, json={**value, flag: 1})
             self.assertEqual(result.status_code, 400)

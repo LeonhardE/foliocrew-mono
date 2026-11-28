@@ -7,6 +7,7 @@ from folioview_shared.encrypted.schema import validate_schema
 from folioview_shared.identity import owner_key
 
 from .fences import fence_path
+from .manual_intents import manual_history
 from .native_transport import PROFILE as ACCOUNT_PROFILE
 from .native_transport import NativeConnectionOwnerService
 from .persistent_publications import stored_task_state
@@ -92,10 +93,28 @@ def _detail_rows(unit, paths, fences):
         return _TaskReadView(unit, unit.get_many(paths)), False
 
 
+def _controls_and_manual(service, uid, vault, task):
+    user_scope = service.user_vaults.read(uid, vault)
+
+    def read(unit):
+        owner, _, _, meta = service._owner_task(unit, uid, vault, task, user_scope=user_scope)
+        require_visible(unit, owner, vault, task)
+        result = {
+            "contractVersion": CONTRACT_VERSION,
+            "profile": PROFILE,
+            "state": service._state(unit, owner, vault, task, meta),
+            "manual": manual_history(unit, owner, vault, task, service.now),
+        }
+        check_read_response(result)
+        return result
+
+    return service.store.transact(read)
+
+
 def read_task_detail(service, uid, vault, task, options):
     if (
         type(options) is not dict
-        or set(options) - {"includeVault"}
+        or set(options) - {"includeVault", "includeManual"}
         != {"contractVersion", "includePacket", "includeAttribution"}
         or options.get("includeVault", True) is not True
         or options["contractVersion"] != CONTRACT_VERSION
@@ -105,6 +124,16 @@ def read_task_detail(service, uid, vault, task, options):
         raise ContractError("malformed_request")
     for ident in (vault, task):
         validate_schema("Identifier", ident)
+
+    if "includeManual" in options:
+        if (
+            options["includeManual"] is not True
+            or options["includePacket"]
+            or options["includeAttribution"]
+            or "includeVault" in options
+        ):
+            raise ContractError("malformed_request")
+        return _controls_and_manual(service, uid, vault, task)
 
     def read(unit):
         owner = owner_key(uid)

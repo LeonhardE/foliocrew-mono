@@ -3,17 +3,20 @@
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import test_task_center_store as centers
 from fixtures import OTHER_UID, UID
 from test_oauth import TASK
 
-from app.manual_intents import ManualAgentService, ManualOwnerService
+from app.manual_intents import ManualAgentService, ManualOwnerService, manual_history, queue_path
 from app.persistent_agents import USER_AUTHORITY_TRANSITION
-from app.store import document_path, private_resource_writer_fence_path
+from app.store import StoreUnavailable, document_path, private_resource_writer_fence_path
 from app.task_center import center_reference
+from app.task_detail import PROFILE as DETAIL_PROFILE
+from app.task_detail import read_task_detail
 from app.user_vault_authority import CurrentUserVault, ScopedUserVaults
+from folioview_shared.encrypted.constants import CONTRACT_VERSION
 from folioview_shared.encrypted.crypto import _signed_parts, signing_input_fingerprint
 from folioview_shared.encrypted.errors import ContractError
 from folioview_shared.encrypted.persistent_content import digest
@@ -127,7 +130,7 @@ class ManualIntentTests(unittest.TestCase):
             "result_received",
         )
 
-    def test_transferred_manual_controls_and_pickup_use_the_current_user_writer(self):
+    def transfer_authority(self):
         owner, vault = self.f.owner, self.f.vault
         marker = {
             "ownerSubject": owner,
@@ -167,6 +170,11 @@ class ManualIntentTests(unittest.TestCase):
         scopes = ScopedUserVaults(self.fx.store, owner=owner, client=client)
         for service in (self.owner, self.agent, self.fx.execution):
             service.user_vaults = scopes
+        return client
+
+    def test_transferred_manual_controls_and_pickup_use_the_current_user_writer(self):
+        vault = self.f.vault
+        self.transfer_authority()
 
         receipt = self.create()
         self.assertEqual(self.owner.manual(UID, vault, TASK, self.signed, self.operation), receipt)
@@ -176,6 +184,103 @@ class ManualIntentTests(unittest.TestCase):
             self.owner.manual_state(UID, vault, TASK, self.operation)["aggregate"]["state"],
             "running",
         )
+
+    def display(self, uid=UID, vault=None):
+        return read_task_detail(
+            self.owner,
+            uid,
+            vault or self.f.vault,
+            TASK,
+            {
+                "contractVersion": CONTRACT_VERSION,
+                "includePacket": False,
+                "includeAttribution": False,
+                "includeManual": True,
+            },
+        )
+
+    def test_display_reads_signed_state_and_history_with_one_current_authority(self):
+        vault = self.f.vault
+        client = self.transfer_authority()
+        for stage in ("empty", "waiting", "running"):
+            if stage == "waiting":
+                self.create()
+            if stage == "running":
+                self.begin(self.operation)
+            expected = {
+                "contractVersion": CONTRACT_VERSION,
+                "profile": DETAIL_PROFILE,
+                "state": self.owner.state(UID, vault, TASK),
+                "manual": self.owner.manual_list(UID, vault, TASK),
+            }
+            client.reset_mock()
+            with (
+                patch.object(self.owner, "_owner_task", wraps=self.owner._owner_task) as checked,
+                patch.object(self.owner, "_state", wraps=self.owner._state) as state,
+                patch("app.task_detail.manual_history", wraps=manual_history) as history,
+            ):
+                self.assertEqual(self.display(), expected)
+            client.read.assert_called_once()
+            checked.assert_called_once()
+            state.assert_called_once()
+            history.assert_called_once()
+            self.assertIs(state.call_args.args[0], history.call_args.args[0])
+            self.assertIs(checked.call_args.args[0], history.call_args.args[0])
+
+    def test_display_rejects_other_owners_trashed_and_purged_tasks(self):
+        with self.assertRaises(ContractError) as error:
+            self.display(OTHER_UID)
+        self.assertEqual(error.exception.code, "not_found")
+        self.fx.definition = self.fx.control("trash")["definition"]
+        with self.assertRaises(ContractError) as error:
+            self.display()
+        self.assertEqual(error.exception.code, "not_found")
+        self.fx.definition = self.fx.control("purge")["definition"]
+        with self.assertRaises(ContractError) as error:
+            self.display()
+        self.assertEqual(error.exception.code, "not_found")
+
+    def test_display_rejects_changed_owner_authority_and_vault(self):
+        client = self.transfer_authority()
+        with self.assertRaises(ContractError) as error:
+            self.display(vault="different_vault")
+        self.assertEqual(error.exception.code, "source_unavailable")
+        # The transaction must reject a writer fence changed after the authority response.
+        self.fx.store.transact(
+            lambda unit: unit.delete(private_resource_writer_fence_path(self.f.owner))
+        )
+        with patch.object(self.owner.user_vaults, "read", return_value=client.read.return_value):
+            with self.assertRaises(ContractError) as error:
+                self.display()
+        self.assertEqual(error.exception.code, "source_unavailable")
+
+    def test_display_propagates_failed_or_oversized_history_and_can_retry(self):
+        self.create()
+        with patch("app.manual_intents._intent", side_effect=StoreUnavailable):
+            with self.assertRaises(StoreUnavailable):
+                self.display()
+        with patch("app.manual_intents._summary", return_value={"tooLarge": "x" * 1048576}):
+            with self.assertRaises(ContractError) as error:
+                self.display()
+        self.assertEqual(error.exception.code, "payload_too_large")
+        self.assertEqual(self.display()["manual"], self.owner.manual_list(UID, self.f.vault, TASK))
+
+    def test_display_rejects_invalid_stored_queues_before_reading_intents(self):
+        path = queue_path(self.f.owner, self.f.vault, TASK)
+        for row in (
+            {},
+            {"ids": "invalid"},
+            {"ids": ["invalid-id"]},
+            {"ids": ["synthetic_run_request_01"] * 2},
+            {"ids": [f"synthetic_run_request_{i:02d}" for i in range(17)]},
+        ):
+            with self.subTest(row=row):
+                self.fx.store.transact(lambda unit, value=row: unit.put(path, value))
+                with patch("app.manual_intents._intent", side_effect=AssertionError):
+                    with self.assertRaises(StoreUnavailable):
+                        self.display()
+                    with self.assertRaises(StoreUnavailable):
+                        self.owner.manual_list(UID, self.f.vault, TASK)
 
     def test_cancel_before_claim_is_idempotent_and_fences_late_pickup(self):
         self.create()
