@@ -893,6 +893,11 @@ export function TasksView({
   );
 }
 
+function readLinkedTask() {
+  if (typeof window === "undefined") return null;
+  return /^#task\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})$/.exec(window.location.hash)?.[1] ?? null;
+}
+
 export default function TasksPanel({
   workspace,
   active,
@@ -912,10 +917,12 @@ export default function TasksPanel({
 }) {
   const [editing, setEditing] = useState(false);
   const [resultsVisible, setResultsVisible] = useState(false);
+  const [linkedTask, setLinkedTask] = useState(readLinkedTask);
   const model = useTasks(workspace, {
     active,
     catalogueOnDemand: true,
     overview: true,
+    preferredTaskId: linkedTask ?? undefined,
     readDetail: readTaskDetail,
     catalogueRequested: editing || Boolean(request && request.owner === workspace.owner),
   });
@@ -959,13 +966,9 @@ export default function TasksPanel({
     resultsVisible,
   );
 
-  const [linkedTask, setLinkedTask] = useState<string | null>(null);
   const tc = useTranslations("taskCenter");
   useEffect(() => {
-    const read = () => {
-      const match = /^#task\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})$/.exec(window.location.hash);
-      setLinkedTask(match?.[1] ?? null);
-    };
+    const read = () => setLinkedTask(readLinkedTask());
     read();
     window.addEventListener("hashchange", read);
     window.addEventListener("popstate", read);

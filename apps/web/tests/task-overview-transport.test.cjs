@@ -158,3 +158,71 @@ test("soft region invalidation still aborts every physical overview subscriber a
   await assert.rejects(pending, /cancelled/);
   read.invalidate();
 });
+
+test("the linked task stops waiting independently of an active list at its shorter deadline", async () => {
+  const timers = new Map();
+  const local = compile(
+    "../lib/task-overview.ts",
+    {
+      "./inbox-types": require("./task-overview-helpers.cjs").inbox,
+      "./task-types": types,
+      "./task-overview-request": request,
+      "./task-result-reader": reader,
+      "./report-provider-attribution": providers,
+      "./workspace-cache": compile("../lib/workspace-cache.ts"),
+    },
+    {
+      setTimeout(fn, ms) {
+        timers.set(ms, fn);
+        return ms;
+      },
+      clearTimeout(id) {
+        timers.delete(id);
+      },
+    },
+  );
+  const read = new local.TaskOverviewRead(() => {});
+  let finish;
+  let sends = 0;
+  let sharedSignal;
+  read.configure(
+    config(
+      (path, options) => {
+        sends++;
+        sharedSignal = options.signal;
+        return new Promise((resolve) => {
+          finish = () => resolve(Response.json(body(options.json, 6)));
+        });
+      },
+      { preferredTaskId: "task_6" },
+    ),
+  );
+  const list = read.acquire();
+  const original = { taskId: "task_6" };
+  const link = read.linkedTaskPacket("task_6", new AbortController().signal, async () => original);
+  await new Promise((resolve) => setImmediate(resolve));
+  timers.get(10000)();
+  assert.deepEqual((await link).packet, original);
+  assert.equal(sharedSignal.aborted, false);
+  assert.equal(sends, 1);
+  finish();
+  const receipt = await list;
+  assert.equal(receipt.data.packets.items[0].taskId, "task_6");
+});
+
+test("a server rejecting the optional task preference receives one compatibility retry per owner", async () => {
+  const read = new overview.TaskOverviewRead(() => {});
+  const preferences = [];
+  const send = async (_path, options) => {
+    const hint = options.json.preferredTaskId;
+    preferences.push(hint);
+    return hint ? Response.json({}, { status: 422 }) : Response.json(body(options.json, 6));
+  };
+  read.configure(config(send, { preferredTaskId: "task_6" }));
+  await read.acquire();
+  read.invalidate();
+  await read.acquire();
+  read.configure(config(send, { scope: "another-owner", preferredTaskId: "task_6" }));
+  await read.acquire();
+  assert.deepEqual(preferences, ["task_6", undefined, undefined, "task_6", undefined]);
+});

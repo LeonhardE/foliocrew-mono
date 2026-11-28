@@ -736,8 +736,13 @@ and version checks apply to the corresponding sections. An explicitly unavailabl
 its original endpoint. Opening a historical version and submitting a command retain their own reads.
 
 A direct link can open a task before the first list page arrives, including a task outside that page.
-If a fresh matching overview packet is already available, the link uses it. Otherwise the browser
-starts the original task read immediately. An automatic link can consume the one-use, five-second
+The opening overview can request the linked task as the first of its four encrypted packets.
+The link shares that request with the list. If the task is outside the loaded page, the packet
+is unavailable, or the overview fails, the link uses the original authorized task read. After
+ten seconds it starts an independent task read. Either read can supply the verified body while
+the list keeps its own deadline. When an older server rejects the preference, the page retries the
+ordinary overview once and omits that preference for subsequent reads in the same scope.
+An automatic link can consume the one-use, five-second
 User vault display receipt from unlock. A selection that needs a fresh User vault check starts it
 alongside the Hub detail read and verifies both before opening the body. Once a linked task body
 is verified, its original state and run-history endpoints can run concurrently. History only

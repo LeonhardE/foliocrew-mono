@@ -13,6 +13,7 @@ function harness({
   readDetail,
   timers,
   userVault = false,
+  preferredTaskId,
 } = {}) {
   const ui = hooks(),
     calls = [],
@@ -162,6 +163,7 @@ function harness({
         active,
         catalogueOnDemand: true,
         overview: overviewEnabled,
+        preferredTaskId,
         readDetail,
       });
       const c = center.useTaskCenter(
@@ -1773,6 +1775,162 @@ test("a linked task reuses a just-arrived overview packet before list render, bu
         h.calls.filter((c) => c.path === "/api/v2/tasks/task_1").length,
         expired ? 1 : 0,
       );
+    } finally {
+      h.close();
+    }
+  }
+});
+
+test("a cold task link shares one preferred overview and reads the User-backed task only when its packet is missing", async () => {
+  for (const mode of ["inline", "no packet", "out of page", "old server", "changed metadata"]) {
+    let finish;
+    const id = mode === "out of page" ? "task_7" : "task_6";
+    const n = Number(id.split("_")[1]);
+    const h = harness({
+      count: 6,
+      preferredTaskId: id,
+      readDetail: require("./task-overview-helpers.cjs").detail.readTaskDetail,
+      open: () => ({ ...syntheticForm(), name: "Linked task", goal: "Research" }),
+      respond(path, opts) {
+        if (mode === "old server" && path.endsWith("/overview/query") && !opts.json.preferredTaskId)
+          return Response.json(fixtures.body(opts.json, 6));
+        if (path.endsWith("/overview/query"))
+          return new Promise((resolve) => {
+            assert.equal(opts.json.preferredTaskId, id);
+            finish = () => {
+              if (mode === "old server") return resolve(Response.json({}, { status: 400 }));
+              const value = fixtures.body(opts.json, 6);
+              if (mode === "no packet") value.packets = null;
+              if (mode === "changed metadata")
+                value.packets.items[0].packet.metadata = fixtures.metadata(n, 2);
+              resolve(Response.json(value));
+            };
+          });
+        if (path === "/api/v2/tasks/" + id)
+          return Response.json(fixtures.packet(fixtures.metadata(n)));
+        if (path === "/api/v3/task-center/vault_A/tasks/" + id)
+          return Response.json(detailFixture(id, null).state);
+        if (path.endsWith("/manual")) return Response.json({ items: [] });
+      },
+    });
+    try {
+      await h.ready();
+      h.workspace.loadTaskCenterPending = async () => null;
+      h.workspace.verifyTaskCenterState = async (s) => s;
+      h.workspace.refreshVault = async () => h.workspace.vault;
+      const opening = h.current.m.openLinkedTask(id);
+      await h.ready();
+      assert.equal(h.current.m.selected, null);
+      assert.equal(h.calls.filter((c) => c.path === "/api/v2/tasks/" + id).length, 0);
+      assert.equal(h.calls.filter((c) => c.path.endsWith("/overview/query")).length, 1);
+      finish();
+      await opening;
+      const current = await h.ready();
+      assert.equal(current.m.selected?.taskId, id);
+      assert.equal(
+        h.calls.filter((c) => c.path === "/api/v2/tasks/" + id).length,
+        mode === "inline" ? 0 : 1,
+      );
+      assert.equal(
+        h.calls.filter((c) => c.path.endsWith("/overview/query")).length,
+        mode === "old server" ? 2 : 1,
+      );
+      if (mode === "changed metadata") assert.ok(current.m.listError);
+    } finally {
+      h.close();
+    }
+  }
+});
+
+test("a slow linked overview and its selected-task fallback display the first verified body without cancelling a successful read", async () => {
+  for (const winner of [
+    "overview",
+    "direct",
+    "temporary failure",
+    "permission denied",
+    "owner changed",
+  ]) {
+    const timers = controlledTimers();
+    const overview = Promise.withResolvers();
+    const direct = Promise.withResolvers();
+    let preferredBody, originalSignal, overviewSignal;
+    const id = "task_6";
+    const h = harness({
+      timers,
+      count: 6,
+      preferredTaskId: id,
+      open: () => ({ ...syntheticForm(), name: "Linked task", goal: "Research" }),
+      respond(path, options) {
+        if (path.endsWith("/overview/query")) {
+          overviewSignal = options.signal;
+          preferredBody = options.json;
+          return overview.promise;
+        }
+        if (path === "/api/v2/tasks/" + id) {
+          originalSignal = options.signal;
+          return direct.promise;
+        }
+        if (path === "/api/v3/task-center/vault_A/tasks/" + id)
+          return Response.json(detailFixture(id, null).state);
+        if (path.endsWith("/manual")) return Response.json({ items: [] });
+      },
+    });
+    try {
+      await h.ready();
+      h.workspace.loadTaskCenterPending = async () => null;
+      h.workspace.verifyTaskCenterState = async (s) => s;
+      h.workspace.refreshVault = async () => h.workspace.vault;
+      const opening = h.current.m.openLinkedTask(id);
+      await h.ready();
+      assert.equal(originalSignal, undefined);
+      timers.advance(10000);
+      await h.ready();
+      assert.equal(originalSignal.aborted, false);
+      assert.equal(overviewSignal.aborted, false);
+      if (winner === "owner changed") {
+        h.owner("owner_B");
+        assert.equal(originalSignal.aborted, true);
+        await opening;
+        assert.equal(h.current.m.selected, null);
+        continue;
+      }
+      if (winner === "temporary failure" || winner === "permission denied") {
+        direct.resolve(Response.json({}, { status: winner === "temporary failure" ? 503 : 403 }));
+        await h.ready();
+        if (winner === "permission denied") {
+          await opening;
+          const denied = await h.ready();
+          assert.equal(denied.m.error, "insufficient_scope");
+          assert.equal(denied.m.selected, null);
+          continue;
+        }
+        assert.equal(h.current.m.error, "");
+        assert.equal(h.current.m.selected, null);
+        overview.resolve(Response.json(fixtures.body(preferredBody, 6)));
+        await opening;
+        const recovered = await h.ready();
+        assert.equal(recovered.m.selected?.taskId, id);
+        assert.equal(recovered.m.error, "");
+        continue;
+      }
+      const list = () => overview.resolve(Response.json(fixtures.body(preferredBody, 6)));
+      const head = () => direct.resolve(Response.json(fixtures.packet(fixtures.metadata(6))));
+      if (winner === "overview") list();
+      else head();
+      await opening;
+      const current = await h.ready();
+      assert.equal(current.m.selected?.taskId, id);
+      assert.equal(current.m.error, "");
+      if (winner === "overview") {
+        assert.equal(originalSignal.aborted, false);
+        head();
+      } else {
+        assert.equal(overviewSignal.aborted, false);
+        list();
+      }
+      await h.ready();
+      assert.equal(h.calls.filter((c) => c.path.endsWith("/overview/query")).length, 1);
+      assert.equal(h.calls.filter((c) => c.path === "/api/v2/tasks/" + id).length, 1);
     } finally {
       h.close();
     }

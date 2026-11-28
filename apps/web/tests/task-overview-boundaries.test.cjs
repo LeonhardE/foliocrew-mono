@@ -35,6 +35,9 @@ test("actual AuthProvider and Next proxy admit only the closed readonly overview
     [path, { method: "GET" }],
     [path, { method: "PUT" }],
     [path, { json: { ...body, packetLimit: 5 } }],
+    [path, { json: { ...body, preferredTaskId: null } }],
+    [path, { json: { ...body, preferredTaskId: "not/a/task" } }],
+    [path, { json: { ...body, preferredTaskId: "task_1", packetLimit: 0 } }],
     [path, { json: { ...body, extra: true } }],
     [
       path,
@@ -114,4 +117,45 @@ test("budget null and all-known null retain original task and feed pages at the 
     assert.equal(r.status, 200);
     assert.deepEqual(await r.json(), value);
   }
+});
+
+test("the real owner boundaries preserve the linked packet order even for an already known head", async (t) => {
+  const b = await stack();
+  t.after(() => b.close());
+  const owner = b.mount();
+  await owner.login("synthetic_linked_owner");
+  const meta = fixtures.metadata(6);
+  const req = {
+    ...body,
+    preferredTaskId: meta.taskId,
+    knownPacketVersions: [
+      {
+        taskId: meta.taskId,
+        taskVersion: meta.taskVersion,
+        envelopeFingerprint: meta.envelopeFingerprint,
+      },
+    ],
+  };
+  const expected = fixtures.body(req, 6);
+  b.setUpstream((url, init) => {
+    assert.equal(url, HUB + path);
+    assert.deepEqual(
+      JSON.parse(typeof init.body === "string" ? init.body : new TextDecoder().decode(init.body)),
+      req,
+    );
+    return response(expected);
+  });
+  const send = () =>
+    owner.value.requestPrivate("agent-hub", path, owner.value.sessionKey, {
+      ...options(),
+      json: req,
+    });
+  const accepted = await send();
+  assert.equal(accepted.status, 200);
+  assert.deepEqual(
+    (await accepted.json()).packets.items.map((row) => row.taskId),
+    ["task_6", "task_1", "task_2", "task_3"],
+  );
+  expected.packets.items.reverse();
+  assert.equal((await send()).status, 503);
 });
