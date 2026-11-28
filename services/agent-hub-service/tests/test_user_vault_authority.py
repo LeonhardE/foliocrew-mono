@@ -270,12 +270,12 @@ class UserVaultAuthorityTests(unittest.TestCase):
         f.registry = source.read(UID, f.vault).cursor.registry
         f.bundle = self.authority["registryHistory"][-1]
         ids = [f"synthetic_transferred_task_{n}" for n in range(4)]
+        expected = {}
         for ident in ids:
             operation = "create_" + ident
-            service.create(
+            expected[ident], _ = service.create(
                 UID, f.body(task=ident, operation=operation), operation, f.kid("device_sig")
             )
-        expected = {ident: service.get(UID, ident) for ident in ids}
         body = {"contractVersion": CONTRACT_VERSION, "knownPacketVersions": [], "packetLimit": 4}
         overview = TaskOverviewService(self.store, clock=lambda: 1000, user_vaults=source)
 
@@ -295,6 +295,16 @@ class UserVaultAuthorityTests(unittest.TestCase):
         )
         self.assertEqual(replay.call_count, 0)
         self.assertEqual(carriers.call_count, 4)
+        with (
+            patch("app.tasks.verify_registry", wraps=tasks.verify_registry) as replay,
+            patch("app.tasks.verify_carrier", wraps=tasks.verify_carrier) as carriers,
+        ):
+            self.assertEqual(service.get(UID, ids[0]), expected[ids[0]])
+            self.assertEqual(service.get(UID, ids[0], version=1), expected[ids[0]])
+            page = service.packets(UID, ids)
+            self.assertEqual({item["taskId"]: item["packet"] for item in page["items"]}, expected)
+        self.assertEqual(replay.call_count, 0)
+        self.assertEqual(carriers.call_count, 6)
         self.assertIsNone(source.read(UID, f.vault).verified_prefixes)
         selected = source.read(UID, f.vault, retain_prefixes=True)
         cache = selected.verified_prefixes
@@ -310,6 +320,17 @@ class UserVaultAuthorityTests(unittest.TestCase):
 
         # A valid cached registry cannot turn an altered packet into a result.
         path = tasks._paths(f.owner, f.vault, ids[0], 1)
+
+        def alter_certificate(unit):
+            packet = unit.get(path)
+            packet["keyProofs"]["certificates"][0]["signature"] = "A" * 86
+            unit.put(path, packet)
+
+        original = self.store.transact(lambda unit: unit.get(path))
+        self.store.transact(alter_certificate)
+        with self.assertRaises(StoreUnavailable):
+            service.get(UID, ids[0])
+        self.store.transact(lambda unit: unit.put(path, original))
 
         def tamper(unit):
             packet = unit.get(path)
