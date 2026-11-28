@@ -670,6 +670,68 @@ test("an earlier visit cannot replace the selected outbox or enable a run before
   }
 });
 
+test("manual preflight failure leaves no submitted operation, but a lost POST preserves its identity", async () => {
+  let failChecks = false;
+  const h = harness({
+    transport: (path, options) => {
+      if (options.method === "POST") return Response.json({}, { status: 503 });
+      if (failChecks && (path.endsWith("/tasks/task_A") || path.endsWith("/manual")))
+        return Response.json({}, { status: 503 });
+    },
+  });
+  try {
+    let m = await h.ready();
+    failChecks = true;
+    await assert.rejects(m.command("task_A", "manual_intent", ["agent"]), /service_unavailable/);
+    m = h.render();
+    assert.equal(m.error, "manual_not_sent");
+    assert.equal(m.pending, null);
+    assert.equal(h.calls.filter((c) => c.options.method === "POST").length, 0);
+    failChecks = false;
+    await assert.rejects(m.command("task_A", "manual_intent", ["agent"]), /service_unavailable/);
+    m = h.render();
+    const posts = h.calls.filter((c) => c.options.method === "POST");
+    assert.equal(posts.length, 1);
+    assert.equal(m.pending.action, "manual_intent");
+    assert.equal(posts[0].options.headers["Idempotency-Key"], m.pending.operationId);
+    assert.notEqual(m.error, "manual_not_sent");
+  } finally {
+    h.close();
+  }
+});
+
+test("an active request for different executors is not returned as confirmation", async () => {
+  let other = false;
+  const h = harness({
+    transport: (path) =>
+      other && path.endsWith("/manual")
+        ? Response.json({
+            items: [
+              {
+                snapshot: {
+                  taskId: "task_A",
+                  requestId: "different",
+                  executors: [{ assignmentId: "another" }],
+                },
+                aggregate: { hasActiveExecutors: true },
+              },
+            ],
+          })
+        : undefined,
+  });
+  try {
+    let m = await h.ready();
+    other = true;
+    assert.equal(await m.command("task_A", "manual_intent", ["selected"]), undefined);
+    m = h.render();
+    assert.equal(m.error, "manual_other_active");
+    assert.equal(m.pending, null);
+    assert.equal(h.calls.filter((c) => c.options.method === "POST").length, 0);
+  } finally {
+    h.close();
+  }
+});
+
 test("run confirmation checks the current definition and history together and preserves another client's active run", async () => {
   let confirming = false,
     releaseDefinition,
@@ -705,13 +767,30 @@ test("run confirmation checks the current definition and history together and pr
     releaseHistory(
       Response.json({
         items: [
-          { snapshot: { requestId: "from_other_device" }, aggregate: { hasActiveExecutors: true } },
+          {
+            snapshot: {
+              taskId: "task_A",
+              requestId: "different_executor",
+              executors: [{ assignmentId: "unselected" }],
+            },
+            aggregate: { hasActiveExecutors: true },
+          },
+          {
+            snapshot: {
+              taskId: "task_A",
+              requestId: "from_other_device",
+              executors: [{ assignmentId: "agent" }],
+            },
+            aggregate: { hasActiveExecutors: true },
+          },
         ],
       }),
     );
-    await confirmed;
+    const receipt = await confirmed;
+    assert.equal(receipt.taskId, "task_A");
+    assert.equal(receipt.requestId, "from_other_device");
     m = h.render();
-    assert.equal(m.manual.task_A[0].snapshot.requestId, "from_other_device");
+    assert.equal(m.manual.task_A[1].snapshot.requestId, "from_other_device");
     assert.equal(m.error, "");
     assert.equal(signed, 0);
     assert.equal(h.calls.filter((c) => c.options.method === "POST").length, 0);

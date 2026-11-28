@@ -384,15 +384,17 @@ export function useTaskCenter(
           throw Error("request_failed");
         if (gate.running) throw Error("operation_pending");
       };
-      requireRunState();
+      let checkingManualRun = false;
       writes.current = true;
       update({ busy: true, error: "" }, start.scope);
       try {
+        requireRunState();
         const existing = await start.workspace.loadTaskCenterPending(task);
         if (existing) {
           update({ pending: existing }, start.scope);
           throw Error("operation_pending");
         }
+        checkingManualRun = action === "manual_intent";
         const definition = provided && action !== "manual_intent" ? provided : api(base(task));
         const [current, history] = await Promise.all([
           definition,
@@ -404,8 +406,26 @@ export function useTaskCenter(
           const items = history.items;
           setState((s) => ({ ...s, manual: { ...s.manual, [task]: items } }));
           // Another client may have started this task since its detail was opened.
-          if (items.some((item: J) => item.aggregate?.hasActiveExecutors)) return;
+          const active = items.filter((item: J) => item.aggregate?.hasActiveExecutors);
+          if (active.length) {
+            const matching = active.find(
+              ({ snapshot }: J) =>
+                snapshot?.taskId === task &&
+                Array.isArray(value) &&
+                Array.isArray(snapshot.executors) &&
+                snapshot.executors.length === value.length &&
+                snapshot.executors.every((entry: J) => value.includes(entry.assignmentId)),
+            );
+            if (!matching) {
+              update({ error: "manual_other_active" }, start.scope);
+              return;
+            }
+            const requestId = matching.snapshot.requestId;
+            if (typeof requestId !== "string" || !requestId) throw Error("invalid_response");
+            return { taskId: task, requestId };
+          }
         }
+        checkingManualRun = false;
         const packet = await start.workspace.prepareTaskCenterControl({
           state: current,
           action,
@@ -414,8 +434,13 @@ export function useTaskCenter(
         update({ pending: packet }, start.scope);
         return await send(packet, refreshDetail);
       } catch (e) {
-        if (action !== "manual_intent" || runVisit.current === startingVisit)
-          update({ error: error(e) }, start.scope);
+        if (action !== "manual_intent" || runVisit.current === startingVisit) {
+          const code = error(e);
+          const failedCheck =
+            checkingManualRun &&
+            !["authorization_changed", "not_found", "version_conflict", "cancelled"].includes(code);
+          update({ error: failedCheck ? "manual_not_sent" : code }, start.scope);
+        }
         throw e;
       } finally {
         writes.current = false;
