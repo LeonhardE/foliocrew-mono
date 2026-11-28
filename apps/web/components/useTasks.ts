@@ -11,6 +11,7 @@ import type {
   TaskMetadata,
 } from "@/lib/encrypted-types";
 import type { readTaskDetail, TaskDetailRead } from "@/lib/task-detail-read";
+import { TASK_OVERVIEW_TIMEOUT_MS } from "@/lib/task-overview-request";
 import { TaskOverviewRead } from "@/lib/task-overview";
 import { DisplayLru, hasFreshWorkspaceDisplay, untilSignal } from "@/lib/workspace-cache";
 import { defaultTask, legacyTaskInputPolicy, reviewTask, type TaskPreview } from "@/lib/task-forms";
@@ -50,6 +51,7 @@ type PendingSummary = {
   expectedVersion: number;
 };
 type Context = { signal: AbortSignal; assert: () => void };
+const TASK_LIST_TIMEOUT_MS = 15_000;
 type ReadRegion = "tasks" | "catalogue";
 type Editor = {
   scope: string;
@@ -259,8 +261,15 @@ export function useTasks(
     async <T>(
       privateRead: boolean,
       action: (context: Context) => Promise<T>,
-      region?: ReadRegion,
-      retainNavigation = false,
+      {
+        region,
+        retainNavigation = false,
+        timeoutMs = 60_000,
+      }: {
+        region?: ReadRegion;
+        retainNavigation?: boolean;
+        timeoutMs?: number;
+      } = {},
     ): Promise<T> => {
       const start = live.current,
         epoch = generation.current,
@@ -272,13 +281,10 @@ export function useTasks(
       jobs.current.add(controller);
       if (retainNavigation) navigationDrafts.current.add(controller);
       let timedOut = false;
-      const timeout = window.setTimeout(
-        () => {
-          timedOut = true;
-          controller.abort();
-        },
-        region ? 11_500 : 60_000,
-      );
+      const timeout = window.setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, timeoutMs);
       const assert = () => {
         const now = live.current;
         if (
@@ -504,6 +510,7 @@ export function useTasks(
       if (!force && fresh?.scope === readScope && freshRead(fresh.at)) return;
       // A new metadata read owns name backfill until its validated receipt commits.
       if (region === "tasks") delete freshReads.current.tasks;
+      const withOverview = region === "tasks" && !force && overviewEnabled;
       const serial = ++readSerial.current[region];
       const loading = region === "tasks" ? "loading" : "catalogueLoading";
       const failure = region === "tasks" ? "listError" : "catalogueError";
@@ -523,10 +530,9 @@ export function useTasks(
               overview.current!.invalidate(false);
               inlinePackets.current.clear();
             }
-            const snapshot =
-              region === "tasks" && !force && overviewEnabled
-                ? await overview.current!.acquireWithFallback(context.signal)
-                : null;
+            const snapshot = withOverview
+              ? await overview.current!.acquireWithFallback(context.signal)
+              : null;
             const body =
               snapshot?.data.tasks ??
               (await api(
@@ -563,7 +569,14 @@ export function useTasks(
               previous.owner === owner ? { ...previous, ...data } : previous,
             );
           },
-          region,
+          {
+            region,
+            // A real overview 503 can still be followed by the original list read.
+            timeoutMs:
+              region === "tasks"
+                ? TASK_LIST_TIMEOUT_MS + (withOverview ? TASK_OVERVIEW_TIMEOUT_MS : 0)
+                : 11_500,
+          },
         );
       } catch (error) {
         if (
@@ -636,8 +649,7 @@ export function useTasks(
               notice: "draft_saved",
             }));
           },
-          undefined,
-          true,
+          { retainNavigation: true },
         );
       }
     } catch (error) {

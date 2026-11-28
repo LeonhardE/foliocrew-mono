@@ -81,7 +81,7 @@ test("streamed overview bytes retain the original one MiB ceiling and no failure
   assert.equal(sends, 2);
   read.invalidate();
 });
-test("ignored transport abort settles at the original metadata deadline and cannot publish late", async () => {
+test("ignored transport abort settles at the overview deadline and cannot publish late", async () => {
   const timers = new Map();
   let release;
   const gate = new Promise((r) => (release = r));
@@ -108,7 +108,7 @@ test("ignored transport abort settles at the original metadata deadline and cann
   read.configure(config(() => gate));
   const action = read.acquire();
   await new Promise((r) => setImmediate(r));
-  assert.equal([...timers.values()][0].ms, 11500);
+  assert.equal([...timers.values()][0].ms, 24000);
   [...timers.values()][0].fn();
   await assert.rejects(action, /request_timeout/);
   release(Response.json(body()));

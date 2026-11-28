@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readResourceDisplay, RESOURCE_DISPLAY_PATH } from "../resource-display";
 import "server-only";
 import { parseTaskDetail, taskDetailRequest } from "../task-detail-read";
-import { taskOverviewRequest } from "../task-overview-request";
+import { taskOverviewRequest, TASK_OVERVIEW_PROXY_MS } from "../task-overview-request";
 import { parseTaskOverview, overviewPacketIds } from "../task-overview";
 import { taskCenterRoute, taskCenterRequest, taskCenterResponse } from "./task-center-owner";
 import { isManualPreflightRead, persistentOwnerRoute } from "../persistent-owner-routes";
@@ -606,7 +606,12 @@ export function createHubProxy(options: Options = {}) {
       if (!config) fail("authorization_unavailable");
       const { path, rule } = route(request, edgeOrigin);
       const budget =
-        options.deadlineMs ?? (isManualPreflightRead(path, request.method) ? 20_000 : 12_000);
+        options.deadlineMs ??
+        (rule.kind === "task-overview"
+          ? TASK_OVERVIEW_PROXY_MS
+          : isManualPreflightRead(path, request.method)
+            ? 20_000
+            : 12_000);
       const remaining = budget - (proxyClock() - started);
       if (remaining <= 0) controller.abort();
       else timer = setTimeout(() => controller.abort(), Math.ceil(remaining));

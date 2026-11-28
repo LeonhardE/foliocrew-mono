@@ -1,11 +1,11 @@
 const test = require("node:test"),
   assert = require("node:assert/strict");
 const { compile } = require("./resource-library-helpers.cjs"),
-  { hooks, jsx } = require("./resource-ui-harness.cjs");
+  { hooks, jsx, all } = require("./resource-ui-harness.cjs");
 const { types, overview, reader, inbox, providers } = require("./task-overview-helpers.cjs"),
   fixtures = require("./task-overview-fixtures.cjs");
 const tick = () => new Promise((r) => setImmediate(r));
-function harness({ count = 2, respond, open, overviewEnabled = true, readDetail } = {}) {
+function harness({ count = 2, respond, open, overviewEnabled = true, readDetail, timers } = {}) {
   const ui = hooks(),
     calls = [],
     opens = [],
@@ -65,8 +65,8 @@ function harness({ count = 2, respond, open, overviewEnabled = true, readDetail 
   const window = {
     location: { hash: "", pathname: "/tasks", search: "" },
     history: { replaceState() {} },
-    setTimeout,
-    clearTimeout,
+    setTimeout: timers?.setTimeout ?? setTimeout,
+    clearTimeout: timers?.clearTimeout ?? clearTimeout,
     addEventListener: (n, f) => events.set(n, f),
     removeEventListener: (n) => events.delete(n),
   };
@@ -84,8 +84,8 @@ function harness({ count = 2, respond, open, overviewEnabled = true, readDetail 
     window,
     document,
     Date: Clock,
-    setTimeout,
-    clearTimeout,
+    setTimeout: timers?.setTimeout ?? setTimeout,
+    clearTimeout: timers?.clearTimeout ?? clearTimeout,
     setInterval,
     clearInterval,
     crypto: require("node:crypto").webcrypto,
@@ -472,6 +472,114 @@ test("slow original Worker verification remains globally bounded to two and cann
     h.active(false);
     releases.forEach((f) => f());
     await tick();
+    h.close();
+  }
+});
+
+function controlledTimers() {
+  const pending = new Map();
+  let now = 0;
+  return {
+    setTimeout(callback, delay) {
+      const id = {};
+      pending.set(id, { at: now + delay, callback });
+      return id;
+    },
+    clearTimeout(id) {
+      pending.delete(id);
+    },
+    advance(to) {
+      now = to;
+      for (const [id, timer] of pending) {
+        if (timer.at > now) continue;
+        pending.delete(id);
+        timer.callback();
+      }
+    },
+  };
+}
+
+test("a cold overview finishing after 12.7s reaches task names, run capabilities and reports in one read", async () => {
+  const timers = controlledTimers(),
+    gate = Promise.withResolvers();
+  const h = harness({
+    timers,
+    respond: (path) => (path.endsWith("/overview/query") ? gate.promise : undefined),
+  });
+  try {
+    await h.ready();
+    timers.advance(12_788);
+    let x = await h.ready();
+    assert.equal(h.calls[0].options.signal.aborted, false);
+    assert.equal(x.m.loading, true);
+    assert.equal(x.m.listError, "");
+    gate.resolve(Response.json(fixtures.body()));
+    x = await h.ready();
+    assert.equal(x.tree.props["data-load-state"], "ready");
+    assert.equal(x.c.enabled, true);
+    assert.equal(x.r.unreadCounts.task_1, 1);
+    assert.equal(h.calls.length, 1);
+  } finally {
+    h.close();
+  }
+});
+
+test("a late proxy 503 leaves time for the list fallback", async () => {
+  const timers = controlledTimers(),
+    overview = Promise.withResolvers(),
+    list = Promise.withResolvers();
+  const h = harness({
+    timers,
+    respond: (path) => {
+      if (path.endsWith("/overview/query")) return overview.promise;
+      if (path.includes("/tasks?")) return list.promise;
+    },
+  });
+  try {
+    await h.ready();
+    timers.advance(20_100);
+    overview.resolve(Response.json({}, { status: 503 }));
+    await h.ready();
+    timers.advance(28_000);
+    const listCall = h.calls.find((call) => call.path.includes("/tasks?"));
+    assert.equal(listCall.options.signal.aborted, false);
+    list.resolve(Response.json(fixtures.body().tasks));
+    const x = await h.ready();
+    assert.equal(x.tree.props["data-load-state"], "ready");
+    assert.equal(h.calls.filter((call) => call.path.includes("/tasks?")).length, 1);
+  } finally {
+    h.close();
+  }
+});
+
+test("a genuine overview timeout remains visible until retry verifies the list and available run actions", async () => {
+  const timers = controlledTimers(),
+    late = Promise.withResolvers();
+  const h = harness({
+    timers,
+    respond: (path) => (path.endsWith("/overview/query") ? late.promise : undefined),
+  });
+  try {
+    await h.ready();
+    timers.advance(24_000);
+    let x = await h.ready();
+    assert.equal(x.m.listError, "request_timeout");
+    assert.equal(x.c.capabilityState, "error");
+    assert.equal(x.c.enabled, false);
+    assert.equal(all(x.tree, (n) => n.props?.children === "noTasks").length, 0);
+    assert.equal(h.calls.length, 1);
+    const [feedback] = all(x.tree, (n) => n.props?.message === "listTimeout");
+    feedback.props.onRetry();
+    x = await h.ready();
+    late.resolve(Response.json(fixtures.body(undefined, 0)));
+    x = await h.ready();
+    assert.equal(x.tree.props["data-load-state"], "ready");
+    assert.equal(x.c.enabled, true);
+    assert.equal(x.m.listError, "");
+    assert.equal(x.m.items.length, 2);
+    assert.equal(h.calls.filter((c) => c.path.endsWith("/capabilities")).length, 1);
+    assert.equal(h.calls.filter((c) => c.path.endsWith("/overview/query")).length, 1);
+  } finally {
     h.close();
   }
 });

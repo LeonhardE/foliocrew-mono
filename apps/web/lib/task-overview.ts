@@ -9,12 +9,18 @@ import {
   taskPacketPage,
   sameTaskMetadata,
   TASK_CONTRACT,
+  TaskError,
 } from "./task-types";
 import { resultPage } from "./task-result-reader";
 import { readReportProviders } from "./report-provider-attribution";
 import { boundedJson, untilSignal } from "./workspace-cache";
 type J = Record<string, any>;
-import { taskOverviewRequest, overviewPath, type KnownTaskPacket } from "./task-overview-request";
+import {
+  taskOverviewRequest,
+  overviewPath,
+  TASK_OVERVIEW_TIMEOUT_MS,
+  type KnownTaskPacket,
+} from "./task-overview-request";
 export function overviewPacketIds(tasks: J[], known: KnownTaskPacket[]) {
   return tasks
     .filter(
@@ -213,7 +219,8 @@ export class TaskOverviewRead {
         const timer = setTimeout(() => {
           timeout = true;
           controller.abort();
-        }, 11500);
+        }, TASK_OVERVIEW_TIMEOUT_MS);
+        const cancelled = () => new TaskError(timeout ? "request_timeout" : "cancelled");
         const check = () => {
           if (
             controller.signal.aborted ||
@@ -221,7 +228,7 @@ export class TaskOverviewRead {
             !this.config.active ||
             !this.config.visible
           )
-            throw Error(timeout ? "request_timeout" : "cancelled");
+            throw cancelled();
         };
         try {
           const known = structuredClone(start.known());
@@ -239,7 +246,7 @@ export class TaskOverviewRead {
               headers: { "X-FolioView-Contract": TASK_CONTRACT },
             }),
             controller.signal,
-            () => Error(timeout ? "request_timeout" : "cancelled"),
+            cancelled,
           );
           check();
           if (!response.ok) {
@@ -247,9 +254,7 @@ export class TaskOverviewRead {
             if (response.status === 503) throw new OverviewUnavailable("service_unavailable");
             throw Error(response.status >= 500 ? "service_unavailable" : "request_failed");
           }
-          const raw = await boundedJson(response, 1048576, controller.signal, () =>
-            Error(timeout ? "request_timeout" : "cancelled"),
-          );
+          const raw = await boundedJson(response, 1048576, controller.signal, cancelled);
           check();
           const data = freezeDisplay(parseTaskOverview(raw, start.vault!, known));
           check();
