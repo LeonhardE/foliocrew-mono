@@ -209,6 +209,17 @@ def _proofs(bundle):
     return _snapshot(result)
 
 
+def _matching_proofs(history, proofs):
+    # Both histories have already been authenticated. Compare the complete
+    # signed proof, inspecting certificates only for the matching checkpoint.
+    return [
+        position
+        for position, bundle in enumerate(history)
+        if bundle["checkpoint"] == proofs["checkpoint"]
+        and [entry["certificate"] for entry in bundle["entries"]] == proofs["certificates"]
+    ]
+
+
 def _response(unit, owner, vault_row, task_id, version, *, source_prefixes=None):
     row = unit.get(_paths(owner, vault_row["vaultId"], task_id, version))
     if row is None:
@@ -249,15 +260,11 @@ def _response(unit, owner, vault_row, task_id, version, *, source_prefixes=None)
         ):
             raise StoreUnavailable
         validate_schema("KeyProofs", row["keyProofs"])
-        history = vault_row["registryHistory"]
-        prior_history = vault_row.get("priorRegistryHistory", ())
-        if any(_proofs(bundle) == row["keyProofs"] for bundle in prior_history):
-            history = prior_history
-        matching = [
-            position
-            for position, bundle in enumerate(history)
-            if _proofs(bundle) == row["keyProofs"]
-        ]
+        history = vault_row.get("priorRegistryHistory", ())
+        matching = _matching_proofs(history, row["keyProofs"])
+        if not matching:
+            history = vault_row["registryHistory"]
+            matching = _matching_proofs(history, row["keyProofs"])
         if len(matching) != 1:
             raise StoreUnavailable
         written_at = int(
@@ -718,7 +725,7 @@ class TaskService:
         if version is not None:
             positive(version)
         owner = owner_key(uid)
-        user_scope = self.user_vaults.read(uid)
+        user_scope = self.user_vaults.read(uid, retain_prefixes=True)
 
         def read(unit):
             vault, _ = self._authority(unit, owner, self.now(), user_scope, history=True)
@@ -728,7 +735,12 @@ class TaskService:
             if head is None or (version is not None and version > head["metadata"]["taskVersion"]):
                 raise ContractError("not_found")
             return _response(
-                unit, owner, vault, task_id, version or head["metadata"]["taskVersion"]
+                unit,
+                owner,
+                vault,
+                task_id,
+                version or head["metadata"]["taskVersion"],
+                source_prefixes=user_scope.verified_prefixes if user_scope is not None else None,
             )
 
         return self.store.transact(read)
@@ -743,7 +755,7 @@ class TaskService:
             raise ContractError("malformed_request")
         task_ids = list(task_ids)
         owner = owner_key(uid)
-        user_scope = self.user_vaults.read(uid)
+        user_scope = self.user_vaults.read(uid, retain_prefixes=True)
 
         def read(unit):
             vault, _ = self._authority(unit, owner, self.now(), user_scope, history=True)
@@ -778,7 +790,14 @@ class TaskService:
                         "taskId": task_id,
                         "status": "ready",
                         "packet": _response(
-                            view, owner, vault, task_id, head["metadata"]["taskVersion"]
+                            view,
+                            owner,
+                            vault,
+                            task_id,
+                            head["metadata"]["taskVersion"],
+                            source_prefixes=(
+                                user_scope.verified_prefixes if user_scope is not None else None
+                            ),
                         ),
                     }
                     if head is not None

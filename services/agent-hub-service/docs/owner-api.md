@@ -354,6 +354,10 @@ carrier signature check still run. Conflict retries and later requests start fre
 full cache or legacy unit retains the original full historical verification path; current
 revocation never substitutes for the exact authority at a report/task's original save.
 
+For transferred vaults, single task/version and batch reads retain the authenticated User
+history within the request. A stored proof must match the complete signed checkpoint and the
+ordered certificate list. Unrelated checkpoints need no proof reconstruction.
+
 ### Combined task overview
 
 When an overview requests task packets for a transferred vault, its fresh User authority response

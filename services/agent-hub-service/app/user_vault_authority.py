@@ -14,7 +14,7 @@ from anyio.from_thread import run as run_from_worker
 from anyio.from_thread import start_blocking_portal
 
 from folioview_shared.delegation import PRIVATE_AUTHORITY_DELEGATION_TYPE
-from folioview_shared.encrypted.authority import verify_registry
+from folioview_shared.encrypted.authority import RegistryCertificateMemo, verify_registry
 from folioview_shared.encrypted.constants import CONTRACT_VERSION, MAX_READ_BYTES
 from folioview_shared.encrypted.crypto import signing_input_fingerprint
 from folioview_shared.encrypted.errors import ContractError
@@ -331,8 +331,11 @@ class UserVaultAuthority:
         )
         registry = start.registry
         prefixes = [registry] if prefix_cache is not None else None
+        signature_memo = RegistryCertificateMemo()
         for bundle in later:
-            following = verify_registry(bundle, previous=registry, **scope)
+            following = verify_registry(
+                bundle, previous=registry, signature_memo=signature_memo, **scope
+            )
             if following.registry_sequence != registry.registry_sequence + 1:
                 raise ContractError("registry_conflict")
             registry = following
