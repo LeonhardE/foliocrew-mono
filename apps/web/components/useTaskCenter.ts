@@ -65,6 +65,7 @@ export function useTaskCenter(
   selected: TaskMetadata | null,
   overview?: TaskOverviewRead,
   selectedDetail?: SelectedTaskDetail,
+  bodyReady = false,
 ) {
   const auth = useAuth(),
     owner = auth.status === "authenticated" ? auth.sessionKey : null;
@@ -110,16 +111,28 @@ export function useTaskCenter(
     workspace.vault?.version,
     taskHead(selected),
   ]);
-  const live = useRef({ scope, workspace, owner, active, selected, selectedKey, selectedDetail });
-  live.current = { scope, workspace, owner, active, selected, selectedKey, selectedDetail };
-  const selectedHistories = useRef(new WeakMap<SelectedTaskDetail, Promise<J>>());
-  const combinedEvidence = useRef(
-    new WeakMap<J, Pick<TaskDetailRead, "legacy" | "attribution"> & { selection: symbol }>(),
-  );
+  const inputs = {
+    scope,
+    workspace,
+    owner,
+    active,
+    selected,
+    selectedKey,
+    selectedDetail,
+    bodyReady,
+  };
+  const live = useRef(inputs);
+  live.current = inputs;
+  const combinedEvidence = useRef(new WeakMap<J, Pick<TaskDetailRead, "legacy" | "attribution">>());
   const runVisit = useRef({ key: selectedKey, active });
   if (runVisit.current.key !== selectedKey || runVisit.current.active !== active)
     runVisit.current = { key: selectedKey, active };
   const visit = runVisit.current;
+  const queuedHistory = useRef<{
+    visit: typeof visit;
+    generation: symbol;
+    promise: Promise<J>;
+  } | null>(null);
   const recordHeads = useRef(new Map<string, { key: string; at: number }>());
   const runReceipts = useRef(new WeakMap<J, number>());
   const [runRead, setRunRead] = useState<{
@@ -260,17 +273,16 @@ export function useTaskCenter(
       const promise = (async () => {
         update({ detailLoading: key, detailFailure: null }, start.scope);
         try {
-          const selectionRead = source?.read();
-          if (source && !selectedHistories.current.has(source)) {
-            // Read run history beside the combined task/vault receipt. Its result is
-            // consumed only for this visit’s verified task.
-            const history = api(base(task) + "/manual", { signal: source.signal });
-            // Selection can end before the history consumer mounts.
+          const stateRead = source?.read() ?? api(base(task)).then((state) => ({ state }));
+          if (source || (start.bodyReady && !force)) {
+            // The body has a request slot or has already been verified. History can
+            // run alongside controls, and is consumed only by this selection.
+            const history = api(base(task) + "/manual", { signal: source?.signal });
             void history.catch(() => {});
-            selectedHistories.current.set(source, history);
+            queuedHistory.current = { visit: runVisit.current, generation, promise: history };
           }
-          const combined = selectionRead ? await selectionRead : undefined;
-          const data = combined ? combined.state : await api(base(task));
+          const response = await stateRead;
+          const data = response.state;
           const checked = await start.workspace.verifyTaskCenterState(data);
           if (!sameGeneration() || (source && !source.current())) return {};
           if (
@@ -279,11 +291,10 @@ export function useTaskCenter(
             checked.executionEpoch !== meta.executionEpoch
           )
             throw Error("version_conflict");
-          if (combined && source)
+          if ("legacy" in response)
             combinedEvidence.current.set(checked, {
-              selection: source.id,
-              legacy: combined.legacy,
-              attribution: combined.attribution,
+              legacy: response.legacy,
+              attribution: response.attribution,
             });
           recordHeads.current.set(task, { key, at: Date.now() });
           const visible = live.current.selectedKey === key;
@@ -700,7 +711,7 @@ export function useTaskCenter(
     setRunRead(null);
     legacyCache.current = new WeakMap();
     combinedEvidence.current = new WeakMap();
-    selectedHistories.current = new WeakMap();
+    queuedHistory.current = null;
     recordHeads.current.clear();
     setLegacy(null);
     setState({
@@ -843,12 +854,6 @@ export function useTaskCenter(
   // Dispatch the primary state and, when necessary, its original authority first.
   // Run history and the encrypted outbox govern actions, not executor presentation.
   const recordFailed = current?.detailFailure === selectedKey;
-  const historySource =
-    selectedDetail &&
-    (recordFailed ||
-      (record && combinedEvidence.current.get(record)?.selection === selectedDetail.id))
-      ? selectedDetail
-      : undefined;
   useEffect(() => {
     if (!active || !scope || !task || (!record && !recordFailed)) return;
     const control = new AbortController();
@@ -862,11 +867,13 @@ export function useTaskCenter(
       const at = record && runReceipts.current.get(record);
       const age = at === undefined ? Infinity : Date.now() - at;
       if (age >= 0 && age < 15000) return;
-      const queued = historySource && selectedHistories.current.get(historySource);
+      const early = queuedHistory.current;
+      const queued =
+        early?.visit === visit && early.generation === generation ? early.promise : undefined;
       const data = await (queued ?? api(base(task) + "/manual", { signal: control.signal }));
       if (!Array.isArray(data.items)) throw Error("invalid_response");
       if (!valid()) return;
-      if (queued && historySource) selectedHistories.current.delete(historySource);
+      if (queued && queuedHistory.current === early) queuedHistory.current = null;
       if (record) runReceipts.current.set(record, Date.now());
       setState((s) => ({ ...s, manual: { ...s.manual, [task]: data.items } }));
     };
@@ -883,19 +890,7 @@ export function useTaskCenter(
       },
     );
     return () => control.abort();
-  }, [
-    active,
-    scope,
-    visit,
-    task,
-    record,
-    recordFailed,
-    historySource,
-    runAttempt,
-    api,
-    base,
-    update,
-  ]);
+  }, [active, scope, visit, task, record, recordFailed, runAttempt, api, base, update]);
   const runState =
     active && runRead?.visit === visit && runRead.record === record ? runRead.status : "loading";
   const running = Boolean(
@@ -998,7 +993,7 @@ export function useTaskCenter(
     retryExecutors,
     runState,
     retryRunState: () => {
-      if (historySource) selectedHistories.current.delete(historySource);
+      queuedHistory.current = null;
       if (record) runReceipts.current.delete(record);
       setRunAttempt((n) => n + 1);
     },

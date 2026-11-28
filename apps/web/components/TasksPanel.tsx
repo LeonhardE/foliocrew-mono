@@ -936,6 +936,7 @@ export default function TasksPanel({
     model.opening ?? model.selected,
     model.overview,
     model.selectedDetail,
+    Boolean(model.selected && model.form && !model.opening),
   );
   const observed = Object.values(center.manual)
     .flatMap((rows) =>
@@ -975,7 +976,7 @@ export default function TasksPanel({
   }, [active]);
   useEffect(() => {
     if (active && linkedTask && model.unlocked && !model.dirty && !model.busy && !model.pending) {
-      if (model.selected?.taskId !== linkedTask) void model.openTask(linkedTask);
+      if (model.selected?.taskId !== linkedTask) void model.openLinkedTask(linkedTask);
       setLinkedTask(null);
     }
   }, [
@@ -986,7 +987,7 @@ export default function TasksPanel({
     model.busy,
     model.pending,
     model.selected?.taskId,
-    model.openTask,
+    model.openLinkedTask,
   ]);
 
   if (

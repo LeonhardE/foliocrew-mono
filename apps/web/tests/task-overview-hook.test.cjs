@@ -5,7 +5,15 @@ const { compile } = require("./resource-library-helpers.cjs"),
 const { types, overview, reader, inbox, providers } = require("./task-overview-helpers.cjs"),
   fixtures = require("./task-overview-fixtures.cjs");
 const tick = () => new Promise((r) => setImmediate(r));
-function harness({ count = 2, respond, open, overviewEnabled = true, readDetail, timers } = {}) {
+function harness({
+  count = 2,
+  respond,
+  open,
+  overviewEnabled = true,
+  readDetail,
+  timers,
+  userVault = false,
+} = {}) {
   const ui = hooks(),
     calls = [],
     opens = [],
@@ -59,6 +67,7 @@ function harness({ count = 2, respond, open, overviewEnabled = true, readDetail,
       profile: { uid: "uid_A" },
       sessionKey: owner,
       agentHubConfigured: true,
+      ownerCapabilities: { userVault },
       requestPrivate,
     }),
   };
@@ -161,6 +170,7 @@ function harness({ count = 2, respond, open, overviewEnabled = true, readDetail,
         m.opening ?? m.selected,
         m.overview,
         m.selectedDetail,
+        Boolean(m.selected && m.form && !m.opening),
       );
       const observed = Object.values(c.manual)
         .flatMap((rows) =>
@@ -1622,5 +1632,149 @@ test("a late vault verification cannot publish the former selection or its avail
     assert.equal(result.c.runState, "ready");
   } finally {
     h.close();
+  }
+});
+
+test("a direct link opens an unlisted task without waiting for the overview and shares controls with history", async () => {
+  for (const pendingOverview of [true, false]) {
+    let finishOverview, finishControls;
+    const list = new Promise((resolve) => {
+      finishOverview = resolve;
+    });
+    const h = harness({
+      readDetail: require("./task-overview-helpers.cjs").detail.readTaskDetail,
+      open: () => ({ ...syntheticForm(), name: "Linked task", goal: "Research" }),
+      respond: (path, options) => {
+        if (path.endsWith("/overview/query")) return list;
+        if (path === "/api/v2/tasks/task_9")
+          return Response.json(fixtures.packet(fixtures.metadata(9)));
+        if (path === "/api/v3/task-center/vault_A/tasks/task_9") {
+          return new Promise((resolve) => {
+            finishControls = () => resolve(Response.json(detailFixture("task_9", null).state));
+          });
+        }
+        if (path.endsWith("/task_9/manual")) return Response.json({ items: [] });
+      },
+    });
+    try {
+      if (!pendingOverview) finishOverview(Response.json({}, { status: 503 }));
+      await h.ready();
+      h.workspace.loadTaskCenterPending = async () => null;
+      h.workspace.verifyTaskCenterState = async (s) => s;
+      let vaultReads = 0;
+      h.workspace.refreshVault = async (signal, forWrite, bundled, reuseStartup) => {
+        assert.equal(forWrite, false);
+        assert.equal(reuseStartup, true);
+        vaultReads++;
+        return h.workspace.vault;
+      };
+      await h.current.m.openLinkedTask("task_9");
+      let current = await h.ready();
+      assert.equal(current.m.selected?.taskId, "task_9");
+      assert.equal(vaultReads, 1);
+      assert.equal(typeof finishControls, "function");
+      assert.equal(current.c.runState, "loading");
+      assert.deepEqual(
+        h.calls.filter((c) => c.path.includes("task_9")).map((c) => c.path.split("/").at(-1)),
+        ["task_9", "task_9", "manual"],
+      );
+      finishControls();
+      current = await h.ready();
+      assert.equal(current.c.runState, "ready");
+      assert.equal(h.calls.filter((c) => c.path.includes("task_9")).length, 3);
+    } finally {
+      finishOverview(Response.json(fixtures.body()));
+      h.close();
+    }
+  }
+});
+
+test("independent User display verification overlaps the selected Hub read and fails closed on a changed root", async () => {
+  for (const changed of [false, true]) {
+    let finishDetail,
+      finishVault,
+      vaultReads = 0;
+    const h = harness({
+      userVault: true,
+      readDetail: require("./task-overview-helpers.cjs").detail.readTaskDetail,
+      open: () => ({ ...syntheticForm(), name: "Synthetic", goal: "Research" }),
+      respond: (path, options) => {
+        if (path.endsWith("/detail/query"))
+          return new Promise((resolve) => {
+            finishDetail = () => resolve(selectedReadFixture("task_1", options.json));
+          });
+        if (path.endsWith("/manual")) return Response.json({ items: [] });
+      },
+    });
+    try {
+      await h.ready();
+      h.workspace.loadTaskCenterPending = async () => null;
+      h.workspace.verifyTaskCenterState = async (s) => s;
+      h.workspace.refreshVault = async (signal, forWrite) => {
+        assert.ok(!forWrite);
+        vaultReads++;
+        return new Promise((resolve) => {
+          finishVault = () =>
+            resolve(
+              changed ? { ...h.workspace.vault, rootKeyId: "another_root" } : h.workspace.vault,
+            );
+        });
+      };
+      const opening = h.current.m.openTask("task_1");
+      await h.ready();
+      assert.equal(typeof finishVault, "function");
+      assert.equal(typeof finishDetail, "function");
+      finishDetail();
+      assert.equal((await h.ready()).m.selected, null);
+      finishVault();
+      await opening;
+      const current = await h.ready();
+      assert.equal(vaultReads, 1);
+      assert.equal(current.m.selected?.taskId, changed ? undefined : "task_1");
+      assert.equal(current.m.error, changed ? "version_conflict" : "");
+    } finally {
+      h.close();
+    }
+  }
+});
+
+test("a linked task reuses a just-arrived overview packet before list render, but an expired packet requires the original read", async () => {
+  for (const expired of [false, true]) {
+    let finishOverview;
+    const list = new Promise((resolve) => {
+      finishOverview = resolve;
+    });
+    const h = harness({
+      readDetail: require("./task-overview-helpers.cjs").detail.readTaskDetail,
+      open: () => ({ ...syntheticForm(), name: "Linked task", goal: "Research" }),
+      respond: (path) => {
+        if (path.endsWith("/overview/query")) return list;
+        if (path === "/api/v2/tasks/task_1")
+          return Response.json(fixtures.packet(fixtures.metadata(1)));
+        if (path === "/api/v3/task-center/vault_A/tasks/task_1")
+          return Response.json(detailFixture("task_1", null).state);
+        if (path.endsWith("/task_1/manual")) return Response.json({ items: [] });
+      },
+    });
+    try {
+      await h.ready();
+      h.workspace.loadTaskCenterPending = async () => null;
+      h.workspace.verifyTaskCenterState = async (s) => s;
+      h.workspace.refreshVault = async () => h.workspace.vault;
+      const reading = h.current.m.overview.acquire();
+      finishOverview(Response.json(fixtures.body()));
+      await reading;
+      assert.equal(h.current.m.items.length, 0);
+      if (expired) h.advance(30_000);
+      await h.current.m.openLinkedTask("task_1");
+      const result = await h.ready();
+      assert.equal(result.m.selected?.taskId, "task_1");
+      assert.equal(
+        h.calls.filter((c) => c.path === "/api/v2/tasks/task_1").length,
+        expired ? 1 : 0,
+      );
+    } finally {
+      h.close();
+    }
   }
 });

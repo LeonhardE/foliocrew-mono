@@ -31,7 +31,6 @@ import {
 } from "@/lib/task-types";
 
 export type SelectedTaskDetail = {
-  id: symbol;
   metadata: TaskMetadata;
   scope: string;
   vaultVersion: number;
@@ -800,7 +799,7 @@ export function useTasks(
   }, [editable, updatePrivate]);
 
   const openTask = useCallback(
-    async (taskId: string, version?: number) => {
+    async (taskId: string, version?: number, fromLink = false) => {
       if (
         !owner ||
         live.current.owner !== owner ||
@@ -818,7 +817,10 @@ export function useTasks(
         return;
       }
       const serial = ++selection.current;
-      const listItem = stateRef.current.items.find((item) => item.taskId === taskId);
+      const listItem =
+        !fromLink || freshReads.current.tasks?.scope === `${owner}:${scope}`
+          ? stateRef.current.items.find((item) => item.taskId === taskId)
+          : undefined;
       const vaultVersion = live.current.workspace.vault?.version;
       const rootKeyId = live.current.workspace.vault?.rootKeyId;
       const key = JSON.stringify([scope, rootKeyId, vaultVersion, taskId]);
@@ -834,7 +836,16 @@ export function useTasks(
       const cached = age < 30_000 ? matchingRead : undefined;
       clearSelectedDetail();
       const listedHead = version === undefined ? listItem : undefined;
-      const knownPacket = !cached && listedHead && overview.current!.currentTaskPacket(listedHead);
+      // A current overview can arrive before React publishes its list. Never wait on it
+      // to resolve a direct link, which can point outside the first page.
+      const packetHead =
+        listedHead ??
+        (fromLink && version === undefined
+          ? overview.current!.receipt?.data.tasks.items.find(
+              (item: TaskMetadata) => item.taskId === taskId,
+            )
+          : undefined);
+      const knownPacket = !cached && packetHead && overview.current!.currentTaskPacket(packetHead);
       const localPacket = knownPacket ? knownPacket.packet : matchingRead?.packet;
       let detail: SelectedTaskDetail | null = null;
       let verifiedReceiptAt: number | undefined;
@@ -852,7 +863,6 @@ export function useTasks(
           live.current.workspace.vault?.rootKeyId === rootKeyId &&
           live.current.workspace.vault?.version === vaultVersion;
         detail = {
-          id: Symbol(),
           metadata: listedHead,
           scope,
           vaultVersion,
@@ -871,7 +881,14 @@ export function useTasks(
                 timedOut = true;
                 controller.abort();
               }, 14000);
-              pending = readDetail(
+              // User vaults have their own signed authority endpoint. Start that independent
+              // display verification alongside the Hub read instead of after it.
+              const authorityStartedAt = Date.now();
+              const userVault =
+                !cached && auth.ownerCapabilities?.userVault
+                  ? live.current.workspace.refreshVault(controller.signal)
+                  : undefined;
+              const result = readDetail(
                 (path, options) => auth.requestPrivate("agent-hub", path, owner, options),
                 listedHead.vaultId,
                 taskId,
@@ -879,8 +896,9 @@ export function useTasks(
                 true,
                 controller.signal,
                 !cached,
-              )
-                .then(async (value) => {
+              );
+              pending = Promise.all([result, userVault])
+                .then(async ([value, userAuthority]) => {
                   const receivedAt = Date.now();
                   if (!current()) throw new TaskError("cancelled");
                   if (
@@ -895,13 +913,15 @@ export function useTasks(
                     if (!sameTaskMetadata(value.taskMetadata, listedHead))
                       throw new TaskError("version_conflict");
                     const bundledVault = value.vaultResponse;
-                    const verified = await live.current.workspace.refreshVault(
-                      controller.signal,
-                      false,
-                      bundledVault.status === "ready"
-                        ? async () => Response.json(bundledVault.data)
-                        : undefined,
-                    );
+                    const verified =
+                      userAuthority ??
+                      (await live.current.workspace.refreshVault(
+                        controller.signal,
+                        false,
+                        bundledVault.status === "ready"
+                          ? async () => Response.json(bundledVault.data)
+                          : undefined,
+                      ));
                     if (!current()) throw new TaskError("cancelled");
                     if (
                       verified.vaultId !== listedHead.vaultId ||
@@ -909,7 +929,8 @@ export function useTasks(
                       verified.rootKeyId !== rootKeyId
                     )
                       throw new TaskError("version_conflict");
-                    if (bundledVault.status === "ready") verifiedReceiptAt = receivedAt;
+                    if (bundledVault.status === "ready")
+                      verifiedReceiptAt = userAuthority ? authorityStartedAt : receivedAt;
                   }
                   return value;
                 })
@@ -968,12 +989,20 @@ export function useTasks(
                 throw new TaskError("version_conflict");
             } else {
               const [verifiedVault, fetched] = await Promise.all([
-                live.current.workspace.refreshVault(context.signal),
+                live.current.workspace.refreshVault(
+                  context.signal,
+                  false,
+                  undefined,
+                  fromLink && version === undefined,
+                ),
                 knownPacket ? null : readHead(),
               ]);
               const included =
-                !fetched && listedHead && vaultVersion === verifiedVault.version
-                  ? overview.current!.currentTaskPacket(listedHead)
+                !fetched &&
+                knownPacket &&
+                vaultVersion === verifiedVault.version &&
+                verifiedVault.rootKeyId === rootKeyId
+                  ? overview.current!.currentTaskPacket(knownPacket.packet.metadata)
                   : null;
               inlineAt = included?.at;
               head = fetched ?? included?.packet ?? (await readHead());
@@ -1042,6 +1071,7 @@ export function useTasks(
     },
     [
       api,
+      auth.ownerCapabilities?.userVault,
       auth.requestPrivate,
       clearSelectedDetail,
       fail,
@@ -1051,6 +1081,11 @@ export function useTasks(
       scope,
       updatePrivate,
     ],
+  );
+
+  const openLinkedTask = useCallback(
+    (taskId: string) => openTask(taskId, undefined, true),
+    [openTask],
   );
 
   const restoreDraft = useCallback(
@@ -2038,6 +2073,7 @@ export function useTasks(
     reloadCatalogue,
     startNew,
     openTask,
+    openLinkedTask,
     setForm,
     setBindings,
     review,
