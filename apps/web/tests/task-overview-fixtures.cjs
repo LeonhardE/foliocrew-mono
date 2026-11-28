@@ -101,4 +101,61 @@ function body(request = { knownPacketVersions: [], packetLimit: 4 }, count = 2) 
     packets: request.packetLimit === 4 && ids.length ? batch(ids, tasks) : null,
   };
 }
-module.exports = { C, metadata, packet, batch, body };
+function controls(taskId, ownerSubject = "subject_A", hasReport = false) {
+  const state = {
+    contractVersion: C,
+    profile: "folioview.task-center.v1",
+    taskId,
+    taskVersion: 1,
+    executionEpoch: 1,
+    rules: null,
+    assignments: [],
+    dispatchSupported: false,
+    nativeScheduleAttested: false,
+  };
+  const completed = {
+    snapshot: {
+      contractVersion: C,
+      profile: state.profile,
+      ownerSubject,
+      vaultId: "vault_A",
+      taskId,
+      requestId: "manual_request_01234567890123",
+      requestedAt: 100,
+      executors: [
+        {
+          assignmentId: "assignment_A",
+          assignmentVersion: 1,
+          runId: "run_A",
+          resultId: "result_A",
+          stage: "result_received",
+        },
+      ],
+    },
+    aggregate: {
+      state: "result_received",
+      hasActiveExecutors: false,
+      counts: {
+        waiting: 0,
+        awaiting_confirmation: 0,
+        running: 0,
+        result_received: 1,
+        failed: 0,
+        cancelled: 0,
+      },
+    },
+    reasons: {},
+    expiresAt: 200,
+    canCancel: false,
+    dispatchSupported: false,
+    continuation: "open_agent",
+    nativeScheduleAttested: false,
+  };
+  return {
+    contractVersion: C,
+    profile: "folioview.owner-task-detail.v1",
+    state,
+    manual: { contractVersion: C, items: hasReport ? [completed] : [] },
+  };
+}
+module.exports = { C, metadata, packet, batch, body, controls };

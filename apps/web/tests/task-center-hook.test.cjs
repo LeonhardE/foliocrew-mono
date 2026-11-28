@@ -26,6 +26,7 @@ function harness({
   timers,
   document = Object.assign(new EventTarget(), { visibilityState: "visible" }),
   initial = meta(),
+  bodyReady = false,
   overview,
   selectedDetail,
 } = {}) {
@@ -141,7 +142,7 @@ function harness({
       assert.ok(n++ < 30, "render loop");
       dirty = false;
       index = 0;
-      result = m.useTaskCenter(workspace, true, selected, overview, selectedDetail);
+      result = m.useTaskCenter(workspace, true, selected, overview, selectedDetail, bodyReady);
       for (const e of effects.splice(0)) {
         cells[e.n]?.cleanup?.();
         cells[e.n] = { deps: e.deps, cleanup: e.f() };
@@ -1064,6 +1065,170 @@ test("an erased original receipt is reconciled only by an authenticated maintena
       assert.equal(pending.size, 0);
     }
     assert.equal(h.calls.filter((c) => c.path.endsWith("/commands")).length, 1);
+    h.close();
+  }
+});
+
+test("one verified control read serves state and history, with explicit legacy and size fallbacks only", async () => {
+  const { controls } = require("./task-overview-fixtures.cjs");
+  for (const mode of [
+    "ready",
+    "old",
+    "too large",
+    "denied",
+    "gone",
+    "conflict",
+    "failed",
+    "wrong 400",
+    "malformed",
+    "wrong task",
+    "wrong version",
+    "other owner",
+  ]) {
+    const task = meta("task_A", { vaultId: "vault_A" });
+    let outboxReads = 0;
+    const h = harness({
+      initial: task,
+      bodyReady: true,
+      transport: (path, opts) => {
+        if (!path.endsWith("/detail/query")) return;
+        assert.equal(opts.json.includeManual, true);
+        const errors = {
+          old: [400, "malformed_request"],
+          "too large": [413, "payload_too_large"],
+          denied: [403, "insufficient_scope"],
+          gone: [404, "not_found"],
+          conflict: [409, "version_conflict"],
+          failed: [503, "source_unavailable"],
+          "wrong 400": [400, "unsupported_query"],
+        };
+        if (errors[mode]) {
+          const [status, code] = errors[mode];
+          return Response.json(
+            {
+              contractVersion: CONTRACT,
+              error: { code, requestId: "request_A", retryable: status === 503 },
+            },
+            { status },
+          );
+        }
+        const view = controls(
+          path.split("/").at(-3),
+          mode === "other owner" ? "owner_B" : "subject_A",
+          true,
+        );
+        if (mode === "wrong task") view.manual.items[0].snapshot.taskId = "other_task";
+        if (mode === "malformed") view.manual.items[0] = {};
+        if (mode === "wrong version") view.state.taskVersion++;
+        return Response.json(view);
+      },
+    });
+    h.workspace.loadTaskCenterPending = async () => {
+      outboxReads++;
+      return null;
+    };
+    const selectedPaths = () =>
+      h.calls.filter((c) => c.path.includes("/tasks/")).map((c) => c.path.split("/").at(-1));
+    try {
+      const current = await h.ready();
+      const fallback = mode === "old" || mode === "too large";
+      assert.deepEqual(selectedPaths(), fallback ? ["query", "task_A", "manual"] : ["query"], mode);
+      const success = mode === "ready" || fallback;
+      assert.equal(current.runState, success ? "ready" : "error", mode);
+      assert.equal(Boolean(current.selectedRecord), success, mode);
+      assert.equal(outboxReads, success ? 1 : 0, mode);
+      if (mode === "ready") {
+        assert.equal(current.manual.task_A[0].snapshot.executors[0].resultId, "result_A");
+        await current.load("task_A", true);
+        assert.deepEqual(selectedPaths(), ["query", "task_A"]);
+      }
+      if (!success)
+        await assert.rejects(current.command("task_A", "manual_intent", []), /request_failed/);
+      if (mode === "old") {
+        h.select(meta("task_B", { vaultId: "vault_A" }));
+        await h.ready();
+        assert.deepEqual(selectedPaths(), ["query", "task_A", "manual", "task_B", "manual"]);
+      }
+    } finally {
+      h.close();
+    }
+  }
+});
+
+test("returning to a selected task ignores an older unfinished control read and can finish the new visit", async () => {
+  const { controls } = require("./task-overview-fixtures.cjs");
+  const queues = [];
+  const a = meta("task_A", { vaultId: "vault_A" }),
+    b = meta("task_B", { vaultId: "vault_A" });
+  const h = harness({
+    initial: a,
+    bodyReady: true,
+    transport: (path) => {
+      if (!path.endsWith("/detail/query")) return;
+      const gate = Promise.withResolvers();
+      queues.push({ id: path.split("/").at(-3), gate });
+      return gate.promise;
+    },
+  });
+  try {
+    await h.ready();
+    h.select(b);
+    await h.ready();
+    h.select(a);
+    await h.ready();
+    assert.deepEqual(
+      queues.map((q) => q.id),
+      ["task_A", "task_B", "task_A"],
+    );
+    for (const q of queues.slice(0, 2))
+      q.gate.resolve(Response.json(controls(q.id, "subject_A", true)));
+    const waiting = await h.ready();
+    assert.equal(waiting.runState, "loading");
+    assert.equal(waiting.selectedRecord, undefined);
+    queues[2].gate.resolve(Response.json(controls("task_A")));
+    const selected = await h.ready();
+    assert.equal(selected.runState, "ready");
+    assert.equal(selected.selectedRecord.taskId, "task_A");
+    assert.equal(selected.manual.task_A.length, 0);
+    assert.equal(h.calls.filter((c) => c.path.endsWith("/manual")).length, 0);
+  } finally {
+    h.close();
+  }
+});
+
+test("the combined display read waits for the local outbox, then a manual command still checks independent live state and history", async () => {
+  const { controls } = require("./task-overview-fixtures.cjs");
+  const task = meta("task_A", { vaultId: "vault_A" }),
+    gate = Promise.withResolvers();
+  const h = harness({
+    bodyReady: true,
+    initial: task,
+    transport: (path, o) => {
+      if (path.endsWith("/detail/query")) return Response.json(controls("task_A"));
+      if (path.endsWith("/manual") && o.method === "GET") return Response.json({}, { status: 503 });
+    },
+  });
+  h.workspace.loadTaskCenterPending = () => gate.promise;
+  try {
+    const waiting = await h.ready();
+    assert.equal(waiting.runState, "loading");
+    await assert.rejects(waiting.command("task_A", "manual_intent", []), /request_failed/);
+    gate.resolve(null);
+    const ready = await h.ready();
+    assert.equal(ready.runState, "ready");
+    await assert.rejects(ready.command("task_A", "manual_intent", []), /service_unavailable/);
+    assert.deepEqual(
+      h.calls
+        .filter((c) => c.path.includes("/tasks/"))
+        .map((c) => [c.options.method, c.path.split("/").at(-1)]),
+      [
+        ["POST", "query"],
+        ["GET", "task_A"],
+        ["GET", "manual"],
+      ],
+    );
+    assert.equal(h.pending.size, 0);
+  } finally {
     h.close();
   }
 });

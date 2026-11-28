@@ -51,6 +51,8 @@ function harness({
     const custom = respond?.(path, options);
     if (custom !== undefined) return custom;
     const full = fixtures.body(options.json?.knownPacketVersions ? options.json : undefined, count);
+    if (options.json?.includeManual && path.endsWith("/detail/query"))
+      return Response.json(fixtures.controls(path.split("/").at(-3)));
     if (path.endsWith("/overview/query")) return Response.json(full);
     if (path === types.TASK_PACKET_QUERY)
       return Response.json(fixtures.batch(options.json.taskIds, full.tasks.items));
@@ -1356,15 +1358,8 @@ test("opening a task whose historical run is already in the overview keeps the f
   const h = harness({
     open: () => ({ ...syntheticForm(), name: "Synthetic", goal: "Research" }),
     respond: (path) => {
-      if (path.endsWith("/tasks/task_1/manual"))
-        return Response.json({
-          items: [
-            {
-              snapshot: { executors: [{ resultId: "result_A" }] },
-              aggregate: { hasActiveExecutors: false },
-            },
-          ],
-        });
+      if (path.endsWith("/task_1/detail/query"))
+        return Response.json(fixtures.controls("task_1", "owner_A", true));
       if (path.endsWith("/tasks/task_1")) return Response.json(detailFixture("task_1", null).state);
     },
   });
@@ -1650,9 +1645,9 @@ test("a direct link opens an unlisted task without waiting for the overview and 
         if (path.endsWith("/overview/query")) return list;
         if (path === "/api/v2/tasks/task_9")
           return Response.json(fixtures.packet(fixtures.metadata(9)));
-        if (path === "/api/v3/task-center/vault_A/tasks/task_9") {
+        if (path === "/api/v3/task-center/vault_A/tasks/task_9/detail/query") {
           return new Promise((resolve) => {
-            finishControls = () => resolve(Response.json(detailFixture("task_9", null).state));
+            finishControls = () => resolve(Response.json(fixtures.controls("task_9")));
           });
         }
         if (path.endsWith("/task_9/manual")) return Response.json({ items: [] });
@@ -1678,12 +1673,12 @@ test("a direct link opens an unlisted task without waiting for the overview and 
       assert.equal(current.c.runState, "loading");
       assert.deepEqual(
         h.calls.filter((c) => c.path.includes("task_9")).map((c) => c.path.split("/").at(-1)),
-        ["task_9", "task_9", "manual"],
+        ["task_9", "query"],
       );
       finishControls();
       current = await h.ready();
       assert.equal(current.c.runState, "ready");
-      assert.equal(h.calls.filter((c) => c.path.includes("task_9")).length, 3);
+      assert.equal(h.calls.filter((c) => c.path.includes("task_9")).length, 2);
     } finally {
       finishOverview(Response.json(fixtures.body()));
       h.close();
