@@ -5,6 +5,7 @@ import type { TaskDetailRead } from "@/lib/task-detail-read";
 import type { TaskOverviewRead } from "@/lib/task-overview";
 import { useAuth } from "./AuthProvider";
 import type { HoldingsWorkspace } from "./useHoldingsWorkspace";
+import { isManualPreflightRead } from "@/lib/persistent-owner-routes";
 import { boundedJson, untilSignal } from "@/lib/workspace-cache";
 import type { TaskMetadata, Vault } from "@/lib/encrypted-types";
 import { readReportProviders } from "@/lib/report-provider-attribution";
@@ -163,14 +164,18 @@ export function useTaskCenter(
       else options.signal?.addEventListener("abort", abort, { once: true });
       let timedOut = false;
       const cancelled = () => Error(timedOut ? "request_timeout" : "cancelled");
-      const timer = setTimeout(() => {
-        timedOut = true;
-        control.abort();
-      }, 14000);
+      const method = options.method ?? "GET";
+      const timer = setTimeout(
+        () => {
+          timedOut = true;
+          control.abort();
+        },
+        isManualPreflightRead(path, method) ? 24_000 : 14_000,
+      );
       try {
         const response = await untilSignal(
           auth.requestPrivate("agent-hub", path, start.owner, {
-            method: options.method ?? "GET",
+            method,
             json: options.json,
             ...(options.display ? { coalesceDisplay: true } : {}),
             signal: control.signal,
@@ -751,49 +756,6 @@ export function useTaskCenter(
   useEffect(() => {
     if (scope && active && selected) void load(selected.taskId);
   }, [scope, active, selectedKey, selectedDetail, load]);
-  useEffect(() => {
-    if (!scope || !active) return;
-    const tasks = Object.entries(state.manual)
-      .filter(([, rows]) => rows.some((v) => v.aggregate?.hasActiveExecutors))
-      .map(([task]) => task);
-    if (!tasks.length) return;
-    let stopped = false;
-    const poll = async () => {
-      if (stopped || document.visibilityState === "hidden") return;
-      for (const task of tasks) {
-        if (stopped || live.current.scope !== scope) break;
-        const generation = generations.current.get(task);
-        try {
-          const data = await api(base(task) + "/manual");
-          if (!Array.isArray(data.items)) throw Error("invalid_response");
-          if (
-            !stopped &&
-            live.current.scope === scope &&
-            generation === generations.current.get(task)
-          )
-            setState((s) => ({ ...s, manual: { ...s.manual, [task]: data.items } }));
-        } catch (e) {
-          if (
-            !stopped &&
-            live.current.scope === scope &&
-            generation === generations.current.get(task) &&
-            live.current.selected?.taskId === task &&
-            error(e) !== "cancelled"
-          ) {
-            const currentVisit = runVisit.current;
-            setRunRead((previous) =>
-              previous?.visit === currentVisit ? { ...previous, status: "error" } : previous,
-            );
-          }
-        }
-      }
-    };
-    const timer = setInterval(() => void poll(), 5000);
-    return () => {
-      stopped = true;
-      clearInterval(timer);
-    };
-  }, [scope, active, state.manual, api, base, update]);
   const current = scope && state.scope === scope ? state : null;
   const task = selected?.taskId;
   const record =
@@ -935,13 +897,63 @@ export function useTaskCenter(
   ]);
   const runState =
     active && runRead?.visit === visit && runRead.record === record ? runRead.status : "loading";
-  runGate.current = {
-    key: selectedKey,
-    ready: runState === "ready" && Boolean(record),
-    running: Boolean(
-      task && current?.manual[task]?.some((item) => item.aggregate?.hasActiveExecutors),
-    ),
-  };
+  const running = Boolean(
+    task && current?.manual[task]?.some((item) => item.aggregate?.hasActiveExecutors),
+  );
+  runGate.current = { key: selectedKey, ready: runState === "ready" && Boolean(record), running };
+  useEffect(() => {
+    if (!task || runState !== "ready" || !running) return;
+    const taskId = task;
+    const generation = generations.current.get(taskId);
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let pending: AbortController | undefined;
+    const currentVisit = () =>
+      !stopped && runVisit.current === visit && generations.current.get(taskId) === generation;
+    const schedule = () => {
+      if (currentVisit() && document.visibilityState !== "hidden" && !pending && !timer)
+        timer = setTimeout(poll, 5000);
+    };
+    async function poll() {
+      timer = undefined;
+      if (!currentVisit() || document.visibilityState === "hidden") return;
+      const control = new AbortController();
+      pending = control;
+      try {
+        const data = await api(base(taskId) + "/manual", { signal: control.signal });
+        if (!Array.isArray(data.items)) throw Error("invalid_response");
+        if (!currentVisit() || control.signal.aborted) return;
+        stopped = !data.items.some((item: J) => item.aggregate?.hasActiveExecutors);
+        setState((s) => ({ ...s, manual: { ...s.manual, [taskId]: data.items } }));
+      } catch {
+        if (currentVisit() && !control.signal.aborted) {
+          stopped = true;
+          setRunRead((previous) =>
+            previous?.visit === visit ? { ...previous, status: "error" } : previous,
+          );
+        }
+      } finally {
+        pending = undefined;
+        schedule();
+      }
+    }
+    const pause = () => {
+      clearTimeout(timer);
+      timer = undefined;
+      pending?.abort();
+    };
+    const visibilityChanged = () => {
+      if (document.visibilityState === "hidden") pause();
+      else schedule();
+    };
+    schedule();
+    document.addEventListener("visibilitychange", visibilityChanged);
+    return () => {
+      stopped = true;
+      pause();
+      document.removeEventListener("visibilitychange", visibilityChanged);
+    };
+  }, [task, runState, running, visit, api, base]);
   const currentAssignments: J[] =
     selected?.status === "active" &&
     record?.rules?.definition.taskVersion === selected.taskVersion &&

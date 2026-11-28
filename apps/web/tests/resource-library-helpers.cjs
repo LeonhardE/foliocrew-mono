@@ -59,6 +59,8 @@ function compile(file, imports = {}, globals = {}) {
       if (["@/lib/user-recovery-route", "../user-recovery-route"].includes(name))
         return compile("../lib/user-recovery-route.ts");
       if (name === "@/lib/workspace-invitations") return compile("../lib/workspace-invitations.ts");
+      if (name === "@/lib/persistent-owner-routes" && !Object.hasOwn(imports, name))
+        return compile("../lib/persistent-owner-routes.ts");
       if (name === "@/lib/workspace-cache") return compile("../lib/workspace-cache.ts");
       if (name === "@/lib/account-preference-reads")
         return compile("../lib/account-preference-reads.ts", {

@@ -1421,60 +1421,100 @@ test("Agent credential Owner routes preserve opaque activation, fixed namespace 
   assert.equal((await wrong.proxy(request(base + "/setups/" + OP))).status, 503);
 });
 
-test(
-  "the unchanged 12-second proxy deadline wins over a non-cooperative late Hub success",
-  { timeout: 10000 },
-  async () => {
+test("Owner proxy keeps a total deadline and cancellation across the two cold-start preflight reads", async () => {
+  const task = "/api/v3/task-center/vault_A/tasks/task_A";
+  const definition = {
+    contractVersion: CONTRACT,
+    profile: "folioview.task-center.v1",
+    taskId: "task_A",
+    taskVersion: 1,
+    executionEpoch: 1,
+    rules: null,
+    assignments: [],
+    dispatchSupported: false,
+    nativeScheduleAttested: false,
+  };
+  for (const [path, budget, result, outcome] of [
+    ["/api/v2/vaults/current", 12000, VAULT, "deadline"],
+    [task, 20000, definition, "success"],
+    [task + "/manual", 20000, { contractVersion: CONTRACT, items: [] }, "success"],
+    [task, 20000, definition, "cancel"],
+    [task + "/manual", 20000, { contractVersion: CONTRACT, items: [] }, "deadline"],
+  ]) {
     const timers = new Map();
-    let finish,
-      reached,
+    const caller = new AbortController();
+    const arrival = Promise.withResolvers(),
+      late = Promise.withResolvers();
+    let time = 0,
       forwarded = 0;
-    const forwarding = new Promise((resolve) => {
-      reached = resolve;
-    });
-    const late = new Promise((resolve) => {
-      finish = resolve;
-    });
-    const clocked = compile("hub-owner", hubImports, {
-      setTimeout(callback, delay) {
-        const id = {};
-        timers.set(id, { callback, delay });
-        return id;
+    const clocked = compile(
+      "hub-owner",
+      {
+        ...hubImports,
+        "./owner-transport": { ...common, proxyClock: () => time },
       },
-      clearTimeout(id) {
-        timers.delete(id);
+      {
+        setTimeout(callback, delay) {
+          const id = {};
+          timers.set(id, { callback, at: time + delay });
+          return id;
+        },
+        clearTimeout(id) {
+          timers.delete(id);
+        },
       },
-    });
+    );
     const proxy = clocked.createHubProxy({
       env: ENV,
       now: () => NOW,
-      fetch: async (url) => {
-        if (url === JWKS) return response({ keys: [jwk] });
+      fetch: async (url, options) => {
+        if (url === JWKS) {
+          time += 2000;
+          return response({ keys: [jwk] });
+        }
         forwarded++;
-        reached();
-        return late;
+        arrival.resolve(options.signal);
+        return late.promise;
       },
     });
-    const pending = proxy(request());
-    await Promise.race([
-      forwarding,
+    const pending = proxy(request(path, { signal: caller.signal }));
+    const signal = await Promise.race([
+      arrival.promise,
       pending.then(() => assert.fail("proxy completed before reaching Hub")),
     ]);
-    assert.equal(forwarded, 1);
-    const deadline = [...timers.values()].find((entry) => entry.delay === 12000);
-    assert.ok(deadline, "production deadline remains 12 seconds");
-    deadline.callback();
+    assert.equal(time, 2000);
+    assert.deepEqual(
+      [...timers.values()].map((entry) => entry.at),
+      [budget],
+    );
+    const advance = (target) => {
+      time = target;
+      for (const timer of timers.values()) if (time >= timer.at) timer.callback();
+    };
+    advance(budget - 1);
+    assert.equal(signal.aborted, false);
+    if (outcome === "success") late.resolve(response(result));
+    else if (outcome === "cancel") caller.abort();
+    else advance(budget);
     const reply = await pending;
-    assert.equal(reply.headers.get("x-folioview-read-failure"), "deadline");
+    assert.equal(
+      reply.headers.get("x-folioview-read-failure"),
+      outcome === "deadline" ? "deadline" : null,
+    );
     assert.equal(reply.headers.get("x-folioview-admission-retry"), null);
-    await error(reply, 503, "authorization_unavailable");
-    finish(response());
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(reply.status, 503);
+    if (outcome === "success") {
+      assert.equal(reply.status, 200);
+      assert.deepEqual(await reply.json(), result);
+    } else {
+      assert.equal(signal.aborted, true);
+      await error(reply, 503, "authorization_unavailable");
+      late.resolve(response(result));
+      await new Promise((resolve) => setImmediate(resolve));
+    }
     assert.equal(forwarded, 1);
     assert.equal(timers.size, 0);
-  },
-);
+  }
+});
 
 test("actual Owner proxy admits only closed display-name routes and binds original receipts to source/vault/operation", async () => {
   const profile = "folioview.private-display-name.v1",
