@@ -16,6 +16,7 @@ import { readReportProviders } from "@/lib/report-provider-attribution";
 const CONTRACT = "folioview.agent-workspace.v2.0";
 type J = Record<string, any>;
 type ExecutorDisplay = { status: "ready" | "loading" | "error"; providers: string[] };
+export type TaskRunView = "hidden" | "summary" | "progress";
 const ready = (providers: string[] = []): ExecutorDisplay => ({ status: "ready", providers });
 const taskHead = (meta: TaskMetadata | null) =>
   meta && [
@@ -148,6 +149,12 @@ export function useTaskCenter(
   } | null>(null);
   const [runAttempt, setRunAttempt] = useState(0);
   const runGate = useRef({ key: "", ready: false, running: false });
+  const runObserver = useRef<{ view: TaskRunView; reschedule?: () => void }>({ view: "hidden" });
+  const setRunView = useCallback((view: TaskRunView) => {
+    if (runObserver.current.view === view) return;
+    runObserver.current.view = view;
+    runObserver.current.reschedule?.();
+  }, []);
   const legacyCache = useRef(new WeakMap<J, string[]>());
   const [legacy, setLegacy] = useState<{
     key: string;
@@ -999,12 +1006,24 @@ export function useTaskCenter(
     const currentVisit = () =>
       !stopped && runVisit.current === visit && generations.current.get(taskId) === generation;
     const schedule = () => {
-      if (currentVisit() && document.visibilityState !== "hidden" && !pending && !timer)
-        timer = setTimeout(poll, 5000);
+      const view = runObserver.current.view;
+      if (
+        view !== "hidden" &&
+        currentVisit() &&
+        document.visibilityState !== "hidden" &&
+        !pending &&
+        !timer
+      )
+        timer = setTimeout(poll, view === "progress" ? 5_000 : 30_000);
     };
     async function poll() {
       timer = undefined;
-      if (!currentVisit() || document.visibilityState === "hidden") return;
+      if (
+        !currentVisit() ||
+        document.visibilityState === "hidden" ||
+        runObserver.current.view === "hidden"
+      )
+        return;
       const control = new AbortController();
       pending = control;
       try {
@@ -1034,10 +1053,19 @@ export function useTaskCenter(
       if (document.visibilityState === "hidden") pause();
       else schedule();
     };
+    // Switching between progress, results and editing may reuse an in-flight
+    // history read. Cancel it only when the document, task or owner changes.
+    const reschedule = () => {
+      clearTimeout(timer);
+      timer = undefined;
+      schedule();
+    };
+    runObserver.current.reschedule = reschedule;
     schedule();
     document.addEventListener("visibilitychange", visibilityChanged);
     return () => {
       stopped = true;
+      delete runObserver.current.reschedule;
       pause();
       document.removeEventListener("visibilitychange", visibilityChanged);
     };
@@ -1084,6 +1112,7 @@ export function useTaskCenter(
     executors,
     retryExecutors,
     runState,
+    setRunView,
     retryRunState: () => {
       if (task && recordFailed && failedControls.current === generations.current.get(task)) {
         recordHeads.current.delete(task);

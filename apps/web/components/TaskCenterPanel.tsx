@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import type { HoldingsWorkspace } from "./useHoldingsWorkspace";
 import type { TaskModel } from "./useTasks";
-import type { TaskCenterModel } from "./useTaskCenter";
+import type { TaskCenterModel, TaskRunView } from "./useTaskCenter";
 import type { PersistentWorkspaceModel } from "./usePersistentWorkspace";
 import type { TaskRequest } from "./TasksPanel";
 import { defaultTask } from "@/lib/task-forms";
@@ -55,6 +55,7 @@ export function TaskCenterView({
   navigating = false,
   active = true,
   onEditingChange,
+  onRunViewChange,
 }: {
   workspace: HoldingsWorkspace;
   model: TaskModel;
@@ -81,6 +82,7 @@ export function TaskCenterView({
   navigating?: boolean;
   active?: boolean;
   onEditingChange?: (editing: boolean) => void;
+  onRunViewChange?: (view: TaskRunView) => void;
 }) {
   const t = useTranslations("taskCenter"),
     locale = useLocale();
@@ -142,6 +144,16 @@ export function TaskCenterView({
     )
       setProgress({ scope: center.scope, task, requestId });
   };
+  const runView: TaskRunView =
+    !active || !task || !form || mode !== "browse"
+      ? "hidden"
+      : progressRequest?.aggregate?.hasActiveExecutors
+        ? "progress"
+        : "summary";
+  useEffect(() => {
+    onRunViewChange?.(runView);
+    return () => onRunViewChange?.("hidden");
+  }, [runView, onRunViewChange]);
   useEffect(() => {
     if (resultsFocusKey) {
       setTab("results");
