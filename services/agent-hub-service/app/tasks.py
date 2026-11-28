@@ -209,7 +209,7 @@ def _proofs(bundle):
     return _snapshot(result)
 
 
-def _response(unit, owner, vault_row, task_id, version):
+def _response(unit, owner, vault_row, task_id, version, *, source_prefixes=None):
     row = unit.get(_paths(owner, vault_row["vaultId"], task_id, version))
     if row is None:
         raise ContractError("not_found")
@@ -269,7 +269,11 @@ def _response(unit, owner, vault_row, task_id, version):
         if not 0 <= created_at <= written_at:
             raise StoreUnavailable
         historical = None
-        prefix_cache = getattr(unit, "registry_prefix_cache", None)
+        prefix_cache = (
+            source_prefixes
+            if source_prefixes is not None and history is vault_row["registryHistory"]
+            else getattr(unit, "registry_prefix_cache", None)
+        )
         if type(prefix_cache) is RegistryPrefixCache:
             historical = prefix_cache.get(
                 owner, {**vault_row, "registryHistory": history}, matching[0], written_at

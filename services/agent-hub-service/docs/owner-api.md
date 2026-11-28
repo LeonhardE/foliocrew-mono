@@ -356,6 +356,12 @@ revocation never substitutes for the exact authority at a report/task's original
 
 ### Combined task overview
 
+When an overview requests task packets for a transferred vault, its fresh User authority response
+supplies the complete verified registry and its historical checkpoints. Packet reads can reuse
+a checkpoint only when the full signed history, Root bytes, Owner and vault match. Each transaction
+attempt checks the current writer fence and proof expiry before using a checkpoint. Each packet
+still verifies its signature, historical writer and recipients at its original save time.
+
 `POST /api/v3/tasks/{vault}/overview/query` is an additive Firebase Owner read with no query,
 operation/author/delegation/workload selectors. Its exact16KiB streamed body is
 `{contractVersion,knownPacketVersions,packetLimit}`. `packetLimit` is0or4; `knownPacketVersions`
