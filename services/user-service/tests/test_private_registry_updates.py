@@ -1,6 +1,7 @@
 """Exercise the transferred registry head and immutable checkpoint write together."""
 
 import unittest
+from unittest.mock import patch
 
 import test_registry_transition as fixture
 
@@ -11,6 +12,7 @@ from app.private_resources.registry_updates import (
     RegistryUpdate,
     RegistryUpdates,
 )
+from app.private_resources.source_registrations import current_registry
 from folioview_shared.encrypted.constants import CONTRACT_VERSION
 from folioview_shared.encrypted.crypto import verify_jws
 from folioview_shared.encrypted.errors import ContractError
@@ -92,3 +94,38 @@ class RegistryUpdateTests(unittest.TestCase):
                 fixture.UID, self.request.model_copy(update={"registryBundle": before_handover})
             )
         self.assertEqual(self.fixture.heads.read(fixture.OWNER), before)
+
+    def test_authority_verifies_a_history_across_internal_batch_boundaries(self):
+        bundles = [self.fixture.packet["firstBundle"]]
+        request = self.request
+        root = self.fixture.vault["rootJwk"]
+        for offset in range(13):
+            receipt = self.writer.update(fixture.UID, request)
+            bundles.append(request.registryBundle)
+            checkpoint = verify_jws(
+                request.registryBundle["checkpoint"], root, typ="fv-control+jws"
+            )
+            next_checkpoint = {
+                **checkpoint,
+                "registrySequence": checkpoint["registrySequence"] + 1,
+                "previousDigest": receipt["registry"]["checkpointDigest"],
+            }
+            request = request.model_copy(
+                update={
+                    "operationId": f"synthetic_history_batch_{offset:04d}",
+                    "expectedVaultVersion": receipt["vaultVersion"],
+                    "registryBundle": {
+                        **request.registryBundle,
+                        "checkpoint": self.fixture.sign(next_checkpoint),
+                    },
+                }
+            )
+        history = self.cutover.verifier.history
+        with patch.object(history, "_read", wraps=history._read) as read:
+            evidence, registry, verified = current_registry(
+                self.cutover, fixture.UID, fixture.VAULT, 1001
+            )
+        self.assertEqual(verified, bundles)
+        self.assertEqual(evidence["registry"], receipt["registry"])
+        self.assertEqual(registry.checkpoint_digest, receipt["registry"]["checkpointDigest"])
+        self.assertEqual([len(call.args[2]) for call in read.call_args_list], [12, 1])

@@ -114,6 +114,10 @@ class UserAuthorityCutover:
             raise ContractError("authorization_unavailable")
 
     def read_start(self, uid, vault, nonce, *, now, allow_deleted=False):
+        evidence, _ = self.verified_start(uid, vault, nonce, now=now, allow_deleted=allow_deleted)
+        return evidence
+
+    def verified_start(self, uid, vault, nonce, *, now, allow_deleted=False):
         validate_schema("OperationIdentifier", nonce)
         self._named_store()
         owner = owner_key(uid)
@@ -167,7 +171,7 @@ class UserAuthorityCutover:
             }
             if len(canonical_json(reply)) > MAX_REGISTRY_PAGE_BYTES:
                 raise ContractError("payload_too_large")
-            return reply
+            return reply, accepted
 
         try:
             return self._transaction(snapshot, writes=False)
