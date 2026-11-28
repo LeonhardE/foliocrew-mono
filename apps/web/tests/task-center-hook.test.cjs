@@ -867,7 +867,7 @@ test("selected run polling waits for initial history, spaces slow reads, and sto
         }
     };
     try {
-      await h.ready();
+      (await h.ready()).setRunView("progress");
       assert.equal(history.length, 1);
       tickFive();
       tickFive();
@@ -930,6 +930,74 @@ test("selected run polling waits for initial history, spaces slow reads, and sto
     } finally {
       h.close();
     }
+  }
+});
+
+test("watching results uses slower non-overlapping history reads and surfaces the original report", async () => {
+  const timers = new Map(),
+    history = [];
+  const waiting = {
+    items: [{ aggregate: { hasActiveExecutors: true }, snapshot: { requestId: "request_A" } }],
+  };
+  const h = harness({
+    timers,
+    transport(path, options) {
+      if (!path.endsWith("/tasks/task_A/manual")) return;
+      const request = Promise.withResolvers();
+      history.push({ ...request, signal: options.signal });
+      return request.promise;
+    },
+  });
+  const delay = () =>
+    [...timers.values()].filter((t) => [5000, 30000].includes(t.ms)).map((t) => t.ms);
+  const tick = () => {
+    const entry = [...timers].find(([, timer]) => [5000, 30000].includes(timer.ms));
+    assert.ok(entry);
+    timers.delete(entry[0]);
+    entry[1].fn();
+  };
+  try {
+    const { setRunView } = await h.ready();
+    history[0].resolve(Response.json(waiting));
+    await h.ready();
+    assert.deepEqual(delay(), []);
+    setRunView("progress");
+    assert.deepEqual(delay(), [5000]);
+    setRunView("summary");
+    assert.deepEqual(delay(), [30000]);
+    setRunView("hidden");
+    assert.deepEqual(delay(), []);
+    setRunView("summary");
+    tick();
+    await settle();
+    assert.equal(history.length, 2);
+    setRunView("progress");
+    assert.deepEqual(delay(), []);
+    assert.equal(history[1].signal.aborted, false);
+    history[1].resolve(Response.json(waiting));
+    await h.ready();
+    assert.deepEqual(delay(), [5000]);
+    tick();
+    await settle();
+    setRunView("summary");
+    assert.equal(history[2].signal.aborted, false);
+    history[2].resolve(
+      Response.json({
+        items: [
+          {
+            aggregate: { hasActiveExecutors: false },
+            snapshot: { requestId: "request_A", executors: [{ resultId: "presult_A" }] },
+          },
+        ],
+      }),
+    );
+    const result = await h.ready();
+    assert.equal(result.manual.task_A[0].snapshot.executors[0].resultId, "presult_A");
+    assert.deepEqual(delay(), []);
+    assert.equal(history.length, 3);
+    assert.ok(h.calls.every((c) => !c.options.method || c.options.method === "GET"));
+  } finally {
+    h.close();
   }
 });
 

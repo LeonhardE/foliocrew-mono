@@ -4,6 +4,7 @@ const assert = require("node:assert/strict"),
 const { renderToStaticMarkup } = require("react-dom/server"),
   { createTranslator } = require("next-intl");
 const { compile } = require("./resource-library-helpers.cjs");
+const { hooks, jsx: testJsx, all } = require("./resource-ui-harness.cjs");
 function render({
   locale = "en",
   running = false,
@@ -18,18 +19,21 @@ function render({
   trashOpen = false,
   centerPatch = {},
   nextOccurrence = null,
+  interact,
+  onRunViewChange,
 } = {}) {
+  const ui = interact ? hooks() : null;
   const messages = require(`../messages/${locale}.json`),
     metadata = { taskId: "task_PRIVATE_ID", status: "active", taskVersion: 1, executionEpoch: 1 };
   const mod = compile(
     "../components/TaskCenterPanel.tsx",
     {
-      react: {
+      react: ui?.react ?? {
         ...React,
         useState: (initial) =>
           React.useState(trashOpen && initial === "browse" ? "trash" : initial),
       },
-      "react/jsx-runtime": require("react/jsx-runtime"),
+      "react/jsx-runtime": ui ? { jsx: testJsx, jsxs: testJsx } : require("react/jsx-runtime"),
       "next-intl": {
         useLocale: () => locale,
         useTranslations: (ns) =>
@@ -95,33 +99,41 @@ function render({
     pending: null,
     ...centerPatch,
   };
-  return renderToStaticMarkup(
-    React.createElement(mod.TaskCenterView, {
-      workspace: {
-        authenticated: true,
-        owner: "owner_A",
-        phase: "unlocked",
-        vault: { vaultId: "vault_A" },
-        vaultGeneration: 1,
-        ...workspacePatch,
-      },
-      model,
-      center,
-      navigating,
-      resultState: {
-        scope: "owner_A:vault_A:1",
-        ready: true,
-        complete: true,
-        loading: false,
-        error: "",
-        partial: false,
-        busy: false,
-        ...resultPatch,
-      },
-      unreadCounts: { task_PRIVATE_ID: count },
-      unreadPartial,
-    }),
-  );
+  const props = {
+    workspace: {
+      authenticated: true,
+      owner: "owner_A",
+      phase: "unlocked",
+      vault: { vaultId: "vault_A" },
+      vaultGeneration: 1,
+      ...workspacePatch,
+    },
+    model,
+    center,
+    navigating,
+    resultState: {
+      scope: "owner_A:vault_A:1",
+      ready: true,
+      complete: true,
+      loading: false,
+      error: "",
+      partial: false,
+      busy: false,
+      ...resultPatch,
+    },
+    unreadCounts: { task_PRIVATE_ID: count },
+    unreadPartial,
+    results: "Results panel",
+    onRunViewChange,
+  };
+  if (ui) {
+    try {
+      return interact(() => ui.render(() => mod.TaskCenterView(props)));
+    } finally {
+      ui.close();
+    }
+  }
+  return renderToStaticMarkup(React.createElement(mod.TaskCenterView, props));
 }
 for (const locale of ["en", "zh", "zh-Hant"]) {
   test(`the ${locale} trash gives a named recoverable task separate restore and permanent-delete actions`, () => {
@@ -257,6 +269,35 @@ test("known running requests show a returnable progress action and list/title in
   assert.equal((html.match(/aria-label="In progress"/g) || []).length, 2);
   assert.match(html, /2 unread results/);
   assert.doesNotMatch(render({ count: 0 }), /class="badge"/);
+});
+test("visible progress, results, and trash communicate the history they actually display", () => {
+  const observed = [];
+  render({
+    running: true,
+    centerPatch: { trash: [], trashList() {} },
+    onRunViewChange(view) {
+      observed.push(view);
+    },
+    interact(draw) {
+      const button = (tree, label) =>
+        all(tree, (n) => n.type === "button" && [n.props.children].flat().includes(label))[0];
+      let tree = draw();
+      assert.equal(observed.at(-1), "summary");
+      button(tree, "View progress").props.onClick();
+      tree = draw();
+      assert.equal(observed.at(-1), "progress");
+      all(tree, (n) => n.props?.id === "task-run-progress")[0].props.onClose();
+      tree = draw();
+      assert.equal(observed.at(-1), "summary");
+      button(tree, "Results").props.onClick();
+      tree = draw();
+      assert.equal(button(tree, "Results").props["aria-selected"], true);
+      assert.equal(observed.at(-1), "summary");
+      button(tree, "Trash").props.onClick();
+      draw();
+      assert.equal(observed.at(-1), "hidden");
+    },
+  });
 });
 test("an unresolved task name has a skeleton rather than an opaque ID", () => {
   const html = render({ name: false });

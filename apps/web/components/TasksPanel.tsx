@@ -1005,6 +1005,7 @@ export default function TasksPanel({
         <TaskCenterView
           active={active}
           onEditingChange={setEditing}
+          onRunViewChange={center.setRunView}
           workspace={workspace}
           model={model}
           center={center}
